@@ -1,0 +1,32 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.env
+.env.local
+debug.keystore
+
+# Node & Backend Ignores
+node_modules/
+server/node_modules/
+*.db
+server/*.db
+server/finance_manager.db
+
+# Android Studio
+.idea/
+
+# Private/local data
+Indian bank Apr.xlsx
