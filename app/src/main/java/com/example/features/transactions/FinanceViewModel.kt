@@ -486,7 +486,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             showMessage("Category updated to ${newCategory.name}")
 
             // Smart Rule Check: Don't prompt if a rule already covers this description or category
-            val activeRules = repository.getActiveRulesList()
+            val activeRules = repository.
+
+            getActiveRulesList()
             val alreadyCovered = activeRules.any { rule ->
                 (rule.categoryId == newCategory.id && tx.description.contains(rule.keyword, ignoreCase = true)) ||
                 rule.keyword.equals(tx.description.trim(), ignoreCase = true)
@@ -759,8 +761,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                         list.forEach { tx ->
                             val normalizedDesc = CategorizationEngine.normalize(tx.description)
                             if (normalizedDesc.contains(normalizedKeyword) && tx.categoryName.equals(rule.categoryName, ignoreCase = true)) {
-                                val defaultType = if (tx.creditAmount > 0.0) TransactionType.INCOME else TransactionType.EXPENSE
-                                database.transactionDao().updateTransactionCategory(tx.id, null, "Uncategorized", defaultType)
+                                // Preserve the transaction's existing type — do NOT derive from credit/debit amounts
+                                database.transactionDao().updateTransactionCategory(tx.id, null, "Uncategorized", tx.transactionType)
                             }
                         }
                     }
@@ -803,8 +805,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     val list = database.transactionDao().getAllTransactionsList()
                     list.forEach { tx ->
                         if (tx.categoryId == id || tx.categoryName.equals(cat.name, ignoreCase = true)) {
-                            val defaultType = if (tx.creditAmount > 0.0) TransactionType.INCOME else TransactionType.EXPENSE
-                            database.transactionDao().updateTransactionCategory(tx.id, null, "Uncategorized", defaultType)
+                            // Preserve the transaction's existing type — do NOT derive from credit/debit amounts
+                            database.transactionDao().updateTransactionCategory(tx.id, null, "Uncategorized", tx.transactionType)
                         }
                     }
                     // Delete any rules associated with this category

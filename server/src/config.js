@@ -1,4 +1,16 @@
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+
+function resolveDbPath() {
+  if (!process.env.DB_PATH) {
+    return path.resolve(__dirname, '../finance_manager.db');
+  }
+  if (path.isAbsolute(process.env.DB_PATH)) {
+    return process.env.DB_PATH;
+  }
+  const cleanPath = process.env.DB_PATH.replace(/^\.\/server\//, '').replace(/^server\//, '');
+  return path.resolve(__dirname, '../', cleanPath);
+}
 
 module.exports = {
   PORT: process.env.PORT || 3000,
@@ -11,5 +23,6 @@ module.exports = {
   JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'dev_jwt_refresh_secret_key_finance_manager_secure_2026',
   JWT_ACCESS_EXPIRES_IN: '15m',
   JWT_REFRESH_EXPIRES_IN: '30d',
-  DB_PATH: process.env.DB_PATH || require('path').resolve(__dirname, '../finance_manager.db')
+  DB_PATH: resolveDbPath()
 };
+

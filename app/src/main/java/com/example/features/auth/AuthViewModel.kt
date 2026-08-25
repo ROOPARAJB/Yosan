@@ -57,7 +57,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             null
         }
-        val profileName = savedProfile?.name ?: "User"
+        val profileName = savedProfile?.name?.takeIf { it.isNotBlank() } ?: "User"
         val mockUser = UserDto(
             id = 999L,
             googleSub = "mock_google_sub",
@@ -66,14 +66,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             profilePictureUrl = ""
         )
         _user.value = mockUser
-        tokenManager.saveTokens("mock_access_token", "mock_refresh_token")
+        // Do NOT save mock_access_token as refresh token — that tricks checkSession() into
+        // attempting a real network call on next launch, then failing into an infinite loading loop.
         tokenManager.saveUserSession(999L, "mock_google_sub", savedProfile?.email ?: "", profileName, "")
 
-        if (savedProfile == null) {
-            try {
-                syncRoomUserProfile(mockUser)
-            } catch (_: Exception) {}
-        }
+        // Always sync profile to Room to unblock the userProfile == null loading screen
+        try {
+            syncRoomUserProfile(mockUser)
+        } catch (_: Exception) {}
 
         val needsOnboarding = profileName.equals("User", ignoreCase = true)
         _authState.value = AuthState.Authenticated(isNewUser = needsOnboarding)
@@ -115,6 +115,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                         profilePictureUrl = tokenManager.getProfilePic()
                     )
                     _user.value = fallbackUser
+                    // Always sync to Room to prevent userProfile == null loading loop
+                    try { syncRoomUserProfile(fallbackUser) } catch (_: Exception) {}
                     _authState.value = AuthState.Authenticated(isNewUser = false)
                 } else {
                     fallbackToMockAuth()
@@ -128,43 +130,50 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun signInWithGoogle(context: Context) {
         viewModelScope.launch {
             _isLoading.value = true
-            _errorMessage.value = null
-            val mockToken = "mock_id_token_109123456789012345678_user"
-            authenticateWithBackend(mockToken)
-        }
-    }
+            try {
+                val googleAuthManager = GoogleAuthManager(context)
+                when (val result = googleAuthManager.getGoogleIdToken()) {
+                    is GoogleAuthResult.Success -> {
+                        val response = authApi.authenticateGoogle(
+                            GoogleAuthRequest(
+                                idToken = result.idToken
+                            )
+                        )
 
-    private suspend fun authenticateWithBackend(idToken: String) {
-        try {
-            val response = authApi.authenticateGoogle(GoogleAuthRequest(idToken))
-            if (response.isSuccessful && response.body() != null) {
-                val authBody = response.body()!!
-                tokenManager.saveTokens(authBody.accessToken, authBody.refreshToken)
-                tokenManager.saveUserSession(
-                    authBody.user.id,
-                    authBody.user.googleSub,
-                    authBody.user.email,
-                    authBody.user.name,
-                    authBody.user.profilePictureUrl ?: ""
-                )
+                        if (response.isSuccessful && response.body() != null) {
+                            val authResponse = response.body()!!
+                            tokenManager.saveTokens(authResponse.accessToken, authResponse.refreshToken)
+                            tokenManager.saveUserSession(
+                                authResponse.user.id,
+                                authResponse.user.googleSub,
+                                authResponse.user.email,
+                                authResponse.user.name,
+                                authResponse.user.profilePictureUrl ?: ""
+                            )
+                            _user.value = authResponse.user
+                            syncRoomUserProfile(authResponse.user)
 
-                _user.value = authBody.user
-                _isNewUser.value = authBody.isNewUser
-                syncRoomUserProfile(authBody.user)
-
-                _authState.value = AuthState.Authenticated(isNewUser = authBody.isNewUser)
-            } else {
-                _errorMessage.value = "Backend Google Token Verification Failed"
-                fallbackToMockAuth()
+                            val isNew = authResponse.isNewUser || authResponse.user.name.equals("User", ignoreCase = true)
+                            _isNewUser.value = isNew
+                            _authState.value = AuthState.Authenticated(isNewUser = isNew)
+                        } else {
+                            _errorMessage.value = "Failed to authenticate with backend server: ${response.message()}"
+                        }
+                    }
+                    is GoogleAuthResult.Cancelled -> {
+                        _errorMessage.value = "Google Sign-In was cancelled."
+                    }
+                    is GoogleAuthResult.Error -> {
+                        _errorMessage.value = result.message
+                    }
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Sign-in error: ${e.localizedMessage ?: e.message}"
+            } finally {
+                _isLoading.value = false
             }
-        } catch (e: Exception) {
-            _errorMessage.value = e.message ?: "Authentication failed. Could not connect to backend server."
-            fallbackToMockAuth()
-        } finally {
-            _isLoading.value = false
         }
     }
-
 
     fun completeOnboarding() {
         _isNewUser.value = false
@@ -173,7 +182,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshSession() {
         viewModelScope.launch {
-            val refreshToken = tokenManager.getRefreshToken() ?: return@launch
+            val refreshToken = tokenManager.getRefreshToken()
+            if (refreshToken.isNullOrEmpty()) {
+                logout()
+                return@launch
+            }
+
             try {
                 val response = authApi.refreshSession(RefreshTokenRequest(refreshToken))
                 if (response.isSuccessful && response.body() != null) {
@@ -194,7 +208,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         tokenManager.clearCredentials()
         _user.value = null
         _isNewUser.value = false
-        
+
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (!refreshToken.isNullOrEmpty()) {
@@ -208,7 +222,15 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.data.local.DatabaseInitializer.purgeLegacyDemoData(database)
             } catch (_: Exception) {}
             withContext(Dispatchers.Main) {
-                checkSession()
+                // Reset profile to trigger onboarding on next launch without auto-re-authenticating
+                val resetProfile = com.example.data.local.entity.UserProfileEntity(
+                    id = 1,
+                    name = "User",
+                    email = "",
+                    currencySymbol = "₹"
+                )
+                try { authRepository.updateProfile(resetProfile) } catch (_: Exception) {}
+                _authState.value = AuthState.Authenticated(isNewUser = true)
             }
         }
     }

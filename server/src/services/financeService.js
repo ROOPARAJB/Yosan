@@ -65,8 +65,17 @@ class FinanceService {
     const now = Date.now();
 
     // Validate account belongs to user
-    const account = financeRepository.getAccountById(accountId || 1, userId);
-    const targetAccountId = account ? account.id : 1;
+    let account = accountId ? financeRepository.getAccountById(accountId, userId) : null;
+    if (!account) {
+      const userAccounts = financeRepository.getAccounts(userId);
+      if (userAccounts.length > 0) {
+        account = userAccounts[0];
+      } else {
+        account = await this.createAccount(userId, { accountName: 'Cash', bankName: 'Cash', accountType: 'CASH', openingBalance: 0.0, isDefault: 1 });
+      }
+    }
+    const targetAccountId = account.id;
+
 
     const result = financeRepository.insertTransaction(
       userId,

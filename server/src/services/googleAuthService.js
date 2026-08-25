@@ -144,8 +144,36 @@ async function handleGoogleAuth(idToken) {
 }
 
 function seedDefaultCategories(userId, now) {
-  // Empty - categories added manually by user
+  const defaultCategories = [
+    { name: 'Food & Dining', type: 'EXPENSE', icon: 'restaurant', color: '#EF4444' },
+    { name: 'Groceries', type: 'EXPENSE', icon: 'shopping_cart', color: '#F59E0B' },
+    { name: 'Shopping', type: 'EXPENSE', icon: 'shopping_bag', color: '#EC4899' },
+    { name: 'Transportation', type: 'EXPENSE', icon: 'directions_bus', color: '#3B82F6' },
+    { name: 'Fuel', type: 'EXPENSE', icon: 'local_gas_station', color: '#6366F1' },
+    { name: 'Bills & Utilities', type: 'EXPENSE', icon: 'receipt', color: '#8B5CF6' },
+    { name: 'Rent', type: 'EXPENSE', icon: 'home', color: '#10B981' },
+    { name: 'Entertainment', type: 'EXPENSE', icon: 'movie', color: '#84CC16' },
+    { name: 'Health & Fitness', type: 'EXPENSE', icon: 'fitness_center', color: '#06B6D4' },
+    { name: 'Travel', type: 'EXPENSE', icon: 'flight', color: '#0EA5E9' },
+    { name: 'Education', type: 'EXPENSE', icon: 'school', color: '#A855F7' },
+    { name: 'Investments', type: 'EXPENSE', icon: 'trending_up', color: '#14B8A6' },
+    { name: 'Salary', type: 'INCOME', icon: 'payments', color: '#22C55E' },
+    { name: 'Freelance', type: 'INCOME', icon: 'work', color: '#10B981' },
+    { name: 'Investment Income', type: 'INCOME', icon: 'show_chart', color: '#059669' },
+    { name: 'Gift / Grants', type: 'INCOME', icon: 'card_giftcard', color: '#064E3B' },
+    { name: 'Other Income', type: 'INCOME', icon: 'account_balance_wallet', color: '#15803D' }
+  ];
+
+  const stmt = db.prepare(`
+    INSERT INTO categories (user_id, name, type, icon, color, is_default, created_at)
+    VALUES (?, ?, ?, ?, ?, 1, ?)
+  `);
+
+  for (const cat of defaultCategories) {
+    stmt.run(userId, cat.name, cat.type, cat.icon, cat.color, now);
+  }
 }
+
 
 module.exports = {
   verifyGoogleToken,

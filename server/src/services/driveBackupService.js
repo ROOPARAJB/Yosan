@@ -203,23 +203,39 @@ function restoreBackupData(userId, data) {
 
     // Restore accounts
     if (Array.isArray(data.accounts)) {
-      const stmt = db.prepare(`
+      const stmtWithId = db.prepare(`
+        INSERT OR REPLACE INTO accounts (id, user_id, account_name, bank_name, account_number_masked, account_type, opening_balance, current_balance, is_default, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const stmtNoId = db.prepare(`
         INSERT INTO accounts (user_id, account_name, bank_name, account_number_masked, account_type, opening_balance, current_balance, is_default, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const a of data.accounts) {
-        stmt.run(userId, a.account_name || a.accountName, a.bank_name || a.bankName || '', a.account_number_masked || a.accountNumberMasked || '', a.account_type || a.accountType || 'BANK', a.opening_balance || a.openingBalance || 0, a.current_balance || a.currentBalance || 0, a.is_default || a.isDefault ? 1 : 0, now, now);
+        if (a.id) {
+          stmtWithId.run(a.id, userId, a.account_name || a.accountName, a.bank_name || a.bankName || '', a.account_number_masked || a.accountNumberMasked || '', a.account_type || a.accountType || 'BANK', a.opening_balance || a.openingBalance || 0, a.current_balance || a.currentBalance || 0, a.is_default || a.isDefault ? 1 : 0, now, now);
+        } else {
+          stmtNoId.run(userId, a.account_name || a.accountName, a.bank_name || a.bankName || '', a.account_number_masked || a.accountNumberMasked || '', a.account_type || a.accountType || 'BANK', a.opening_balance || a.openingBalance || 0, a.current_balance || a.currentBalance || 0, a.is_default || a.isDefault ? 1 : 0, now, now);
+        }
       }
     }
 
     // Restore categories
     if (Array.isArray(data.categories)) {
-      const stmt = db.prepare(`
+      const stmtWithId = db.prepare(`
+        INSERT OR REPLACE INTO categories (id, user_id, name, type, icon, color, is_default, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const stmtNoId = db.prepare(`
         INSERT INTO categories (user_id, name, type, icon, color, is_default, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       for (const c of data.categories) {
-        stmt.run(userId, c.name, c.type, c.icon || 'category', c.color || '#64748B', c.is_default || c.isDefault ? 1 : 0, now);
+        if (c.id) {
+          stmtWithId.run(c.id, userId, c.name, c.type, c.icon || 'category', c.color || '#64748B', c.is_default || c.isDefault ? 1 : 0, now);
+        } else {
+          stmtNoId.run(userId, c.name, c.type, c.icon || 'category', c.color || '#64748B', c.is_default || c.isDefault ? 1 : 0, now);
+        }
       }
     }
 
@@ -230,7 +246,7 @@ function restoreBackupData(userId, data) {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const r of data.rules) {
-        stmt.run(userId, r.pattern || r.keyword, r.category_id || r.categoryId, r.category_name || r.categoryName, r.transaction_type || r.transactionType || 'EXPENSE', r.priority || 10, r.match_type || r.matchType || 'CONTAINS', r.is_active || r.isActive ? 1 : 0, now);
+        stmt.run(userId, r.pattern || r.keyword, r.category_id || r.categoryId || null, r.category_name || r.categoryName, r.transaction_type || r.transactionType || 'EXPENSE', r.priority || 10, r.match_type || r.matchType || 'CONTAINS', r.is_active || r.isActive ? 1 : 0, now);
       }
     }
 
@@ -244,9 +260,13 @@ function restoreBackupData(userId, data) {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const t of data.transactions) {
+        const rawAccId = t.account_id || t.accountId;
+        const validAccount = rawAccId ? db.prepare('SELECT id FROM accounts WHERE id = ?').get(rawAccId) : null;
+        const targetAccId = validAccount ? validAccount.id : defaultAccId;
+
         stmt.run(
           userId,
-          t.account_id || t.accountId || defaultAccId,
+          targetAccId,
           t.transaction_date || t.transactionDate || '2026-01-01',
           t.description || 'Restored Transaction',
           t.debit_amount || t.debitAmount || 0,
@@ -267,6 +287,7 @@ function restoreBackupData(userId, data) {
         );
       }
     }
+
   });
 
   tx();

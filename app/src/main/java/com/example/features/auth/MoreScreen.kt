@@ -54,6 +54,7 @@ fun SettingsScreen(
     onNavigateToCompanyExpenses: () -> Unit,
     onNavigateToReports: () -> Unit,
     onNavigateToImport: () -> Unit,
+    onNavigateToLending: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
 

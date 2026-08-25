@@ -1,30 +1,15 @@
-const { DatabaseSync } = require('node:sqlite');
+const Database = require('better-sqlite3');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
 
-const db = new DatabaseSync(config.DB_PATH);
+fs.mkdirSync(path.dirname(config.DB_PATH), { recursive: true });
 
-// Compatibility wrapper for pragma
-db.pragma = function(str) {
-  return db.exec('PRAGMA ' + str);
-};
+const db = new Database(config.DB_PATH);
+
 
 // Enable foreign key constraints
 db.pragma('foreign_keys = ON');
-
-// Compatibility wrapper for transactions
-db.transaction = function(fn) {
-  return function(...args) {
-    db.exec('BEGIN TRANSACTION');
-    try {
-      const result = fn(...args);
-      db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
-  };
-};
 
 function initSchema() {
   db.exec(`

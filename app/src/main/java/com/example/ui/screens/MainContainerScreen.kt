@@ -35,6 +35,7 @@ import com.example.features.rules.RulesScreen
 import com.example.features.reports.CompanyExpensesScreen
 import com.example.features.reports.ReportsScreen
 import com.example.features.import.ImportStatementScreen
+import com.example.features.lending.LendingScreen
 import kotlinx.coroutines.launch
 
 enum class MainTab(
@@ -53,7 +54,7 @@ enum class MainTab(
 
 
 enum class SubScreen {
-    NONE, RULES, COMPANY_EXPENSES, REPORTS, IMPORT_STATEMENT
+    NONE, RULES, COMPANY_EXPENSES, REPORTS, IMPORT_STATEMENT, LENDING
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -163,6 +164,7 @@ fun MainContainerScreen(
                                     SubScreen.COMPANY_EXPENSES -> "Official Expenses"
                                     SubScreen.REPORTS -> "Reports"
                                     SubScreen.IMPORT_STATEMENT -> "Import Statement"
+                                    SubScreen.LENDING -> "Loans & Lending"
                                     SubScreen.NONE -> ""
                                 },
                                 fontWeight = FontWeight.Bold,
@@ -173,6 +175,7 @@ fun MainContainerScreen(
                                 SubScreen.COMPANY_EXPENSES -> "Spent for Company expense which can be claimed later as reimbursement"
                                 SubScreen.REPORTS -> "Monthly trends & category spending breakdowns"
                                 SubScreen.IMPORT_STATEMENT -> "Upload bank statements in Excel (.xlsx, .xls) formats"
+                                SubScreen.LENDING -> "Track money you have lent and repayments received"
                                 SubScreen.NONE -> ""
                             }
                             if (subtitle.isNotEmpty()) {
@@ -260,6 +263,19 @@ fun MainContainerScreen(
                             currentTab = MainTab.TRANSACTIONS
                         }
                     )
+                    SubScreen.LENDING -> LendingScreen(
+                        viewModel = viewModel,
+                        onAddLoanClick = {
+                            addSheetTab = AddTab.LEND_MONEY
+                            preselectedLoanForRepay = null
+                            showAddSheet = true
+                        },
+                        onRepayLoanClick = { loan ->
+                            preselectedLoanForRepay = loan
+                            addSheetTab = AddTab.LEND_MONEY
+                            showAddSheet = true
+                        }
+                    )
                     SubScreen.NONE -> {}
                 }
             } else {
@@ -308,7 +324,8 @@ fun MainContainerScreen(
                             onNavigateToRules = { currentSubScreen = SubScreen.RULES },
                             onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
                             onNavigateToReports = { currentTab = MainTab.REPORTS },
-                            onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT }
+                            onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
+                            onNavigateToLending = { currentSubScreen = SubScreen.LENDING }
                         )
 
                         MainTab.REPORTS -> ReportsScreen(viewModel = viewModel)
