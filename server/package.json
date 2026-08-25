@@ -1,0 +1,21 @@
+{
+  "name": "finance-manager-backend",
+  "version": "1.0.0",
+  "description": "Production-ready secure backend for Finance Manager app with Google Auth and Drive Backup",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "google-auth-library": "^9.15.0",
+    "googleapis": "^144.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "better-sqlite3": "^11.8.1"
+  }
+}
