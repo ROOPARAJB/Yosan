@@ -276,10 +276,30 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     init {
         viewModelScope.launch {
             try {
-                // Ensure essential default categories exist
+                // Ensure essential default categories exist and deduplicate any duplicates
                 val existingCats = database.categoryDao().getAllCategoriesList()
                 if (existingCats.isEmpty()) {
                     database.categoryDao().insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
+                } else {
+                    val seenNames = mutableSetOf<String>()
+                    for (cat in existingCats) {
+                        val key = "${cat.name.trim().lowercase()}_${cat.type}"
+                        if (!seenNames.add(key)) {
+                            database.categoryDao().deleteCategory(cat.id)
+                        }
+                    }
+                    val hasEmi = database.categoryDao().getCategoryByName("EMI")
+                    if (hasEmi == null) {
+                        database.categoryDao().insertCategory(
+                            CategoryEntity(
+                                name = "EMI",
+                                type = CategoryType.EXPENSE,
+                                colorHex = "#E11D48",
+                                iconName = "receipt_long",
+                                isSystem = true
+                            )
+                        )
+                    }
                 }
 
                 val rules = database.categorizationRuleDao().getActiveRulesList()

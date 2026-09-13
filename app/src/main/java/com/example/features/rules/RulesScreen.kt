@@ -52,6 +52,7 @@ fun RulesScreen(
     modifier: Modifier = Modifier
 ) {
     val categories by viewModel.categories.collectAsState()
+    val displayCategories = remember(categories) { categories.distinctBy { "${it.name.trim().lowercase()}_${it.type}" } }
     val rules by viewModel.rules.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
 
@@ -339,7 +340,7 @@ fun RulesScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Categories (${categories.size})",
+                            text = "Categories (${displayCategories.size})",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -393,7 +394,7 @@ fun RulesScreen(
                 }
             }
 
-            if (categories.isEmpty()) {
+            if (displayCategories.isEmpty()) {
                 item {
                     EmptyState(
                         icon = Icons.Outlined.Category,
@@ -410,7 +411,7 @@ fun RulesScreen(
                     )
                 }
             } else {
-                items(categories, key = { it.id }) { cat ->
+                items(displayCategories, key = { it.id }) { cat ->
                     val isSelected = selectedCategoryIds.contains(cat.id)
                     ElevatedCard(
                         modifier = Modifier

@@ -29,6 +29,7 @@ data class CategoryEntity(
             CategoryEntity(name = "Utilities & Bills", type = CategoryType.EXPENSE, colorHex = "#F59E0B", iconName = "receipt_long", isSystem = true),
             CategoryEntity(name = "Entertainment", type = CategoryType.EXPENSE, colorHex = "#8B5CF6", iconName = "movie", isSystem = true),
             CategoryEntity(name = "Healthcare", type = CategoryType.EXPENSE, colorHex = "#06B6D4", iconName = "medical_services", isSystem = true),
+            CategoryEntity(name = "EMI", type = CategoryType.EXPENSE, colorHex = "#E11D48", iconName = "receipt_long", isSystem = true),
             CategoryEntity(name = "Investments", type = CategoryType.INVESTMENT, colorHex = "#84CC16", iconName = "trending_up", isSystem = true),
             CategoryEntity(name = "Salary & Income", type = CategoryType.INCOME, colorHex = "#10B981", iconName = "payments", isSystem = true),
             CategoryEntity(name = "Official Expense", type = CategoryType.EXPENSE, colorHex = "#06B6D4", iconName = "business_center", isSystem = true),
