@@ -60,6 +60,7 @@ fun AddTransactionSheet(
     var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 1L) }
     var targetAccountId by remember { mutableStateOf(accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 1L) }
     var notes by remember { mutableStateOf("") }
+    var advanceId by remember { mutableStateOf("") }
 
     // Lending fields
     var personName by remember { mutableStateOf("") }
@@ -282,7 +283,8 @@ fun AddTransactionSheet(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     val filteredCats = categories.filter {
-                        if (selectedTab == AddTab.INCOME) it.type == CategoryType.INCOME else it.type == CategoryType.EXPENSE
+                        if (selectedTab == AddTab.INCOME) (it.type == CategoryType.INCOME || it.name.equals("Advance", ignoreCase = true))
+                        else (it.type == CategoryType.EXPENSE || it.name.equals("Advance", ignoreCase = true))
                     }
 
                     LazyRow(
@@ -308,6 +310,20 @@ fun AddTransactionSheet(
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Advance ID / Batch Tag Field
+                    OutlinedTextField(
+                        value = advanceId,
+                        onValueChange = { advanceId = it },
+                        label = { Text("Advance ID / Tag (Optional, e.g. advance id 1)") },
+                        placeholder = { Text("e.g. advance id 1") },
+                        leadingIcon = { Icon(Icons.Default.Tag, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
                 }
 
                 AddTab.LEND_MONEY -> {
@@ -538,7 +554,8 @@ fun AddTransactionSheet(
                                 categoryId = cat.id,
                                 categoryName = cat.name,
                                 accountId = selectedAccountId,
-                                notes = notes
+                                notes = notes,
+                                advanceId = advanceId.takeIf { it.isNotBlank() }
                             )
                         }
                         AddTab.INCOME -> {
@@ -555,7 +572,8 @@ fun AddTransactionSheet(
                                 categoryId = cat.id,
                                 categoryName = cat.name,
                                 accountId = selectedAccountId,
-                                notes = notes
+                                notes = notes,
+                                advanceId = advanceId.takeIf { it.isNotBlank() }
                             )
                         }
                         AddTab.LEND_MONEY -> {

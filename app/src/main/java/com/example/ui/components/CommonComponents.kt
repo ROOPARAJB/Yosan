@@ -137,7 +137,8 @@ fun TransactionItemCard(
 ) {
     val isPositive = transaction.transactionType == TransactionType.INCOME ||
             transaction.transactionType == TransactionType.REFUND ||
-            transaction.transactionType == TransactionType.BORROWING
+            transaction.transactionType == TransactionType.BORROWING ||
+            (transaction.transactionType == TransactionType.TRANSFER && transaction.creditAmount > 0)
 
     val amountColor = when (transaction.transactionType) {
         TransactionType.INCOME, TransactionType.REFUND -> IncomeGreen
@@ -145,7 +146,7 @@ fun TransactionItemCard(
         TransactionType.LENDING -> LendingIndigo
         TransactionType.BORROWING -> OutstandingAmber
         TransactionType.INVESTMENT -> OutstandingAmber
-        TransactionType.TRANSFER -> TransferSlate
+        TransactionType.TRANSFER -> if (transaction.creditAmount > 0) IncomeGreen else TransferSlate
         else -> MaterialTheme.colorScheme.onSurface
     }
 
@@ -218,6 +219,21 @@ fun TransactionItemCard(
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CategoryChip(categoryName = transaction.categoryName)
+                    if (!transaction.advanceId.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = "#${transaction.advanceId}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = DateUtils.formatForDisplay(transaction.transactionDate),

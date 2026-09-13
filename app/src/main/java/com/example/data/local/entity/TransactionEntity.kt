@@ -30,6 +30,7 @@ data class TransactionEntity(
     val categorizationConfidence: Float = 0f,
     val transferId: String? = null,
     val linkedLoanId: Long? = null,
+    val advanceId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

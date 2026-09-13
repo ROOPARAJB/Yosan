@@ -264,7 +264,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val matchesQuery = params.query.isBlank() ||
                     tx.description.contains(params.query, ignoreCase = true) ||
                     tx.categoryName.contains(params.query, ignoreCase = true) ||
-                    tx.referenceNumber.contains(params.query, ignoreCase = true)
+                    tx.referenceNumber.contains(params.query, ignoreCase = true) ||
+                    (tx.advanceId != null && tx.advanceId.contains(params.query, ignoreCase = true))
             val matchesType = params.typeFilter == null || tx.transactionType == params.typeFilter
             val matchesCat = params.catFilter == null || tx.categoryName.equals(params.catFilter, ignoreCase = true)
             val matchesAcc = params.accFilter == null || tx.accountId == params.accFilter
@@ -296,6 +297,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                                 type = CategoryType.EXPENSE,
                                 colorHex = "#E11D48",
                                 iconName = "receipt_long",
+                                isSystem = true
+                            )
+                        )
+                    }
+                    val hasAdvance = database.categoryDao().getCategoryByName("Advance")
+                    if (hasAdvance == null) {
+                        database.categoryDao().insertCategory(
+                            CategoryEntity(
+                                name = "Advance",
+                                type = CategoryType.INCOME,
+                                colorHex = "#0284C7",
+                                iconName = "account_balance_wallet",
                                 isSystem = true
                             )
                         )
@@ -477,7 +490,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         categoryId: Long?,
         categoryName: String,
         accountId: Long,
-        notes: String
+        notes: String,
+        advanceId: String? = null
     ) {
         viewModelScope.launch {
             val containsCompany = description.contains("company", ignoreCase = true)
@@ -519,6 +533,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 categoryName = finalCatName,
                 source = "MANUAL",
                 notes = notes,
+                advanceId = advanceId?.trim()?.takeIf { it.isNotBlank() },
                 isManual = true,
                 isCategorized = true,
                 categorizationConfidence = 1.0f
@@ -526,6 +541,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             repository.insertTransaction(tx)
             showMessage("Transaction added successfully")
             scanForCompanyExpenses()
+        }
+    }
+
+    fun updateTransactionAdvanceId(txId: Long, advanceId: String?) {
+        viewModelScope.launch {
+            val tx = repository.getTransactionById(txId)
+            if (tx != null) {
+                val cleanId = advanceId?.trim()?.takeIf { it.isNotBlank() }
+                val updated = tx.copy(advanceId = cleanId, updatedAt = System.currentTimeMillis())
+                repository.updateTransaction(updated)
+                showMessage(if (cleanId != null) "Advance ID set to '$cleanId'" else "Advance ID cleared")
+            }
         }
     }
 
@@ -664,21 +691,31 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateTransactionCategory(tx: TransactionEntity, newCategory: CategoryEntity) {
         viewModelScope.launch {
-            val resolvedType = when (newCategory.type) {
-                com.example.data.local.entity.CategoryType.INCOME -> TransactionType.INCOME
-                com.example.data.local.entity.CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+            val isCredit = tx.creditAmount > 0 || tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND
+            val resolvedType = when {
+                newCategory.type == com.example.data.local.entity.CategoryType.INCOME -> TransactionType.INCOME
+                newCategory.type == com.example.data.local.entity.CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == com.example.data.local.entity.CategoryType.OTHER -> TransactionType.TRANSFER
+                newCategory.name.equals("Advance", ignoreCase = true) -> if (isCredit) TransactionType.INCOME else TransactionType.EXPENSE
                 else -> TransactionType.EXPENSE
             }
+            val amount = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
+            val newCredit = if (resolvedType == TransactionType.INCOME || resolvedType == TransactionType.REFUND || (resolvedType == TransactionType.TRANSFER && isCredit)) amount else 0.0
+            val newDebit = if (resolvedType == TransactionType.EXPENSE || resolvedType == TransactionType.LENDING || resolvedType == TransactionType.INVESTMENT || (resolvedType == TransactionType.TRANSFER && !isCredit)) amount else 0.0
+
             val oldTx = tx
-            repository.updateTransactionCategory(tx.id, newCategory.id, newCategory.name, resolvedType)
             val updatedTx = tx.copy(
                 categoryId = newCategory.id,
                 categoryName = newCategory.name,
                 transactionType = resolvedType,
+                creditAmount = newCredit,
+                debitAmount = newDebit,
+                amount = amount,
                 isCategorized = true,
                 categorizationConfidence = 1.0f,
                 updatedAt = System.currentTimeMillis()
             )
+            repository.updateTransaction(updatedTx)
             recordUndoAction(
                 actionType = "CHANGE_CATEGORY",
                 description = "Changed category of '${tx.description.take(24)}' to ${newCategory.name}",
@@ -724,6 +761,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                         updatedAt = System.currentTimeMillis()
                     )
                 }
+                TransactionType.TRANSFER -> {
+                    val wasCredit = tx.creditAmount > 0 || tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND
+                    if (wasCredit) {
+                        tx.copy(
+                            transactionType = newType,
+                            creditAmount = amount,
+                            debitAmount = 0.0,
+                            amount = amount,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    } else {
+                        tx.copy(
+                            transactionType = newType,
+                            debitAmount = amount,
+                            creditAmount = 0.0,
+                            amount = amount,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    }
+                }
                 else -> {
                     tx.copy(
                         transactionType = newType,
@@ -766,19 +823,35 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateTransactionsCategory(txIds: List<Long>, newCategory: CategoryEntity) {
         viewModelScope.launch {
-            val resolvedType = when (newCategory.type) {
-                com.example.data.local.entity.CategoryType.INCOME -> TransactionType.INCOME
-                com.example.data.local.entity.CategoryType.INVESTMENT -> TransactionType.INVESTMENT
-                else -> TransactionType.EXPENSE
-            }
             val prevList = mutableListOf<TransactionEntity>()
             val newList = mutableListOf<TransactionEntity>()
             txIds.forEach { id ->
                 val tx = repository.getTransactionById(id)
                 if (tx != null) {
+                    val isCredit = tx.creditAmount > 0 || tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND
+                    val resolvedType = when {
+                        newCategory.type == com.example.data.local.entity.CategoryType.INCOME -> TransactionType.INCOME
+                        newCategory.type == com.example.data.local.entity.CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                        newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == com.example.data.local.entity.CategoryType.OTHER -> TransactionType.TRANSFER
+                        newCategory.name.equals("Advance", ignoreCase = true) -> if (isCredit) TransactionType.INCOME else TransactionType.EXPENSE
+                        else -> TransactionType.EXPENSE
+                    }
+                    val amount = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
+                    val newCredit = if (resolvedType == TransactionType.INCOME || resolvedType == TransactionType.REFUND || (resolvedType == TransactionType.TRANSFER && isCredit)) amount else 0.0
+                    val newDebit = if (resolvedType == TransactionType.EXPENSE || resolvedType == TransactionType.LENDING || resolvedType == TransactionType.INVESTMENT || (resolvedType == TransactionType.TRANSFER && !isCredit)) amount else 0.0
+
                     prevList.add(tx)
-                    repository.updateTransactionCategory(id, newCategory.id, newCategory.name, resolvedType)
-                    newList.add(tx.copy(categoryId = newCategory.id, categoryName = newCategory.name, transactionType = resolvedType, updatedAt = System.currentTimeMillis()))
+                    val updatedTx = tx.copy(
+                        categoryId = newCategory.id,
+                        categoryName = newCategory.name,
+                        transactionType = resolvedType,
+                        creditAmount = newCredit,
+                        debitAmount = newDebit,
+                        amount = amount,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    repository.updateTransaction(updatedTx)
+                    newList.add(updatedTx)
                 }
             }
             recordUndoAction(

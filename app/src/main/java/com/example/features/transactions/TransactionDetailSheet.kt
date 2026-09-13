@@ -116,14 +116,15 @@ fun TransactionDetailSheet(
             // Amount Hero Banner
             val isPositive = currentTx.transactionType == TransactionType.INCOME ||
                     currentTx.transactionType == TransactionType.REFUND ||
-                    currentTx.transactionType == TransactionType.BORROWING
+                    currentTx.transactionType == TransactionType.BORROWING ||
+                    (currentTx.transactionType == TransactionType.TRANSFER && currentTx.creditAmount > 0)
 
             val amountColor = when (currentTx.transactionType) {
                 TransactionType.INCOME, TransactionType.REFUND -> IncomeGreen
                 TransactionType.BORROWING -> OutstandingAmber
                 TransactionType.LENDING -> LendingIndigo
                 TransactionType.INVESTMENT -> Color(0xFF10B981)
-                TransactionType.TRANSFER -> TransferSlate
+                TransactionType.TRANSFER -> if (currentTx.creditAmount > 0) IncomeGreen else TransferSlate
                 else -> ExpenseRed
             }
 
@@ -448,6 +449,82 @@ fun TransactionDetailSheet(
             if (currentTx.creditAmount > 0) {
                 DetailRow(label = "Credit", value = CurrencyFormatter.formatInr(currentTx.creditAmount))
             }
+
+            // Advance ID / Batch Tag
+            var isEditingAdvanceId by remember { mutableStateOf(false) }
+            var editedAdvanceIdText by remember(currentTx.advanceId) { mutableStateOf(currentTx.advanceId ?: "") }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Advance ID / Batch",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (isEditingAdvanceId) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = editedAdvanceIdText,
+                            onValueChange = { editedAdvanceIdText = it },
+                            placeholder = { Text("advance id 1", fontSize = 12.sp) },
+                            modifier = Modifier.width(150.dp),
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        IconButton(onClick = {
+                            viewModel.updateTransactionAdvanceId(currentTx.id, editedAdvanceIdText)
+                            isEditingAdvanceId = false
+                        }) {
+                            Icon(Icons.Default.Check, contentDescription = "Save Advance ID", tint = IncomeGreen)
+                        }
+                        IconButton(onClick = {
+                            editedAdvanceIdText = currentTx.advanceId ?: ""
+                            isEditingAdvanceId = false
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = ExpenseRed)
+                        }
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { isEditingAdvanceId = true }
+                    ) {
+                        if (!currentTx.advanceId.isNullOrBlank()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = currentTx.advanceId,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "None (tap to add)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit Advance ID",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             if (currentTx.referenceNumber.isNotBlank()) {
                 DetailRow(label = "Reference #", value = currentTx.referenceNumber)
             }

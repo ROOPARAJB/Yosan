@@ -32,6 +32,7 @@ data class CategoryEntity(
             CategoryEntity(name = "EMI", type = CategoryType.EXPENSE, colorHex = "#E11D48", iconName = "receipt_long", isSystem = true),
             CategoryEntity(name = "Investments", type = CategoryType.INVESTMENT, colorHex = "#84CC16", iconName = "trending_up", isSystem = true),
             CategoryEntity(name = "Salary & Income", type = CategoryType.INCOME, colorHex = "#10B981", iconName = "payments", isSystem = true),
+            CategoryEntity(name = "Advance", type = CategoryType.INCOME, colorHex = "#0284C7", iconName = "account_balance_wallet", isSystem = true),
             CategoryEntity(name = "Official Expense", type = CategoryType.EXPENSE, colorHex = "#06B6D4", iconName = "business_center", isSystem = true),
             CategoryEntity(name = "Personal Expense", type = CategoryType.EXPENSE, colorHex = "#F97316", iconName = "person", isSystem = true),
             CategoryEntity(name = "Transfer", type = CategoryType.OTHER, colorHex = "#64748B", iconName = "sync_alt", isSystem = true)

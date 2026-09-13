@@ -157,6 +157,7 @@ object BackupService {
                 obj.put("categorizationConfidence", tx.categorizationConfidence.toDouble())
                 if (tx.transferId != null) obj.put("transferId", tx.transferId)
                 if (tx.linkedLoanId != null) obj.put("linkedLoanId", tx.linkedLoanId)
+                if (tx.advanceId != null) obj.put("advanceId", tx.advanceId)
                 obj.put("createdAt", tx.createdAt)
                 obj.put("updatedAt", tx.updatedAt)
                 txArray.put(obj)
@@ -470,6 +471,7 @@ object BackupService {
                                 categorizationConfidence = obj.optDouble("categorizationConfidence", 0.0).toFloat(),
                                 transferId = if (obj.has("transferId") && !obj.isNull("transferId")) obj.optString("transferId") else null,
                                 linkedLoanId = if (obj.has("linkedLoanId") && !obj.isNull("linkedLoanId")) obj.optLong("linkedLoanId") else null,
+                                advanceId = if (obj.has("advanceId") && !obj.isNull("advanceId")) obj.optString("advanceId") else null,
                                 createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )

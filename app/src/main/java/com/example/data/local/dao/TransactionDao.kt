@@ -36,7 +36,7 @@ interface TransactionDao {
 
     @Query("""
         SELECT * FROM transactions 
-        WHERE (:query = '' OR description LIKE '%' || :query || '%' OR categoryName LIKE '%' || :query || '%' OR referenceNumber LIKE '%' || :query || '%')
+        WHERE (:query = '' OR description LIKE '%' || :query || '%' OR categoryName LIKE '%' || :query || '%' OR referenceNumber LIKE '%' || :query || '%' OR advanceId LIKE '%' || :query || '%')
         AND (:type IS NULL OR transactionType = :type)
         AND (:categoryName IS NULL OR categoryName = :categoryName)
         AND (:accountId IS NULL OR accountId = :accountId)
@@ -85,6 +85,9 @@ interface TransactionDao {
 
     @Query("DELETE FROM transactions WHERE transferId = :transferId")
     suspend fun deleteTransactionsByTransferId(transferId: String)
+
+    @Query("SELECT * FROM transactions WHERE advanceId = :advanceId ORDER BY transactionDate DESC, id DESC")
+    suspend fun getTransactionsByAdvanceId(advanceId: String): List<TransactionEntity>
 
     @Query("SELECT * FROM transactions")
     suspend fun getAllTransactionsList(): List<TransactionEntity>
