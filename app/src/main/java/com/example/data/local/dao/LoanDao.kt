@@ -39,4 +39,7 @@ interface LoanDao {
 
     @Query("SELECT COUNT(*) FROM loans")
     suspend fun getLoanCount(): Int
+
+    @Query("SELECT * FROM loans")
+    suspend fun getAllLoansList(): List<LoanEntity>
 }

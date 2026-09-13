@@ -203,11 +203,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun logout() {
+    fun logout(onComplete: (() -> Unit)? = null) {
         val refreshToken = tokenManager.getRefreshToken()
         tokenManager.clearCredentials()
         _user.value = null
-        _isNewUser.value = false
+        _isNewUser.value = true
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -222,20 +222,23 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.data.local.DatabaseInitializer.purgeLegacyDemoData(database)
             } catch (_: Exception) {}
             withContext(Dispatchers.Main) {
-                // Reset profile to trigger onboarding on next launch without auto-re-authenticating
+                // Reset profile to trigger onboarding on next launch
                 val resetProfile = com.example.data.local.entity.UserProfileEntity(
                     id = 1,
                     name = "User",
                     email = "",
-                    currencySymbol = "₹"
+                    currencySymbol = "₹",
+                    isDarkMode = false,
+                    isOnboardingCompleted = false
                 )
                 try { authRepository.updateProfile(resetProfile) } catch (_: Exception) {}
                 _authState.value = AuthState.Authenticated(isNewUser = true)
+                onComplete?.invoke()
             }
         }
     }
 
-    fun deleteAccount() {
+    fun deleteAccount(onComplete: (() -> Unit)? = null) {
         viewModelScope.launch {
             _isLoading.value = true
             withContext(Dispatchers.IO) {
@@ -244,7 +247,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (_: Exception) {}
             }
             _isLoading.value = false
-            logout()
+            logout(onComplete)
         }
     }
 

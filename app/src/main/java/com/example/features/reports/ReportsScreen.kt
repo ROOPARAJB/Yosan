@@ -83,15 +83,21 @@ fun ReportsScreen(
     fun sharePdfReport() {
         try {
             val file = generatedFile ?: ExportService.generatePdfReport(context, summary, categoryBreakdown, monthlyTrends, userProfile?.name)
-            val uri = FileProvider.getUriForFile(context, "com.example.fileprovider", file)
-            val sendIntent = Intent().apply {
-                action = Intent.ACTION_SEND
+            val authority = "${context.packageName}.fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, file)
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/pdf"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(sendIntent, "Share PDF Report"))
+            val chooser = Intent.createChooser(sendIntent, "Share PDF Report").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
         } catch (e: Exception) {
+            if (com.example.BuildConfig.DEBUG) {
+                android.util.Log.e("ReportsScreen", "Could not share PDF", e)
+            }
             viewModel.showMessage("Could not share PDF: ${e.localizedMessage ?: "Please install a PDF sharing app"}")
         }
     }
@@ -99,14 +105,20 @@ fun ReportsScreen(
     fun openPdfReport() {
         try {
             val file = generatedFile ?: ExportService.generatePdfReport(context, summary, categoryBreakdown, monthlyTrends, userProfile?.name)
-            val uri = FileProvider.getUriForFile(context, "com.example.fileprovider", file)
-            val viewIntent = Intent().apply {
-                action = Intent.ACTION_VIEW
+            val authority = "${context.packageName}.fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, file)
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/pdf")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(viewIntent, "Open PDF Report"))
+            val chooser = Intent.createChooser(viewIntent, "Open PDF Report").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
         } catch (e: Exception) {
+            if (com.example.BuildConfig.DEBUG) {
+                android.util.Log.e("ReportsScreen", "Could not open PDF", e)
+            }
             viewModel.showMessage("Could not open PDF: ${e.localizedMessage ?: "Please install a PDF viewer app"}")
         }
     }
@@ -125,7 +137,7 @@ fun ReportsScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Text(
-                    text = "Consolidated income, expense, and statement performance report.",
+                    text = "Consolidated income, expense, and financial statement performance report.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -167,19 +179,46 @@ fun ReportsScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                Text(
-                    text = "Document Preview",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.PictureAsPdf,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Document Preview",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "A4 Format • Live",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 if (isRendering && pdfPreviewBitmap == null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(350.dp)
+                            .height(420.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
                         contentAlignment = Alignment.Center
@@ -190,19 +229,25 @@ fun ReportsScreen(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .shadow(4.dp, RoundedCornerShape(14.dp))
-                            .clip(RoundedCornerShape(14.dp)),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            .shadow(6.dp, RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
                         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
-                        Image(
-                            bitmap = pdfPreviewBitmap!!.asImageBitmap(),
-                            contentDescription = "PDF Report Preview",
-                            contentScale = ContentScale.FillWidth,
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(2.dp)
-                        )
+                                .padding(8.dp)
+                        ) {
+                            Image(
+                                bitmap = pdfPreviewBitmap!!.asImageBitmap(),
+                                contentDescription = "PDF Report Preview",
+                                contentScale = ContentScale.FillWidth,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                        }
                     }
                 }
             }

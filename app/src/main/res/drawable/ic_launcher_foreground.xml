@@ -6,14 +6,14 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <!-- Centered within 66dp safe zone (21..87 in 108dp canvas) -->
-    <!-- Gradient Rounded Card/Wallet base -->
+    <!-- Gradient Round Coin Base -->
     <path
-        android:pathData="M30,34 C30,30.7 32.7,28 36,28 L72,28 C75.3,28 78,30.7 78,34 L78,74 C78,77.3 75.3,80 72,80 L36,80 C32.7,80 30,77.3 30,74 Z">
+        android:pathData="M54,54 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0">
         <aapt:attr name="android:fillColor">
             <gradient
-                android:startX="30"
+                android:startX="28"
                 android:startY="28"
-                android:endX="78"
+                android:endX="80"
                 android:endY="80"
                 android:type="linear">
                 <item android:color="#10B981" android:offset="0.0" />
@@ -23,31 +23,32 @@
         </aapt:attr>
     </path>
 
-    <!-- Top Card Header Accent Bar -->
+    <!-- Inner Circle Accent Ring -->
     <path
-        android:fillColor="#34D399"
-        android:pathData="M30,34 C30,30.7 32.7,28 36,28 L72,28 C75.3,28 78,30.7 78,34 L78,41 L30,41 Z" />
+        android:strokeColor="#34D399"
+        android:strokeWidth="1.5"
+        android:pathData="M54,54 m-23,0 a23,23 0 1,0 46,0 a23,23 0 1,0 -46,0" />
 
     <!-- Stylized Rupee / Currency Symbol & Growth Bar -->
     <!-- Horizontal top line of Rupee -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M43,46 L65,46 L65,49 L43,49 Z" />
+        android:pathData="M43,44 L65,44 L65,47 L43,47 Z" />
     <!-- Horizontal middle line of Rupee -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M43,52 L61,52 L61,55 L43,55 Z" />
+        android:pathData="M43,50 L61,50 L61,53 L43,53 Z" />
     <!-- Curved loop & stem of Rupee -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M49,46 L49,60 C53,60 56,58 56,55.5 C56,53 53,51 49,51 L46,51 L46,46 Z" />
+        android:pathData="M49,44 L49,58 C53,58 56,56 56,53.5 C56,51 53,49 49,49 L46,49 L46,44 Z" />
     <!-- Diagonal stroke of Rupee -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M49,59 L62,72 L58,72 L46,60 Z" />
+        android:pathData="M49,57 L62,70 L58,70 L46,58 Z" />
 
     <!-- Upward Trend Indicator Dot -->
     <path
         android:fillColor="#FBBF24"
-        android:pathData="M69,35 A3,3 0 1,1 69,35.01" />
+        android:pathData="M68,36 A3,3 0 1,1 68,36.01" />
 </vector>

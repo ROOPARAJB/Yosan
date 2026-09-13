@@ -2,6 +2,7 @@ package com.example.features.transactions
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -42,22 +43,56 @@ fun TransactionDetailSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val currentTx = allTransactions.find { it.id == transaction.id } ?: transaction
+
     val categories by viewModel.categories.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
     var showCategoryPicker by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var isEditingDesc by remember { mutableStateOf(false) }
-    var editedDescText by remember(transaction.description) { mutableStateOf("") }
+    var editedDescText by remember(currentTx.description) { mutableStateOf("") }
+
+    var pendingTypeChange by remember { mutableStateOf<TransactionType?>(null) }
+
+    if (pendingTypeChange != null) {
+        val targetType = pendingTypeChange!!
+        AlertDialog(
+            onDismissRequest = { pendingTypeChange = null },
+            title = { Text("Change Transaction Type?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("Do you want to reclassify this transaction as ${targetType.name}? This will immediately update your dashboard calculations and financial reports.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.updateTransactionType(currentTx, targetType)
+                        pendingTypeChange = null
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Confirm")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingTypeChange = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        dragHandle = { BottomSheetDefaults.DragHandle() },
         modifier = modifier
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
                 .verticalScroll(rememberScrollState())
         ) {
             // Header
@@ -79,10 +114,18 @@ fun TransactionDetailSheet(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Amount Hero Banner
-            val isPositive = transaction.transactionType == TransactionType.INCOME ||
-                    transaction.transactionType == TransactionType.REFUND
+            val isPositive = currentTx.transactionType == TransactionType.INCOME ||
+                    currentTx.transactionType == TransactionType.REFUND ||
+                    currentTx.transactionType == TransactionType.BORROWING
 
-            val amountColor = if (isPositive) IncomeGreen else if (transaction.transactionType == TransactionType.TRANSFER) TransferSlate else ExpenseRed
+            val amountColor = when (currentTx.transactionType) {
+                TransactionType.INCOME, TransactionType.REFUND -> IncomeGreen
+                TransactionType.BORROWING -> OutstandingAmber
+                TransactionType.LENDING -> LendingIndigo
+                TransactionType.INVESTMENT -> Color(0xFF10B981)
+                TransactionType.TRANSFER -> TransferSlate
+                else -> ExpenseRed
+            }
 
             Surface(
                 color = amountColor.copy(alpha = 0.12f),
@@ -94,23 +137,23 @@ fun TransactionDetailSheet(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = transaction.transactionType.name,
+                        text = currentTx.transactionType.name,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = amountColor
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    val prefix = if (isPositive) "+" else if (transaction.transactionType == TransactionType.TRANSFER) "" else "-"
+                    val prefix = if (isPositive) "+" else if (currentTx.transactionType == TransactionType.TRANSFER) "" else "-"
                     Text(
-                        text = "$prefix${CurrencyFormatter.formatInr(transaction.amount)}",
+                        text = "$prefix${CurrencyFormatter.formatInr(currentTx.amount)}",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = amountColor
                     )
-                    if (transaction.balanceAfterTransaction != null) {
+                    if (currentTx.balanceAfterTransaction != null) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Running Balance: ${CurrencyFormatter.formatInr(transaction.balanceAfterTransaction)}",
+                            text = "Running Balance: ${CurrencyFormatter.formatInr(currentTx.balanceAfterTransaction)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -118,10 +161,88 @@ fun TransactionDetailSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // Transaction Type Selector Chips
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            ) {
+                Text(
+                    text = "Transaction Type",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val availableTypes = listOf(
+                        TransactionType.EXPENSE to "Expense",
+                        TransactionType.INCOME to "Income",
+                        TransactionType.LENDING to "Lend",
+                        TransactionType.BORROWING to "Borrow",
+                        TransactionType.INVESTMENT to "Investment",
+                        TransactionType.TRANSFER to "Transfer"
+                    )
+
+                    availableTypes.forEach { (type, label) ->
+                        val isSelected = currentTx.transactionType == type
+                        val typeColor = when (type) {
+                            TransactionType.INCOME, TransactionType.REFUND -> IncomeGreen
+                            TransactionType.EXPENSE -> ExpenseRed
+                            TransactionType.LENDING -> LendingIndigo
+                            TransactionType.BORROWING -> OutstandingAmber
+                            TransactionType.INVESTMENT -> Color(0xFF10B981)
+                            TransactionType.TRANSFER -> TransferSlate
+                            else -> MaterialTheme.colorScheme.primary
+                        }
+
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                if (!isSelected) {
+                                    pendingTypeChange = type
+                                }
+                            },
+                            label = {
+                                Text(
+                                    text = label,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            leadingIcon = {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = typeColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = typeColor.copy(alpha = 0.18f),
+                                selectedLabelColor = typeColor
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isSelected,
+                                selectedBorderColor = typeColor,
+                                borderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Details Table
-            DetailRow(label = "Date", value = DateUtils.formatForDisplay(transaction.transactionDate))
+            DetailRow(label = "Date", value = DateUtils.formatForDisplay(currentTx.transactionDate))
 
             // Description Block
             Column(
@@ -138,7 +259,7 @@ fun TransactionDetailSheet(
                 if (isEditingDesc) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = transaction.description,
+                            text = currentTx.description,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -160,8 +281,8 @@ fun TransactionDetailSheet(
                             IconButton(
                                 onClick = {
                                     if (editedDescText.isNotBlank()) {
-                                        val combined = "${transaction.description} ${editedDescText.trim()}"
-                                        viewModel.updateTransactionDescription(transaction.id, combined)
+                                        val combined = "${currentTx.description} ${editedDescText.trim()}"
+                                        viewModel.updateTransactionDescription(currentTx.id, combined)
                                         isEditingDesc = false
                                         editedDescText = ""
                                     }
@@ -179,8 +300,8 @@ fun TransactionDetailSheet(
                             }
                         }
                         // Keyword suggestions from description words
-                        val suggestions = remember(transaction.description) {
-                            transaction.description
+                        val suggestions = remember(currentTx.description) {
+                            currentTx.description
                                 .split(" ", "\t", "-", "_", "/", ".")
                                 .map { it.trim().lowercase() }
                                 .filter { it.length > 3 }
@@ -211,7 +332,7 @@ fun TransactionDetailSheet(
                     }
                 } else {
                     Text(
-                        text = transaction.description,
+                        text = currentTx.description,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -222,25 +343,95 @@ fun TransactionDetailSheet(
                 }
             }
             
-            // Categorisation Row
-            Row(
+            // Categorisation Section with Direct Interactive Chips
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-                    .clickable { showCategoryPicker = true },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(vertical = 10.dp)
             ) {
-                Text(
-                    text = "Categorisation",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                CategoryChip(categoryName = transaction.categoryName)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Category Assignment",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    TextButton(
+                        onClick = { showCategoryPicker = true },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add New", fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                androidx.compose.foundation.layout.FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    categories.forEach { cat ->
+                        val isCurrent = currentTx.categoryName.equals(cat.name, ignoreCase = true)
+                        val catColor = try {
+                            Color(android.graphics.Color.parseColor(cat.colorHex))
+                        } catch (e: Exception) {
+                            MaterialTheme.colorScheme.primary
+                        }
+
+                        FilterChip(
+                            selected = isCurrent,
+                            onClick = {
+                                viewModel.updateTransactionCategory(currentTx, cat)
+                                onDismiss()
+                            },
+                            label = {
+                                Text(
+                                    text = cat.name,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 12.sp
+                                )
+                            },
+                            leadingIcon = {
+                                if (isCurrent) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected",
+                                        tint = catColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(catColor)
+                                    )
+                                }
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = catColor.copy(alpha = 0.18f),
+                                selectedLabelColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isCurrent,
+                                selectedBorderColor = catColor,
+                                borderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                    }
+                }
             }
 
-            val matchingAccount = remember(accounts, transaction.accountId) {
-                accounts.firstOrNull { it.id == transaction.accountId }
+            val matchingAccount = remember(accounts, currentTx.accountId) {
+                accounts.firstOrNull { it.id == currentTx.accountId }
             }
             val accountLabel = matchingAccount?.let {
                 if (it.bankName.isNotBlank() && it.accountName.isNotBlank() && !it.bankName.equals(it.accountName, ignoreCase = true)) {
@@ -251,16 +442,16 @@ fun TransactionDetailSheet(
             } ?: "Primary Account"
             DetailRow(label = "Bank / Account", value = accountLabel)
 
-            if (transaction.debitAmount > 0) {
-                DetailRow(label = "Debit", value = CurrencyFormatter.formatInr(transaction.debitAmount))
+            if (currentTx.debitAmount > 0) {
+                DetailRow(label = "Debit", value = CurrencyFormatter.formatInr(currentTx.debitAmount))
             }
-            if (transaction.creditAmount > 0) {
-                DetailRow(label = "Credit", value = CurrencyFormatter.formatInr(transaction.creditAmount))
+            if (currentTx.creditAmount > 0) {
+                DetailRow(label = "Credit", value = CurrencyFormatter.formatInr(currentTx.creditAmount))
             }
-            if (transaction.referenceNumber.isNotBlank()) {
-                DetailRow(label = "Reference #", value = transaction.referenceNumber)
+            if (currentTx.referenceNumber.isNotBlank()) {
+                DetailRow(label = "Reference #", value = currentTx.referenceNumber)
             }
-            if (transaction.notes.isNotBlank()) {
+            if (currentTx.notes.isNotBlank()) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -273,7 +464,7 @@ fun TransactionDetailSheet(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = transaction.notes,
+                        text = currentTx.notes,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -282,13 +473,13 @@ fun TransactionDetailSheet(
 
             DetailRow(
                 label = "Source",
-                value = if (transaction.isManual) "Manual Entry" else "Imported (${transaction.source})"
+                value = if (currentTx.isManual) "Manual Entry" else "Imported (${currentTx.source})"
             )
 
-            if (transaction.categorizationConfidence > 0f) {
+            if (currentTx.categorizationConfidence > 0f) {
                 DetailRow(
                     label = "Rule Confidence",
-                    value = "${(transaction.categorizationConfidence * 100).toInt()}% match"
+                    value = "${(currentTx.categorizationConfidence * 100).toInt()}% match"
                 )
             }
 

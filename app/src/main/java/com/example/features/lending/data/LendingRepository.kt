@@ -45,4 +45,19 @@ class LendingRepository(private val database: AppDatabase) {
         }
         return repaymentId
     }
+
+    suspend fun deleteRepayment(repaymentId: Long, loanId: Long) {
+        loanRepaymentDao.deleteRepayment(repaymentId)
+        val loan = loanDao.getLoanById(loanId)
+        if (loan != null) {
+            val totalRepaid = (loanRepaymentDao.getTotalRepaidForLoan(loanId) ?: 0.0)
+            val remaining = (loan.amount - totalRepaid).coerceAtLeast(0.0)
+            val status = when {
+                remaining <= 0.0 -> LoanStatus.PAID
+                totalRepaid > 0.0 -> LoanStatus.PARTIALLY_PAID
+                else -> LoanStatus.ACTIVE
+            }
+            loanDao.updateLoanRepaymentProgress(loanId, totalRepaid, remaining, status)
+        }
+    }
 }

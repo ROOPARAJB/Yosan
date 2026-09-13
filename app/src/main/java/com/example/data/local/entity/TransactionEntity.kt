@@ -4,13 +4,14 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 enum class TransactionType {
-    INCOME, EXPENSE, TRANSFER, REFUND, LENDING, INVESTMENT, OTHER
+    INCOME, EXPENSE, TRANSFER, REFUND, LENDING, BORROWING, INVESTMENT, OTHER
 }
 
 @Entity(tableName = "transactions")
 data class TransactionEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    val syncId: String = java.util.UUID.randomUUID().toString(),
     val accountId: Long = 1,
     val transactionDate: String, // format: YYYY-MM-DD
     val description: String,

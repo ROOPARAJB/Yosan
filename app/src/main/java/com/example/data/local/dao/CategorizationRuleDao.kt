@@ -9,6 +9,9 @@ interface CategorizationRuleDao {
     @Query("SELECT * FROM categorization_rules ORDER BY priority DESC, id ASC")
     fun getAllRules(): Flow<List<CategorizationRuleEntity>>
 
+    @Query("SELECT * FROM categorization_rules ORDER BY priority DESC, id ASC")
+    suspend fun getAllRulesList(): List<CategorizationRuleEntity>
+
     @Query("SELECT * FROM categorization_rules WHERE isActive = 1 ORDER BY priority DESC, id ASC")
     suspend fun getActiveRulesList(): List<CategorizationRuleEntity>
 

@@ -1,0 +1,1034 @@
+package com.example.features.dashboard
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.local.entity.LoanEntity
+import com.example.data.local.entity.TransactionEntity
+import com.example.data.local.entity.TransactionType
+import com.example.features.reports.FinancialInsight
+import com.example.features.reports.InsightType
+import com.example.ui.components.*
+import com.example.ui.theme.*
+import com.example.features.transactions.FinanceViewModel
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DashboardScreen(
+    viewModel: FinanceViewModel,
+    onNavigateToTransactions: () -> Unit,
+    onNavigateToImport: () -> Unit,
+    onOpenAddSheet: () -> Unit,
+    onTransactionClick: (TransactionEntity) -> Unit,
+    onNavigateToCompanyExpenses: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val summary by viewModel.dashboardSummary.collectAsState()
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val loans by viewModel.loans.collectAsState()
+    val categoryBreakdown by viewModel.categoryBreakdown.collectAsState()
+    val categoryIncomeBreakdown by viewModel.categoryIncomeBreakdown.collectAsState()
+    val monthlyTrends by viewModel.monthlyTrends.collectAsState()
+    val insights by viewModel.financialInsights.collectAsState()
+    val userProfile by viewModel.userProfile.collectAsState()
+    val companyExpenses by viewModel.companyExpenses.collectAsState()
+    val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
+    val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
+
+    var activeDialogTitle by remember { mutableStateOf<String?>(null) }
+    var activeDialogTransactions by remember { mutableStateOf<List<TransactionEntity>>(emptyList()) }
+
+    val recentTransactions = remember(allTransactions) { allTransactions.take(5) }
+    val activeLoans = remember(loans) { loans.filter { it.remainingAmount > 0 }.take(4) }
+
+    val cardsConfig = remember(userProfile?.dashboardCardsConfig) {
+        DashboardCardConfigManager.parse(userProfile?.dashboardCardsConfig)
+    }
+
+    val greeting = remember {
+        val calendar = java.util.Calendar.getInstance()
+        when (calendar.get(java.util.Calendar.HOUR_OF_DAY)) {
+            in 5..11 -> "Good Morning,"
+            in 12..16 -> "Good Afternoon,"
+            in 17..21 -> "Good Evening,"
+            else -> "Good Night,"
+        }
+    }
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("dashboard_screen"),
+        contentPadding = PaddingValues(bottom = 100.dp)
+    ) {
+        // Top Header & User Greeting
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = greeting,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = userProfile?.name ?: "Personal Finance",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                }
+            }
+        }
+
+        // If no transactions exist, only show the import suggestion box
+        if (allTransactions.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.RocketLaunch,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Get Started with Yosan",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Import your Excel bank statements or add transactions manually to populate your personal expenses, category analytics, and smart insights.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = onNavigateToImport,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Import Excel", maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = onOpenAddSheet,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Add Record", maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Dynamic Dashboard Cards rendering based on user configuration when data exists
+            cardsConfig.forEach { cardItem ->
+                if (cardItem.isEnabled) {
+                    when (cardItem.type) {
+                        // 1. Personal Expense Card
+                        DashboardCardType.PERSONAL_EXPENSE -> {
+                            item {
+                                val personalTxs = remember(allTransactions) {
+                                    allTransactions.filter {
+                                        it.transactionType == TransactionType.EXPENSE &&
+                                                !it.categoryName.equals("Official Expense", ignoreCase = true)
+                                    }
+                                }
+                                val personalExpenseTotal = remember(personalTxs) {
+                                    personalTxs.sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
+                                }
+                                val personalIncomeTotal = remember(allTransactions) {
+                                    allTransactions.filter {
+                                        it.transactionType == TransactionType.INCOME
+                                    }.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
+                                }
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            activeDialogTitle = "Personal Expenses"
+                                            activeDialogTransactions = personalTxs
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Surface(
+                                                    color = ExpenseRed.copy(alpha = 0.12f),
+                                                    shape = CircleShape,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Person,
+                                                            contentDescription = "Personal Expense",
+                                                            tint = ExpenseRed,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "Personal Expense",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${personalTxs.size} transactions",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(12.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = "Total Outflow",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = personalExpenseTotal,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = ExpenseRed,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Text(
+                                                    text = "Total Inflow",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = personalIncomeTotal,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = IncomeGreen,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2. Official Expense Card
+                        DashboardCardType.OFFICIAL_EXPENSE -> {
+                            item {
+                                val outstandingClaims = remember(companyExpenses) { companyExpenses.filter { !it.isReimbursed }.sumOf { it.amount } }
+                                val reimbursedClaims = remember(companyExpenses) { companyExpenses.filter { it.isReimbursed }.sumOf { it.amount } }
+                                val officialTxs = remember(allTransactions) {
+                                    allTransactions.filter {
+                                        it.categoryName.equals("Official Expense", ignoreCase = true) ||
+                                                it.notes.contains("Company", ignoreCase = true) ||
+                                                it.description.contains("Company", ignoreCase = true) ||
+                                                it.description.contains("Official", ignoreCase = true)
+                                    }
+                                }
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            onNavigateToCompanyExpenses()
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Surface(
+                                                    color = LendingIndigo.copy(alpha = 0.12f),
+                                                    shape = CircleShape,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.BusinessCenter,
+                                                            contentDescription = "Official Expense",
+                                                            tint = LendingIndigo,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "Official Expense",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${companyExpenses.size} claims • ${officialTxs.size} transactions",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = "Outstanding Claims",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = outstandingClaims,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = OutstandingAmber,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Text(
+                                                    text = "Reimbursed",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = reimbursedClaims,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = IncomeGreen,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. Lend Card
+                        DashboardCardType.LEND -> {
+                            item {
+                                val lendTotal = remember(loans) {
+                                    loans.sumOf { it.remainingAmount }
+                                }
+                                val totalRepaidLend = remember(loans) {
+                                    loans.sumOf { it.amountRepaid }
+                                }
+                                val lendTxs = remember(allTransactions) {
+                                    allTransactions.filter {
+                                        it.transactionType == TransactionType.LENDING ||
+                                                it.linkedLoanId != null ||
+                                                it.categoryName.contains("Lend", ignoreCase = true) ||
+                                                it.categoryName.contains("Loan", ignoreCase = true)
+                                    }
+                                }
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            activeDialogTitle = "Lend Records"
+                                            activeDialogTransactions = lendTxs
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Surface(
+                                                    color = IncomeGreen.copy(alpha = 0.12f),
+                                                    shape = CircleShape,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.CallMade,
+                                                            contentDescription = "Lend",
+                                                            tint = IncomeGreen,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "Lend",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${loans.filter { it.remainingAmount > 0 }.size} active entries",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = "Pending Collection",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = lendTotal,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = IncomeGreen,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Text(
+                                                    text = "Total Repaid",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = totalRepaidLend,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 4. Borrow Card
+                        DashboardCardType.BORROW -> {
+                            item {
+                                val borrowTxs = remember(allTransactions) {
+                                    allTransactions.filter {
+                                        it.transactionType == TransactionType.BORROWING ||
+                                                it.categoryName.contains("Borrow", ignoreCase = true) ||
+                                                it.categoryName.contains("Debt", ignoreCase = true)
+                                    }
+                                }
+                                val borrowTotal = remember(borrowTxs) {
+                                    borrowTxs.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
+                                }
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            activeDialogTitle = "Borrow Records"
+                                            activeDialogTransactions = borrowTxs
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Surface(
+                                                    color = OutstandingAmber.copy(alpha = 0.12f),
+                                                    shape = CircleShape,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.CallReceived,
+                                                            contentDescription = "Borrow",
+                                                            tint = OutstandingAmber,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "Borrow",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${borrowTxs.size} borrowed records",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = "Total Borrowed / Debt",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        PrivacyAmountText(
+                                            amount = borrowTotal,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = OutstandingAmber,
+                                            isRevealed = isRevealed,
+                                            isPrivacyEnabled = privacyEnabled,
+                                            onTap = { viewModel.revealAmountsTemporarily() }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // 5. Investments Card
+                        DashboardCardType.INVESTMENT -> {
+                            item {
+                                val investTxs = remember(allTransactions) {
+                                    allTransactions.filter {
+                                        it.transactionType == TransactionType.INVESTMENT ||
+                                                it.categoryName.contains("Investment", ignoreCase = true) ||
+                                                it.categoryName.contains("Stock", ignoreCase = true) ||
+                                                it.categoryName.contains("Mutual", ignoreCase = true)
+                                    }
+                                }
+                                val investTotal = remember(investTxs) {
+                                    investTxs.sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
+                                }
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            activeDialogTitle = "Investments"
+                                            activeDialogTransactions = investTxs
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Surface(
+                                                    color = Color(0xFF10B981).copy(alpha = 0.12f),
+                                                    shape = CircleShape,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.TrendingUp,
+                                                            contentDescription = "Investments",
+                                                            tint = Color(0xFF10B981),
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "Investments",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${investTxs.size} asset allocations",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = "Total Invested Assets",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        PrivacyAmountText(
+                                            amount = investTotal,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF10B981),
+                                            isRevealed = isRevealed,
+                                            isPrivacyEnabled = privacyEnabled,
+                                            onTap = { viewModel.revealAmountsTemporarily() }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // 6. Rotational / Transfers Card
+                        DashboardCardType.ROTATIONAL -> {
+                            item {
+                                val transferTxs = remember(allTransactions) {
+                                    allTransactions.filter {
+                                        it.transactionType == TransactionType.TRANSFER ||
+                                                it.categoryName.contains("Transfer", ignoreCase = true) ||
+                                                it.categoryName.contains("Self", ignoreCase = true)
+                                    }
+                                }
+                                val transferTotal = remember(transferTxs) {
+                                    transferTxs.sumOf { if (it.debitAmount > 0.0) it.debitAmount else it.amount }
+                                }
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .clickable {
+                                            activeDialogTitle = "Rotational / Transfers"
+                                            activeDialogTransactions = transferTxs
+                                        },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Surface(
+                                                    color = TransferSlate.copy(alpha = 0.12f),
+                                                    shape = CircleShape,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.SyncAlt,
+                                                            contentDescription = "Rotational Transfers",
+                                                            tint = TransferSlate,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Column {
+                                                    Text(
+                                                        text = "Rotational / Transfers",
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${transferTxs.size} self transfers",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = "Total Inter-Account Transfers",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        PrivacyAmountText(
+                                            amount = transferTotal,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = TransferSlate,
+                                            isRevealed = isRevealed,
+                                            isPrivacyEnabled = privacyEnabled,
+                                            onTap = { viewModel.revealAmountsTemporarily() }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // 6. Monthly Breakdown Card
+                        DashboardCardType.MONTHLY_BREAKDOWN -> {
+                            if (monthlyTrends.isNotEmpty()) {
+                                item {
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                                            .clip(RoundedCornerShape(16.dp)),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(
+                                                text = "Monthly Breakdown",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Spacer(modifier = Modifier.height(12.dp))
+
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 4.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Month",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.weight(1.2f)
+                                                )
+                                                Text(
+                                                    text = "Income",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = IncomeGreen,
+                                                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                                                    modifier = Modifier.weight(1.5f)
+                                                )
+                                                Text(
+                                                    text = "Expense",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = ExpenseRed,
+                                                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                                                    modifier = Modifier.weight(1.5f)
+                                                )
+                                            }
+
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(vertical = 6.dp),
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                            )
+
+                                            monthlyTrends.forEach { trend ->
+                                                val monthTxs = remember(allTransactions, trend.monthKey) {
+                                                    allTransactions.filter {
+                                                        (it.transactionDate.length >= 7 && it.transactionDate.substring(0, 7) == trend.monthKey) ||
+                                                                it.transactionDate.startsWith(trend.monthKey)
+                                                    }
+                                                }
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable {
+                                                            activeDialogTitle = "${trend.monthLabel} Breakdown"
+                                                            activeDialogTransactions = monthTxs
+                                                        }
+                                                        .padding(vertical = 6.dp, horizontal = 4.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = trend.monthLabel,
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.Medium,
+                                                        modifier = Modifier.weight(1.2f)
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier.weight(1.5f),
+                                                        contentAlignment = Alignment.CenterEnd
+                                                    ) {
+                                                        PrivacyAmountText(
+                                                            amount = trend.income,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = IncomeGreen,
+                                                            isRevealed = isRevealed,
+                                                            isPrivacyEnabled = privacyEnabled,
+                                                            onTap = { viewModel.revealAmountsTemporarily() }
+                                                        )
+                                                    }
+                                                    Box(
+                                                        modifier = Modifier.weight(1.5f),
+                                                        contentAlignment = Alignment.CenterEnd
+                                                    ) {
+                                                        PrivacyAmountText(
+                                                            amount = trend.expense,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = ExpenseRed,
+                                                            isRevealed = isRevealed,
+                                                            isPrivacyEnabled = privacyEnabled,
+                                                            onTap = { viewModel.revealAmountsTemporarily() }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 7. Spending by Category Card
+                        DashboardCardType.CATEGORY_WISE -> {
+                            item {
+                                DonutCategoryChart(
+                                    items = categoryBreakdown,
+                                    title = "Spending by Category",
+                                    icon = Icons.Default.TrendingDown,
+                                    iconTint = ExpenseRed,
+                                    showEmptyState = true,
+                                    emptyMessage = "No expense transactions recorded yet.",
+                                    onCategoryClick = { catName ->
+                                        activeDialogTitle = catName
+                                        activeDialogTransactions = allTransactions.filter {
+                                            it.transactionType == TransactionType.EXPENSE &&
+                                                    it.categoryName.equals(catName, ignoreCase = true)
+                                        }
+                                    },
+                                    isRevealed = isRevealed,
+                                    isPrivacyEnabled = privacyEnabled,
+                                    onToggleReveal = { viewModel.revealAmountsTemporarily() },
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+
+                        // 8. Income by Category Card
+                        DashboardCardType.INCOME_CATEGORY -> {
+                            item {
+                                DonutCategoryChart(
+                                    items = categoryIncomeBreakdown,
+                                    title = "Income by Category",
+                                    icon = Icons.Default.TrendingUp,
+                                    iconTint = IncomeGreen,
+                                    showEmptyState = true,
+                                    emptyMessage = "No income transactions recorded yet.",
+                                    onCategoryClick = { catName ->
+                                        activeDialogTitle = catName
+                                        activeDialogTransactions = allTransactions.filter {
+                                            (it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND) &&
+                                                    it.categoryName.equals(catName, ignoreCase = true)
+                                        }
+                                    },
+                                    isRevealed = isRevealed,
+                                    isPrivacyEnabled = privacyEnabled,
+                                    onToggleReveal = { viewModel.revealAmountsTemporarily() },
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    activeDialogTitle?.let { title ->
+        CategoryTransactionsDialog(
+            categoryName = title,
+            transactions = activeDialogTransactions,
+            onDismiss = {
+                activeDialogTitle = null
+                activeDialogTransactions = emptyList()
+            },
+            onTransactionClick = { tx ->
+                activeDialogTitle = null
+                activeDialogTransactions = emptyList()
+                onTransactionClick(tx)
+            },
+            isRevealed = isRevealed,
+            isPrivacyEnabled = privacyEnabled,
+            onToggleReveal = { viewModel.revealAmountsTemporarily() }
+        )
+    }
+}
+
+@Composable
+fun ActionChip(
+    label: String,
+    icon: ImageVector,
+    iconColor: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .clickable { onClick() },
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(20.dp),
+        shadowElevation = 1.dp,
+        border = CardDefaults.outlinedCardBorder()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = iconColor,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+fun InsightCard(
+    insight: FinancialInsight,
+    modifier: Modifier = Modifier
+) {
+    val (bgColor, iconColor, icon) = when (insight.type) {
+        InsightType.POSITIVE -> Triple(Color(0xFFECFDF5), IncomeGreen, Icons.Default.CheckCircle)
+        InsightType.WARNING -> Triple(Color(0xFFFEF3C7), OutstandingAmber, Icons.Default.Warning)
+        InsightType.INFO -> Triple(Color(0xFFEEF2FF), LendingIndigo, Icons.Default.Info)
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(12.dp),
+        shadowElevation = 1.dp,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(iconColor.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = insight.title,
+                    tint = iconColor,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = insight.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = insight.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}

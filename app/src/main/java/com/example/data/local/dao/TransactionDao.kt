@@ -16,11 +16,17 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE id = :id LIMIT 1")
     suspend fun getTransactionById(id: Long): TransactionEntity?
 
+    @Query("SELECT * FROM transactions WHERE syncId = :syncId LIMIT 1")
+    suspend fun getTransactionBySyncId(syncId: String): TransactionEntity?
+
     @Query("SELECT * FROM transactions WHERE transactionDate BETWEEN :startDate AND :endDate ORDER BY transactionDate DESC, id DESC")
     fun getTransactionsByDateRange(startDate: String, endDate: String): Flow<List<TransactionEntity>>
 
     @Query("SELECT * FROM transactions WHERE accountId = :accountId ORDER BY transactionDate DESC, id DESC")
     fun getTransactionsByAccount(accountId: Long): Flow<List<TransactionEntity>>
+
+    @Query("SELECT * FROM transactions WHERE accountId = :accountId ORDER BY transactionDate DESC, id DESC")
+    suspend fun getTransactionsByAccountList(accountId: Long): List<TransactionEntity>
 
     @Query("SELECT * FROM transactions WHERE categoryName = :categoryName ORDER BY transactionDate DESC, id DESC")
     fun getTransactionsByCategory(categoryName: String): Flow<List<TransactionEntity>>
@@ -59,17 +65,26 @@ interface TransactionDao {
     @Update
     suspend fun updateTransaction(transaction: TransactionEntity)
 
-    @Query("UPDATE transactions SET categoryId = :categoryId, categoryName = :categoryName, transactionType = :transactionType, isCategorized = 1, categorizationConfidence = 1.0 WHERE id = :id")
-    suspend fun updateTransactionCategory(id: Long, categoryId: Long?, categoryName: String, transactionType: TransactionType)
+    @Query("UPDATE transactions SET categoryId = :categoryId, categoryName = :categoryName, transactionType = :transactionType, isCategorized = 1, categorizationConfidence = 1.0, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateTransactionCategory(id: Long, categoryId: Long?, categoryName: String, transactionType: TransactionType, updatedAt: Long = System.currentTimeMillis())
 
     @Query("DELETE FROM transactions WHERE id = :id")
     suspend fun deleteTransaction(id: Long)
+
+    @Query("DELETE FROM transactions WHERE id IN (:ids)")
+    suspend fun deleteTransactions(ids: List<Long>)
 
     @Query("DELETE FROM transactions")
     suspend fun deleteAllTransactions()
 
     @Query("SELECT COUNT(*) FROM transactions")
     suspend fun getTransactionCount(): Int
+
+    @Query("SELECT * FROM transactions WHERE transferId = :transferId")
+    suspend fun getTransactionsByTransferId(transferId: String): List<TransactionEntity>
+
+    @Query("DELETE FROM transactions WHERE transferId = :transferId")
+    suspend fun deleteTransactionsByTransferId(transferId: String)
 
     @Query("SELECT * FROM transactions")
     suspend fun getAllTransactionsList(): List<TransactionEntity>

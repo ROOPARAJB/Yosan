@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -135,21 +136,24 @@ fun TransactionItemCard(
     modifier: Modifier = Modifier
 ) {
     val isPositive = transaction.transactionType == TransactionType.INCOME ||
-            transaction.transactionType == TransactionType.REFUND
+            transaction.transactionType == TransactionType.REFUND ||
+            transaction.transactionType == TransactionType.BORROWING
 
     val amountColor = when (transaction.transactionType) {
         TransactionType.INCOME, TransactionType.REFUND -> IncomeGreen
         TransactionType.EXPENSE -> ExpenseRed
         TransactionType.LENDING -> LendingIndigo
+        TransactionType.BORROWING -> OutstandingAmber
         TransactionType.INVESTMENT -> OutstandingAmber
         TransactionType.TRANSFER -> TransferSlate
-        TransactionType.OTHER -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurface
     }
 
     val typeIcon = when (transaction.transactionType) {
         TransactionType.INCOME -> Icons.Default.ArrowDownward
         TransactionType.EXPENSE -> Icons.Default.ArrowUpward
         TransactionType.LENDING -> Icons.Default.Handshake
+        TransactionType.BORROWING -> Icons.Default.CallReceived
         TransactionType.INVESTMENT -> Icons.Default.TrendingUp
         TransactionType.TRANSFER -> Icons.Default.SyncAlt
         else -> Icons.Default.Receipt
@@ -561,13 +565,21 @@ fun MonthlyTrendChart(
 @Composable
 fun DonutCategoryChart(
     items: List<CategoryExpenseItem>,
+    title: String = "Spending by Category",
+    icon: ImageVector = Icons.Default.PieChart,
+    iconTint: Color = MaterialTheme.colorScheme.primary,
+    showEmptyState: Boolean = false,
+    emptyMessage: String = "No categorized transactions recorded.",
     onCategoryClick: ((String) -> Unit)? = null,
     isRevealed: Boolean = false,
     isPrivacyEnabled: Boolean = true,
     onToggleReveal: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    if (items.isEmpty()) return
+    if (items.isEmpty() && !showEmptyState) return
+
+    var isExpanded by remember { mutableStateOf(false) }
+    val displayItems = if (isExpanded || items.size <= 5) items else items.take(5)
 
     Card(
         modifier = modifier
@@ -583,26 +595,52 @@ fun DonutCategoryChart(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Spending by Category",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                if (onCategoryClick != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Tap to filter",
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (onCategoryClick != null && items.isNotEmpty()) {
+                    Text(
+                        text = "${items.size} Categories",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = iconTint,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(14.dp))
+
+            if (items.isEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = emptyMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.height(14.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Donut Chart Canvas
+                // Donut Chart Canvas - renders all slices
                 Box(
                     modifier = Modifier.size(110.dp),
                     contentAlignment = Alignment.Center
@@ -611,7 +649,7 @@ fun DonutCategoryChart(
                         var startAngle = -90f
                         val strokeWidth = 18.dp.toPx()
 
-                        items.take(6).forEach { item ->
+                        items.forEach { item ->
                             val sweep = (item.percentage / 100f) * 360f
                             val color = try {
                                 Color(android.graphics.Color.parseColor(item.colorHex))
@@ -621,7 +659,7 @@ fun DonutCategoryChart(
                             drawArc(
                                 color = color,
                                 startAngle = startAngle,
-                                sweepAngle = sweep.coerceAtLeast(2f),
+                                sweepAngle = sweep.coerceAtLeast(1.5f),
                                 useCenter = false,
                                 style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
                                 size = Size(size.width, size.height)
@@ -630,7 +668,7 @@ fun DonutCategoryChart(
                         }
                     }
                     Text(
-                        text = "${items.size}\nCategories",
+                        text = "${items.size}\nCats",
                         style = MaterialTheme.typography.labelSmall,
                         textAlign = TextAlign.Center,
                         fontWeight = FontWeight.Bold,
@@ -642,7 +680,7 @@ fun DonutCategoryChart(
 
                 // Legend / Leaderboard
                 Column(modifier = Modifier.weight(1f)) {
-                    items.take(4).forEach { catItem ->
+                    displayItems.forEach { catItem ->
                         val color = try {
                             Color(android.graphics.Color.parseColor(catItem.colorHex))
                         } catch (e: Exception) {
@@ -665,53 +703,60 @@ fun DonutCategoryChart(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(8.dp)
+                                        .size(10.dp)
                                         .clip(CircleShape)
                                         .background(color)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Column {
                                     Text(
                                         text = catItem.categoryName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Medium,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "${String.format(java.util.Locale.ENGLISH, "%.1f", catItem.percentage)}% (${catItem.count} txns)",
+                                        text = "${String.format(java.util.Locale.ENGLISH, "%.1f", catItem.percentage)}% • ${catItem.count} txn${if (catItem.count > 1) "s" else ""}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 10.sp
+                                        fontSize = 11.sp
                                     )
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 PrivacyAmountText(
                                     amount = catItem.amount,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
                                     isRevealed = isRevealed,
                                     isPrivacyEnabled = isPrivacyEnabled,
                                     onTap = { onToggleReveal?.invoke() }
                                 )
-
-                                if (onCategoryClick != null) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(
-                                        imageVector = Icons.Default.ChevronRight,
-                                        contentDescription = "View",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
                             }
+                        }
+                    }
+
+                    if (items.size > 5) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        TextButton(
+                            onClick = { isExpanded = !isExpanded },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isExpanded) "Show Less" else "View All (${items.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                 }
             }
         }
     }
+}
 }
 
 
@@ -1146,4 +1191,125 @@ fun OnboardingPreferencesDialog(
         }
     }
 }
+
+@Composable
+fun CategoryTransactionsDialog(
+    categoryName: String,
+    transactions: List<com.example.data.local.entity.TransactionEntity>,
+    onDismiss: () -> Unit,
+    onTransactionClick: (com.example.data.local.entity.TransactionEntity) -> Unit,
+    isRevealed: Boolean = false,
+    isPrivacyEnabled: Boolean = false,
+    onToggleReveal: (() -> Unit)? = null
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = categoryName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${transactions.size} transaction${if (transactions.size != 1) "s" else ""}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+        },
+        text = {
+            if (transactions.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No transactions found for this category.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                ) {
+                    items(transactions.size) { index ->
+                        val tx = transactions[index]
+                        val isIncome = tx.transactionType == com.example.data.local.entity.TransactionType.INCOME || tx.transactionType == com.example.data.local.entity.TransactionType.REFUND
+                        val amountColor = if (isIncome) IncomeGreen else ExpenseRed
+                        val prefix = if (isIncome) "+" else "-"
+
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    onDismiss()
+                                    onTransactionClick(tx)
+                                },
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = tx.description.ifBlank { "Transaction" },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = tx.transactionDate,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                PrivacyAmountText(
+                                    amount = if (isIncome && tx.creditAmount > 0) tx.creditAmount else if (tx.debitAmount > 0) tx.debitAmount else tx.amount,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = amountColor,
+                                    prefix = prefix,
+                                    isRevealed = isRevealed,
+                                    isPrivacyEnabled = isPrivacyEnabled,
+                                    onTap = { onToggleReveal?.invoke() }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+        shape = RoundedCornerShape(24.dp)
+    )
+}
+
 

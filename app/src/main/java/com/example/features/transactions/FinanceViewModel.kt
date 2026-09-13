@@ -13,11 +13,20 @@ import com.example.features.rules.data.RulesRepository
 import com.example.features.reports.*
 import com.example.features.reports.data.ReportsRepository
 import com.example.features.import.*
+import com.example.features.sync.*
 import com.example.features.transactions.data.TransactionRepository
 import com.example.features.lending.*
 import com.example.features.lending.data.LendingRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.example.utils.UndoJsonHelper
+
+data class UndoSnackbarData(
+    val message: String,
+    val actionId: String
+)
 
 data class SmartRulePrompt(
     val keyword: String,
@@ -96,6 +105,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val companyExpenses: StateFlow<List<CompanyExpenseEntity>> = getCompanyExpensesUseCase()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val undoHistory: StateFlow<List<UndoHistoryEntity>> = repository.undoHistory
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _undoSnackbarEvent = MutableSharedFlow<UndoSnackbarData>(extraBufferCapacity = 1)
+    val undoSnackbarEvent = _undoSnackbarEvent.asSharedFlow()
+
     // UI Search & Filters
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
@@ -127,6 +142,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     // Import Preview state
     private val _importPreview = MutableStateFlow<ImportPreviewResult?>(null)
     val importPreview = _importPreview.asStateFlow()
+
+    init {
+        recalculateAllAccountBalances()
+        loadSyncMetadata()
+    }
 
     // Privacy Mode (Hide Financial Values)
     private val _isAmountTemporarilyRevealed = MutableStateFlow(false)
@@ -195,12 +215,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         FinancialCalculationService.calculateSummary(txs, lns, compExp, accs)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardSummary())
 
-    // Derived Category Breakdown
+    // Derived Category Breakdown (Expense)
     val categoryBreakdown: StateFlow<List<CategoryExpenseItem>> = combine(
         allTransactions,
         categories
     ) { txs, cats ->
         FinancialCalculationService.calculateCategoryExpenseBreakdown(txs, cats)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Derived Category Breakdown (Income)
+    val categoryIncomeBreakdown: StateFlow<List<CategoryExpenseItem>> = combine(
+        allTransactions,
+        categories
+    ) { txs, cats ->
+        FinancialCalculationService.calculateCategoryIncomeBreakdown(txs, cats)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Derived Monthly Trends
@@ -248,6 +276,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     init {
         viewModelScope.launch {
             try {
+                // Ensure essential default categories exist
+                val existingCats = database.categoryDao().getAllCategoriesList()
+                if (existingCats.isEmpty()) {
+                    database.categoryDao().insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
+                }
+
                 val rules = database.categorizationRuleDao().getActiveRulesList()
                 val transactions = database.transactionDao().getAllTransactionsList()
                 val uncategorized = transactions.filter { it.categoryName.equals("Uncategorized", ignoreCase = true) }
@@ -475,6 +509,139 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // Undo & Recovery Engine
+    suspend fun recordUndoAction(
+        actionType: String,
+        description: String,
+        previousTxs: List<TransactionEntity> = emptyList(),
+        newTxs: List<TransactionEntity> = emptyList(),
+        affectedIds: List<Long> = emptyList(),
+        relatedRuleId: Long? = null,
+        ruleSnapshot: CategorizationRuleEntity? = null
+    ): String {
+        val ids = if (affectedIds.isNotEmpty()) affectedIds else (previousTxs.map { it.id } + newTxs.map { it.id }).distinct()
+        val action = UndoHistoryEntity(
+            actionType = actionType,
+            description = description,
+            timestamp = System.currentTimeMillis(),
+            affectedTransactionIds = UndoJsonHelper.serializeIds(ids),
+            previousStateJson = UndoJsonHelper.serializeTransactions(previousTxs),
+            newStateJson = UndoJsonHelper.serializeTransactions(newTxs),
+            relatedRuleId = relatedRuleId,
+            ruleSnapshotJson = ruleSnapshot?.let { UndoJsonHelper.serializeRule(it) }
+        )
+        repository.insertUndoAction(action)
+        _undoSnackbarEvent.tryEmit(UndoSnackbarData(description, action.actionId))
+        return action.actionId
+    }
+
+    fun undoLastAction() {
+        viewModelScope.launch {
+            val latest = repository.getLatestUndoAction()
+            if (latest != null) {
+                undoAction(latest.actionId)
+            }
+        }
+    }
+
+    fun undoAction(actionId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val action = repository.getUndoActionById(actionId) ?: return@launch
+                val prevTxs = UndoJsonHelper.deserializeTransactions(action.previousStateJson)
+                val newTxs = UndoJsonHelper.deserializeTransactions(action.newStateJson)
+                val ruleSnapshot = UndoJsonHelper.deserializeRule(action.ruleSnapshotJson)
+                val newTxMap = newTxs.associateBy { it.id }
+
+                when (action.actionType) {
+                    "CHANGE_CATEGORY", "CHANGE_TYPE", "CHANGE_DESCRIPTION", "EDIT_TRANSACTION" -> {
+                        for (prev in prevTxs) {
+                            val restored = prev.copy(updatedAt = System.currentTimeMillis())
+                            database.transactionDao().updateTransaction(restored)
+                        }
+                    }
+                    "DELETE_TRANSACTION", "BULK_DELETE" -> {
+                        for (prev in prevTxs) {
+                            val restored = prev.copy(updatedAt = System.currentTimeMillis())
+                            database.transactionDao().insertTransaction(restored)
+                            if (restored.syncId.isNotBlank()) {
+                                database.syncDao().removeDeletedTransaction(restored.syncId)
+                            }
+                        }
+                    }
+                    "APPLY_RULE", "BULK_CATEGORIZE" -> {
+                        // Manual Change Preservation Principle:
+                        // Only revert transactions that were not subsequently changed by the user
+                        for (prev in prevTxs) {
+                            val current = database.transactionDao().getTransactionById(prev.id) ?: continue
+                            val expectedNew = newTxMap[prev.id]
+                            val wasUnmodifiedSince = expectedNew == null || current.categoryName.equals(expectedNew.categoryName, ignoreCase = true)
+                            if (wasUnmodifiedSince) {
+                                val restored = current.copy(
+                                    categoryId = prev.categoryId,
+                                    categoryName = prev.categoryName,
+                                    transactionType = prev.transactionType,
+                                    isCategorized = prev.isCategorized,
+                                    categorizationConfidence = prev.categorizationConfidence,
+                                    updatedAt = System.currentTimeMillis()
+                                )
+                                database.transactionDao().updateTransaction(restored)
+                            }
+                        }
+                    }
+                    "ADD_RULE" -> {
+                        if (action.relatedRuleId != null) {
+                            database.categorizationRuleDao().deleteRule(action.relatedRuleId)
+                        }
+                        // Revert rule's applied transactions while preserving any manual overrides
+                        for (prev in prevTxs) {
+                            val current = database.transactionDao().getTransactionById(prev.id) ?: continue
+                            val expectedNew = newTxMap[prev.id]
+                            val wasUnmodifiedSince = expectedNew == null || current.categoryName.equals(expectedNew.categoryName, ignoreCase = true)
+                            if (wasUnmodifiedSince) {
+                                val restored = current.copy(
+                                    categoryId = prev.categoryId,
+                                    categoryName = prev.categoryName,
+                                    transactionType = prev.transactionType,
+                                    isCategorized = prev.isCategorized,
+                                    categorizationConfidence = prev.categorizationConfidence,
+                                    updatedAt = System.currentTimeMillis()
+                                )
+                                database.transactionDao().updateTransaction(restored)
+                            }
+                        }
+                    }
+                    "DELETE_RULE" -> {
+                        if (ruleSnapshot != null) {
+                            database.categorizationRuleDao().insertRule(ruleSnapshot)
+                        }
+                    }
+                    "EDIT_RULE" -> {
+                        if (ruleSnapshot != null) {
+                            database.categorizationRuleDao().updateRule(ruleSnapshot)
+                        }
+                    }
+                }
+
+                repository.deleteUndoAction(actionId)
+                withContext(Dispatchers.Main) {
+                    showMessage("Undone: ${action.description}")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showMessage("Failed to undo: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun clearUndoHistory() {
+        viewModelScope.launch {
+            repository.clearUndoHistory()
+            showMessage("Undo history cleared")
+        }
+    }
+
     fun updateTransactionCategory(tx: TransactionEntity, newCategory: CategoryEntity) {
         viewModelScope.launch {
             val resolvedType = when (newCategory.type) {
@@ -482,13 +649,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 com.example.data.local.entity.CategoryType.INVESTMENT -> TransactionType.INVESTMENT
                 else -> TransactionType.EXPENSE
             }
+            val oldTx = tx
             repository.updateTransactionCategory(tx.id, newCategory.id, newCategory.name, resolvedType)
+            val updatedTx = tx.copy(
+                categoryId = newCategory.id,
+                categoryName = newCategory.name,
+                transactionType = resolvedType,
+                isCategorized = true,
+                categorizationConfidence = 1.0f,
+                updatedAt = System.currentTimeMillis()
+            )
+            recordUndoAction(
+                actionType = "CHANGE_CATEGORY",
+                description = "Changed category of '${tx.description.take(24)}' to ${newCategory.name}",
+                previousTxs = listOf(oldTx),
+                newTxs = listOf(updatedTx)
+            )
             showMessage("Category updated to ${newCategory.name}")
 
             // Smart Rule Check: Don't prompt if a rule already covers this description or category
-            val activeRules = repository.
-
-            getActiveRulesList()
+            val activeRules = repository.getActiveRulesList()
             val alreadyCovered = activeRules.any { rule ->
                 (rule.categoryId == newCategory.id && tx.description.contains(rule.keyword, ignoreCase = true)) ||
                 rule.keyword.equals(tx.description.trim(), ignoreCase = true)
@@ -510,12 +690,94 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun updateTransactionType(tx: TransactionEntity, newType: TransactionType) {
+        viewModelScope.launch {
+            val oldTx = tx
+            val amount = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
+            val updated = when (newType) {
+                TransactionType.INCOME, TransactionType.REFUND -> {
+                    tx.copy(
+                        transactionType = newType,
+                        creditAmount = amount,
+                        debitAmount = 0.0,
+                        amount = amount,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                }
+                else -> {
+                    tx.copy(
+                        transactionType = newType,
+                        debitAmount = amount,
+                        creditAmount = 0.0,
+                        amount = amount,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                }
+            }
+            repository.updateTransaction(updated)
+            recordUndoAction(
+                actionType = "CHANGE_TYPE",
+                description = "Changed type of '${tx.description.take(24)}' to ${newType.name}",
+                previousTxs = listOf(oldTx),
+                newTxs = listOf(updated)
+            )
+            if (newType == TransactionType.LENDING) {
+                val existingLoans = database.loanDao().getAllLoansList()
+                val alreadyLinked = existingLoans.any { it.notes.contains(tx.description, ignoreCase = true) || it.amount == amount && it.lentDate == tx.transactionDate }
+                if (!alreadyLinked) {
+                    val cleanPersonName = tx.description.replace(Regex("(?i)upi/|imps/|neft/|transfer to|to |[0-9]"), "").trim().ifBlank { "Lending Contact" }
+                    database.loanDao().insertLoan(
+                        LoanEntity(
+                            personName = cleanPersonName,
+                            amount = amount,
+                            amountRepaid = 0.0,
+                            remainingAmount = amount,
+                            lentDate = tx.transactionDate,
+                            expectedRepaymentDate = null,
+                            notes = tx.description,
+                            status = LoanStatus.ACTIVE
+                        )
+                    )
+                }
+            }
+            showMessage("Transaction type changed to ${newType.name}")
+        }
+    }
+
+    fun updateTransactionsCategory(txIds: List<Long>, newCategory: CategoryEntity) {
+        viewModelScope.launch {
+            val resolvedType = when (newCategory.type) {
+                com.example.data.local.entity.CategoryType.INCOME -> TransactionType.INCOME
+                com.example.data.local.entity.CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                else -> TransactionType.EXPENSE
+            }
+            val prevList = mutableListOf<TransactionEntity>()
+            val newList = mutableListOf<TransactionEntity>()
+            txIds.forEach { id ->
+                val tx = repository.getTransactionById(id)
+                if (tx != null) {
+                    prevList.add(tx)
+                    repository.updateTransactionCategory(id, newCategory.id, newCategory.name, resolvedType)
+                    newList.add(tx.copy(categoryId = newCategory.id, categoryName = newCategory.name, transactionType = resolvedType, updatedAt = System.currentTimeMillis()))
+                }
+            }
+            recordUndoAction(
+                actionType = "BULK_CATEGORIZE",
+                description = "Categorized ${txIds.size} transactions as '${newCategory.name}'",
+                previousTxs = prevList,
+                newTxs = newList
+            )
+            showMessage("${txIds.size} transactions categorized as '${newCategory.name}'")
+        }
+    }
+
     fun updateTransactionDescription(txId: Long, newDescription: String) {
         viewModelScope.launch {
             val tx = repository.getTransactionById(txId)
             if (tx != null) {
+                val oldTx = tx
                 val containsCompany = newDescription.contains("company", ignoreCase = true)
-                var updatedTx = tx.copy(description = newDescription)
+                var updatedTx = tx.copy(description = newDescription, updatedAt = System.currentTimeMillis())
                 if (containsCompany) {
                     val catName = "Official Expense"
                     val existingCat = database.categoryDao().getCategoryByName(catName)
@@ -537,24 +799,35 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
                 repository.updateTransaction(updatedTx)
+                recordUndoAction(
+                    actionType = "CHANGE_DESCRIPTION",
+                    description = "Updated description for '${tx.description.take(24)}'",
+                    previousTxs = listOf(oldTx),
+                    newTxs = listOf(updatedTx)
+                )
                 showMessage("Description updated successfully")
                 scanForCompanyExpenses()
             }
         }
     }
 
-    private suspend fun applyRuleToExistingTransactions(keyword: String, categoryId: Long?, categoryName: String, transactionType: TransactionType) {
+    private suspend fun applyRuleToExistingTransactions(keyword: String, categoryId: Long?, categoryName: String, transactionType: TransactionType): Pair<List<TransactionEntity>, List<TransactionEntity>> {
+        val prevList = mutableListOf<TransactionEntity>()
+        val newList = mutableListOf<TransactionEntity>()
         try {
             val list = database.transactionDao().getAllTransactionsList()
             val normalizedKeyword = CategorizationEngine.normalize(keyword)
-            if (normalizedKeyword.isBlank()) return
+            if (normalizedKeyword.isBlank()) return Pair(emptyList(), emptyList())
             list.forEach { tx ->
                 val normalizedDesc = CategorizationEngine.normalize(tx.description)
                 if (normalizedDesc.contains(normalizedKeyword)) {
+                    prevList.add(tx)
                     database.transactionDao().updateTransactionCategory(tx.id, categoryId, categoryName, transactionType)
+                    newList.add(tx.copy(categoryId = categoryId, categoryName = categoryName, transactionType = transactionType, updatedAt = System.currentTimeMillis()))
                 }
             }
         } catch (_: Exception) {}
+        return Pair(prevList, newList)
     }
 
     fun acceptSmartRule(prompt: SmartRulePrompt) {
@@ -568,8 +841,16 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 matchType = MatchType.CONTAINS,
                 isActive = true
             )
-            repository.insertRule(rule)
-            applyRuleToExistingTransactions(prompt.keyword, prompt.categoryId, prompt.categoryName, prompt.transactionType)
+            val ruleId = repository.insertRule(rule)
+            val (prev, new) = applyRuleToExistingTransactions(prompt.keyword, prompt.categoryId, prompt.categoryName, prompt.transactionType)
+            recordUndoAction(
+                actionType = "ADD_RULE",
+                description = "Created auto-rule for '${prompt.keyword}' (applied to ${prev.size} txs)",
+                previousTxs = prev,
+                newTxs = new,
+                relatedRuleId = ruleId,
+                ruleSnapshot = rule.copy(id = ruleId)
+            )
             _smartRulePrompt.value = null
             showMessage("Auto-categorization rule created and applied for '${prompt.keyword}'")
         }
@@ -579,24 +860,335 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         _smartRulePrompt.value = null
     }
 
+    fun addTransferTransaction(
+        fromAccountId: Long,
+        toAccountId: Long,
+        amount: Double,
+        date: String,
+        notes: String = ""
+    ) {
+        viewModelScope.launch {
+            if (fromAccountId == toAccountId) {
+                showMessage("Source and destination accounts must be different")
+                return@launch
+            }
+            val fromAcc = repository.getAccountById(fromAccountId)
+            val toAcc = repository.getAccountById(toAccountId)
+            val transferId = java.util.UUID.randomUUID().toString()
+
+            val fromTx = TransactionEntity(
+                accountId = fromAccountId,
+                transactionDate = date,
+                description = "Transfer to ${toAcc?.accountName ?: "Account"}",
+                debitAmount = amount,
+                creditAmount = 0.0,
+                amount = amount,
+                transactionType = TransactionType.TRANSFER,
+                categoryName = "Transfer",
+                transferId = transferId,
+                notes = notes,
+                isManual = true
+            )
+            val toTx = TransactionEntity(
+                accountId = toAccountId,
+                transactionDate = date,
+                description = "Transfer from ${fromAcc?.accountName ?: "Account"}",
+                debitAmount = 0.0,
+                creditAmount = amount,
+                amount = amount,
+                transactionType = TransactionType.TRANSFER,
+                categoryName = "Transfer",
+                transferId = transferId,
+                notes = notes,
+                isManual = true
+            )
+
+            database.transactionDao().insertTransactions(listOf(fromTx, toTx))
+            transactionRepository.recalculateAccountBalance(fromAccountId)
+            transactionRepository.recalculateAccountBalance(toAccountId)
+            recalculateAllAccountBalances()
+            showMessage("Transfer of ₹$amount recorded")
+        }
+    }
+
     fun deleteTransaction(id: Long) {
         viewModelScope.launch {
-            repository.deleteTransaction(id)
-            showMessage("Transaction deleted")
+            val tx = repository.getTransactionById(id)
+            if (tx != null) {
+                val affectedAccountIds = mutableSetOf(tx.accountId)
+                val txsToDelete = mutableListOf(tx)
+
+                // Handle paired transfer deletion
+                if (!tx.transferId.isNullOrBlank()) {
+                    val paired = database.transactionDao().getTransactionsByTransferId(tx.transferId)
+                    paired.forEach { p ->
+                        if (p.id != tx.id) {
+                            txsToDelete.add(p)
+                            affectedAccountIds.add(p.accountId)
+                        }
+                    }
+                }
+
+                txsToDelete.forEach { currentTx ->
+                    if (currentTx.syncId.isNotBlank()) {
+                        try {
+                            database.syncDao().insertDeletedTransaction(DeletedTransactionEntity(currentTx.syncId))
+                        } catch (_: Exception) {}
+                    }
+                    val allExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
+                    val txAmt = if (currentTx.amount > 0) currentTx.amount else maxOf(currentTx.debitAmount, currentTx.creditAmount)
+                    val matchedExp = allExpenses.filter { it.date == currentTx.transactionDate && Math.abs(it.amount - txAmt) < 0.01 }
+                    matchedExp.forEach { database.companyExpenseDao().deleteCompanyExpense(it.id) }
+
+                    // Cascade delete linked loans and repayments
+                    currentTx.linkedLoanId?.let { loanId ->
+                        database.loanDao().deleteLoan(loanId)
+                        database.loanRepaymentDao().deleteRepaymentsForLoan(loanId)
+                    }
+                    if (currentTx.transactionType == TransactionType.LENDING) {
+                        val matchingLoans = database.loanDao().getAllLoansList().filter {
+                            it.lentDate == currentTx.transactionDate && Math.abs(it.amount - txAmt) < 0.01
+                        }
+                        matchingLoans.forEach { loan ->
+                            database.loanDao().deleteLoan(loan.id)
+                            database.loanRepaymentDao().deleteRepaymentsForLoan(loan.id)
+                        }
+                    }
+                }
+
+                database.transactionDao().deleteTransactions(txsToDelete.map { it.id })
+                affectedAccountIds.forEach { transactionRepository.recalculateAccountBalance(it) }
+
+                recordUndoAction(
+                    actionType = "DELETE_TRANSACTION",
+                    description = if (txsToDelete.size > 1) "Deleted paired transfer '${tx.description.take(24)}'" else "Deleted transaction '${tx.description.take(24)}'",
+                    previousTxs = txsToDelete
+                )
+                showMessage(if (txsToDelete.size > 1) "Paired transfer deleted" else "Transaction deleted")
+            }
+        }
+    }
+
+    fun deleteTransactions(ids: List<Long>) {
+        viewModelScope.launch {
+            val allExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
+            val allLoans = database.loanDao().getAllLoansList()
+            val deletedList = mutableListOf<TransactionEntity>()
+            val affectedAccountIds = mutableSetOf<Long>()
+
+            ids.forEach { id ->
+                val tx = repository.getTransactionById(id)
+                if (tx != null && !deletedList.any { it.id == tx.id }) {
+                    deletedList.add(tx)
+                    affectedAccountIds.add(tx.accountId)
+
+                    // Include paired transfer if any
+                    if (!tx.transferId.isNullOrBlank()) {
+                        val paired = database.transactionDao().getTransactionsByTransferId(tx.transferId)
+                        paired.forEach { p ->
+                            if (!deletedList.any { it.id == p.id }) {
+                                deletedList.add(p)
+                                affectedAccountIds.add(p.accountId)
+                            }
+                        }
+                    }
+                }
+            }
+
+            deletedList.forEach { tx ->
+                if (tx.syncId.isNotBlank()) {
+                    try {
+                        database.syncDao().insertDeletedTransaction(DeletedTransactionEntity(tx.syncId))
+                    } catch (_: Exception) {}
+                }
+                val txAmt = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
+                val matchedExp = allExpenses.filter { it.date == tx.transactionDate && Math.abs(it.amount - txAmt) < 0.01 }
+                matchedExp.forEach { database.companyExpenseDao().deleteCompanyExpense(it.id) }
+
+                // Cascade delete linked loans and repayments
+                tx.linkedLoanId?.let { loanId ->
+                    database.loanDao().deleteLoan(loanId)
+                    database.loanRepaymentDao().deleteRepaymentsForLoan(loanId)
+                }
+                if (tx.transactionType == TransactionType.LENDING) {
+                    val matchingLoans = allLoans.filter {
+                        it.lentDate == tx.transactionDate && Math.abs(it.amount - txAmt) < 0.01
+                    }
+                    matchingLoans.forEach { loan ->
+                        database.loanDao().deleteLoan(loan.id)
+                        database.loanRepaymentDao().deleteRepaymentsForLoan(loan.id)
+                    }
+                }
+            }
+
+            database.transactionDao().deleteTransactions(deletedList.map { it.id })
+            affectedAccountIds.forEach { transactionRepository.recalculateAccountBalance(it) }
+
+            recordUndoAction(
+                actionType = "BULK_DELETE",
+                description = "Deleted ${deletedList.size} transactions",
+                previousTxs = deletedList
+            )
+            showMessage("${deletedList.size} transactions deleted")
         }
     }
 
     fun deleteAllTransactions() {
         viewModelScope.launch {
             database.transactionDao().deleteAllTransactions()
-            showMessage("All transactions deleted")
+            database.companyExpenseDao().deleteAllCompanyExpenses()
+            database.loanDao().deleteAllLoans()
+            database.loanRepaymentDao().deleteAllRepayments()
+            database.syncDao().clearAllDeletedTransactions()
+            _companyExpensePrompt.value = null
+            _pendingCompanyExpenses.value = emptyList()
+            showMessage("All transactions, statements, and lend/borrow records deleted")
         }
     }
 
-    fun clearAllUserData() {
+    fun clearAllUserData(onComplete: (() -> Unit)? = null) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            database.clearAllTables()
-            showMessage("All local data cleared.")
+            try {
+                // 1. Purge all transactions, accounts, loans, official expenses, rules, undo history, sync data
+                database.transactionDao().deleteAllTransactions()
+                database.loanDao().deleteAllLoans()
+                database.loanRepaymentDao().deleteAllRepayments()
+                database.companyExpenseDao().deleteAllCompanyExpenses()
+                database.accountDao().deleteAllAccounts()
+                database.categorizationRuleDao().deleteAllRules()
+                database.undoDao().clearUndoHistory()
+                database.syncDao().clearAllDeletedTransactions()
+
+                // 2. Re-seed clean essential default categories so they are NEVER lost on delete account
+                database.categoryDao().deleteAllCategories()
+                database.categoryDao().insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
+
+                // 3. Reset user profile to un-onboarded initial state
+                val resetProfile = UserProfileEntity(
+                    id = 1,
+                    name = "User",
+                    email = "",
+                    profilePictureUrl = "",
+                    currencySymbol = "₹",
+                    isDarkMode = false,
+                    isPrivacyBlurEnabled = true,
+                    blurTimeoutSeconds = 5,
+                    isOnboardingCompleted = false
+                )
+                database.userProfileDao().insertOrUpdateProfile(resetProfile)
+
+                // 4. Reset in-memory transient states
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _importPreview.value = null
+                    _isAmountTemporarilyRevealed.value = false
+                    _companyExpensePrompt.value = null
+                    _smartRulePrompt.value = null
+                    _pendingCompanyExpenses.value = emptyList()
+                    _searchQuery.value = ""
+                    _selectedTypeFilter.value = null
+                    _selectedCategoryFilter.value = null
+                    _selectedAccountFilter.value = null
+                    _selectedMonthFilter.value = null
+                    showMessage("All local data cleared.")
+                    onComplete?.invoke()
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    showMessage("Error clearing data: ${e.message}")
+                    onComplete?.invoke()
+                }
+            }
+        }
+    }
+
+    fun createBackup(context: android.content.Context, onDone: (java.io.File?) -> Unit) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val file = com.example.utils.BackupService.createBackupJson(context, database)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    showMessage("Backup created successfully")
+                    android.widget.Toast.makeText(context, "Backup file prepared", android.widget.Toast.LENGTH_SHORT).show()
+                    onDone(file)
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    val err = "Failed to create backup: ${e.message}"
+                    showMessage(err)
+                    android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                    onDone(null)
+                }
+            }
+        }
+    }
+
+    fun saveBackupToStorageUri(context: android.content.Context, uri: android.net.Uri, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val success = com.example.utils.BackupService.saveBackupToStorageUri(context, uri, database)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (success) {
+                    val msg = "Backup saved to storage successfully!"
+                    showMessage(msg)
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    val msg = "Failed to save backup to storage"
+                    showMessage(msg)
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                }
+                onDone(success)
+            }
+        }
+    }
+
+    fun saveBackupToDownloads(context: android.content.Context, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val path = com.example.utils.BackupService.saveBackupToDownloads(context, database)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (path != null) {
+                    val msg = "Backup saved to: $path"
+                    showMessage(msg)
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                    onDone(true)
+                } else {
+                    val msg = "Failed to save backup to Downloads"
+                    showMessage(msg)
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                    onDone(false)
+                }
+            }
+        }
+    }
+
+    fun restoreBackup(context: android.content.Context, uri: android.net.Uri, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val jsonString = context.contentResolver.openInputStream(uri)?.use { it.reader(Charsets.UTF_8).readText() }
+                if (jsonString.isNullOrBlank()) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        val msg = "Invalid or empty backup file"
+                        showMessage(msg)
+                        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                        onDone(false)
+                    }
+                    return@launch
+                }
+                val result = com.example.utils.BackupService.restoreBackupJson(jsonString, database)
+                if (result.success) {
+                    recalculateAllAccountBalances()
+                    scanForCompanyExpenses()
+                }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    showMessage(result.message)
+                    android.widget.Toast.makeText(context, result.message, android.widget.Toast.LENGTH_LONG).show()
+                    onDone(result.success)
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    val msg = "Error restoring backup: ${e.message}"
+                    showMessage(msg)
+                    android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+                    onDone(false)
+                }
+            }
         }
     }
 
@@ -666,10 +1258,22 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun deleteRepayment(repaymentId: Long, loanId: Long) {
+        viewModelScope.launch {
+            repository.deleteRepayment(repaymentId, loanId)
+            showMessage("Repayment deleted and loan balance updated")
+        }
+    }
+
     fun deleteLoan(id: Long) {
         viewModelScope.launch {
+            database.loanRepaymentDao().deleteRepaymentsForLoan(id)
+            val linkedTxs = database.transactionDao().getAllTransactionsList().filter { it.linkedLoanId == id }
+            if (linkedTxs.isNotEmpty()) {
+                database.transactionDao().deleteTransactions(linkedTxs.map { it.id })
+            }
             repository.deleteLoan(id)
-            showMessage("Loan record deleted")
+            showMessage("Loan and linked records deleted")
         }
     }
 
@@ -736,8 +1340,16 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 matchType = matchType,
                 isActive = true
             )
-            repository.insertRule(rule)
-            applyRuleToExistingTransactions(keyword.trim(), category.id, category.name, resolvedType)
+            val ruleId = repository.insertRule(rule)
+            val (prev, new) = applyRuleToExistingTransactions(keyword.trim(), category.id, category.name, resolvedType)
+            recordUndoAction(
+                actionType = "ADD_RULE",
+                description = "Added rule for '${keyword.trim()}' (applied to ${prev.size} txs)",
+                previousTxs = prev,
+                newTxs = new,
+                relatedRuleId = ruleId,
+                ruleSnapshot = rule.copy(id = ruleId)
+            )
             showMessage("Rule added and applied for '$keyword'")
         }
     }
@@ -754,18 +1366,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 val rule = database.categorizationRuleDao().getRuleById(id)
                 if (rule != null) {
                     repository.deleteRule(id)
-                    // Revert matching transactions to Uncategorized
-                    val list = database.transactionDao().getAllTransactionsList()
-                    val normalizedKeyword = CategorizationEngine.normalize(rule.keyword)
-                    if (normalizedKeyword.isNotBlank()) {
-                        list.forEach { tx ->
-                            val normalizedDesc = CategorizationEngine.normalize(tx.description)
-                            if (normalizedDesc.contains(normalizedKeyword) && tx.categoryName.equals(rule.categoryName, ignoreCase = true)) {
-                                // Preserve the transaction's existing type — do NOT derive from credit/debit amounts
-                                database.transactionDao().updateTransactionCategory(tx.id, null, "Uncategorized", tx.transactionType)
-                            }
-                        }
-                    }
+                    recordUndoAction(
+                        actionType = "DELETE_RULE",
+                        description = "Deleted rule '${rule.keyword}'",
+                        relatedRuleId = id,
+                        ruleSnapshot = rule
+                    )
                 }
             } catch (_: Exception) {}
             showMessage("Rule deleted")
@@ -775,8 +1381,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun updateRule(rule: CategorizationRuleEntity) {
         viewModelScope.launch {
             try {
+                val oldRule = database.categorizationRuleDao().getRuleById(rule.id)
                 repository.updateRule(rule)
-                applyRuleToExistingTransactions(rule.keyword, rule.categoryId, rule.categoryName, rule.transactionType)
+                val (prev, new) = applyRuleToExistingTransactions(rule.keyword, rule.categoryId, rule.categoryName, rule.transactionType)
+                recordUndoAction(
+                    actionType = "EDIT_RULE",
+                    description = "Updated rule '${rule.keyword}'",
+                    previousTxs = prev,
+                    newTxs = new,
+                    relatedRuleId = rule.id,
+                    ruleSnapshot = oldRule ?: rule
+                )
             } catch (_: Exception) {}
             showMessage("Rule updated")
         }
@@ -859,9 +1474,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Account Actions
+    fun recalculateAllAccountBalances() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val accList = database.accountDao().getAllAccountsList()
+                accList.forEach { acc ->
+                    transactionRepository.recalculateAccountBalance(acc.id)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     fun addAccount(account: AccountEntity) {
         viewModelScope.launch {
             repository.insertAccount(account)
+            recalculateAllAccountBalances()
             showMessage("Account '${account.accountName}' created")
         }
     }
@@ -869,6 +1496,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun deleteAccount(id: Long) {
         viewModelScope.launch {
             repository.deleteAccount(id)
+            recalculateAllAccountBalances()
             showMessage("Account deleted")
         }
     }
@@ -876,6 +1504,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun updateAccount(account: com.example.data.local.entity.AccountEntity) {
         viewModelScope.launch {
             repository.updateAccount(account)
+            recalculateAllAccountBalances()
             showMessage("Account updated")
         }
     }
@@ -891,6 +1520,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 currentBalance = openingBalance
             )
             repository.insertAccount(acc)
+            recalculateAllAccountBalances()
             showMessage("Account '$name' created")
         }
     }
@@ -918,21 +1548,45 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 _isImporting.value = true
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val maxFileSize = 25 * 1024 * 1024 // 25MB maximum statement file size
+                val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val buffer = java.io.ByteArrayOutputStream()
+                    val chunk = ByteArray(8192)
+                    var totalRead = 0
+                    var read: Int
+                    while (stream.read(chunk).also { read = it } != -1) {
+                        totalRead += read
+                        if (totalRead > maxFileSize) {
+                            throw IllegalArgumentException("File exceeds maximum allowed size of 25MB.")
+                        }
+                        buffer.write(chunk, 0, read)
+                    }
+                    buffer.toByteArray()
+                }
                 if (bytes == null || bytes.isEmpty()) {
                     showMessage("Could not read file. File appears to be empty.")
                     return@launch
                 }
                 val currentRules = repository.getActiveRulesList()
                 val existingTxs = allTransactions.value
-                val preview = StatementImportService.parseStatementBytes(bytes, fileName, currentRules, existingTxs)
+                val resolvedFileName = if (fileName.contains('.')) fileName else {
+                    when {
+                        bytes.size >= 4 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte() -> "$fileName.pdf"
+                        bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte() -> "$fileName.xlsx"
+                        bytes.size >= 4 && bytes[0] == 0xD0.toByte() && bytes[1] == 0xCF.toByte() && bytes[2] == 0x11.toByte() && bytes[3] == 0xE0.toByte() -> "$fileName.xls"
+                        else -> "$fileName.csv"
+                    }
+                }
+                val preview = StatementImportService.parseStatementBytes(context, bytes, resolvedFileName, currentRules, existingTxs)
                 if (preview.validRows.isEmpty()) {
-                    showMessage("No valid transaction rows found in '$fileName'. Please ensure it's a supported Excel bank statement.")
+                    showMessage("No valid transaction rows found in '$resolvedFileName'. Please ensure it's a supported bank statement.")
                 }
                 _importPreview.value = preview
             } catch (e: Exception) {
-                e.printStackTrace()
-                showMessage("Could not parse statement: ${e.localizedMessage ?: "Invalid or corrupted Excel format"}")
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Statement import failed", e)
+                }
+                showMessage("Could not parse statement: ${e.localizedMessage ?: "Invalid or corrupted format"}")
             } finally {
                 _isImporting.value = false
             }
@@ -991,11 +1645,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 }
 
                 repository.insertTransactions(txEntities)
+                transactionRepository.recalculateAccountBalance(targetAccountId)
+                recalculateAllAccountBalances()
                 _importPreview.value = null
                 showMessage("${txEntities.size} transactions imported successfully!")
                 scanForCompanyExpenses()
             } catch (e: Exception) {
-                e.printStackTrace()
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Confirm import failed", e)
+                }
                 showMessage("Import failed: ${e.localizedMessage ?: "Database error"}")
             } finally {
                 _isImporting.value = false
@@ -1012,7 +1670,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             try {
                 repository.updateDashboardCardsConfig(config)
             } catch (e: Exception) {
-                e.printStackTrace()
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Failed to update dashboard config", e)
+                }
             }
         }
     }
@@ -1026,6 +1686,336 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         categoryBreakdown.value,
         monthlyTrends.value
     )
+
+    // ==========================================
+    // EXCEL TWO-WAY SYNC STATE & METHODS
+    // ==========================================
+    private val _selectedExcelUri = MutableStateFlow<String?>(null)
+    val selectedExcelUri: StateFlow<String?> = _selectedExcelUri.asStateFlow()
+
+    private val _selectedExcelFileName = MutableStateFlow<String?>(null)
+    val selectedExcelFileName: StateFlow<String?> = _selectedExcelFileName.asStateFlow()
+
+    private val _lastSyncTime = MutableStateFlow<Long?>(null)
+    val lastSyncTime: StateFlow<Long?> = _lastSyncTime.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow<String>("Idle")
+    val syncStatus: StateFlow<String> = _syncStatus.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow<Boolean>(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    private val _lastSyncResult = MutableStateFlow<SyncResult?>(null)
+    val lastSyncResult: StateFlow<SyncResult?> = _lastSyncResult.asStateFlow()
+
+    private val _activeConflicts = MutableStateFlow<List<SyncConflict>>(emptyList())
+    val activeConflicts: StateFlow<List<SyncConflict>> = _activeConflicts.asStateFlow()
+
+    private val _excelPreviewRows = MutableStateFlow<List<ExcelTransactionRow>>(emptyList())
+    val excelPreviewRows: StateFlow<List<ExcelTransactionRow>> = _excelPreviewRows.asStateFlow()
+
+    fun loadSyncMetadata() {
+        viewModelScope.launch {
+            try {
+                _selectedExcelUri.value = database.syncDao().getMetadataValue("selected_excel_uri")
+                _selectedExcelFileName.value = database.syncDao().getMetadataValue("selected_excel_filename")
+                val lastTs = database.syncDao().getMetadataValue("last_sync_timestamp")?.toLongOrNull()
+                _lastSyncTime.value = lastTs
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun setSelectedExcelFile(uriString: String, fileName: String) {
+        viewModelScope.launch {
+            _selectedExcelUri.value = uriString
+            _selectedExcelFileName.value = fileName
+            try {
+                database.syncDao().setMetadata(SyncMetadataEntity("selected_excel_uri", uriString))
+                database.syncDao().setMetadata(SyncMetadataEntity("selected_excel_filename", fileName))
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun loadExcelPreview(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes != null && bytes.isNotEmpty()) {
+                    val rows = ExcelSyncService.parseExcelWorkbook(bytes)
+                    _excelPreviewRows.value = rows
+                }
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Preview Excel failed", e)
+                }
+            }
+        }
+    }
+
+    fun exportToExcel(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _isSyncing.value = true
+            _syncStatus.value = "Exporting full workbook (Transactions, Categories, Rules, Accounts)..."
+            try {
+                val transactions = database.transactionDao().getAllTransactionsList()
+                val accounts = database.accountDao().getAllAccountsList()
+                val categories = database.categoryDao().getAllCategoriesList()
+                val rules = database.categorizationRuleDao().getAllRulesList()
+
+                val bytes = ExcelSyncService.generateExcelWorkbook(transactions, accounts, categories, rules)
+                context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                    out.write(bytes)
+                    out.flush()
+                }
+
+                val now = System.currentTimeMillis()
+                _lastSyncTime.value = now
+                database.syncDao().setMetadata(SyncMetadataEntity("last_sync_timestamp", now.toString()))
+                database.syncDao().clearAllDeletedTransactions()
+
+                val result = SyncResult(
+                    addedInExcel = transactions.size,
+                    categoriesAdded = categories.size,
+                    rulesAdded = rules.size,
+                    message = "Exported ${transactions.size} transactions, ${categories.size} categories & ${rules.size} rules to Excel successfully."
+                )
+                _lastSyncResult.value = result
+                _syncStatus.value = "Export completed successfully"
+                showMessage("Exported full backup to Excel (${transactions.size} txs, ${categories.size} categories, ${rules.size} rules)")
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Export to Excel failed", e)
+                }
+                _syncStatus.value = "Export failed: ${e.localizedMessage ?: "File write error"}"
+                showMessage("Export failed: ${e.localizedMessage}")
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    fun importChangesFromExcel(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _isSyncing.value = true
+            _syncStatus.value = "Importing changes from Excel..."
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes == null || bytes.isEmpty()) {
+                    _syncStatus.value = "Failed to read Excel file"
+                    showMessage("Selected file is empty")
+                    return@launch
+                }
+
+                val parsedData = ExcelSyncService.parseFullWorkbook(bytes)
+                val currentTxs = database.transactionDao().getAllTransactionsList()
+                val deletedSyncIds = database.syncDao().getAllDeletedSyncIds()
+                val accounts = database.accountDao().getAllAccountsList()
+                val categories = database.categoryDao().getAllCategoriesList()
+                val rules = database.categorizationRuleDao().getAllRulesList()
+                val lastTs = _lastSyncTime.value ?: 0L
+
+                val result = ExcelSyncService.reconcile(
+                    appTransactions = currentTxs,
+                    excelWorkbookData = parsedData,
+                    deletedSyncIds = deletedSyncIds,
+                    lastSyncTimestamp = lastTs,
+                    accounts = accounts,
+                    categories = categories,
+                    rules = rules
+                )
+
+                if (result.conflicts.isNotEmpty()) {
+                    _activeConflicts.value = result.conflicts
+                    _lastSyncResult.value = result
+                    _syncStatus.value = "${result.conflicts.size} conflicts detected"
+                    showMessage("${result.conflicts.size} conflicts need resolution")
+                } else {
+                    applySyncResult(result, context, uri)
+                }
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Import from Excel failed", e)
+                }
+                _syncStatus.value = "Import failed: ${e.localizedMessage ?: "Parse error"}"
+                showMessage("Import failed: ${e.localizedMessage}")
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    fun performTwoWaySync(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _isSyncing.value = true
+            _syncStatus.value = "Synchronizing with Excel (Transactions, Categories, Rules)..."
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes == null || bytes.isEmpty()) {
+                    exportToExcel(context, uri)
+                    return@launch
+                }
+
+                val parsedData = ExcelSyncService.parseFullWorkbook(bytes)
+                val currentTxs = database.transactionDao().getAllTransactionsList()
+                val deletedSyncIds = database.syncDao().getAllDeletedSyncIds()
+                val accounts = database.accountDao().getAllAccountsList()
+                val categories = database.categoryDao().getAllCategoriesList()
+                val rules = database.categorizationRuleDao().getAllRulesList()
+                val lastTs = _lastSyncTime.value ?: 0L
+
+                val result = ExcelSyncService.reconcile(
+                    appTransactions = currentTxs,
+                    excelWorkbookData = parsedData,
+                    deletedSyncIds = deletedSyncIds,
+                    lastSyncTimestamp = lastTs,
+                    accounts = accounts,
+                    categories = categories,
+                    rules = rules
+                )
+
+                if (result.conflicts.isNotEmpty()) {
+                    _activeConflicts.value = result.conflicts
+                    _lastSyncResult.value = result
+                    _syncStatus.value = "${result.conflicts.size} conflicts detected"
+                    showMessage("${result.conflicts.size} conflicts need resolution")
+                } else {
+                    applySyncResult(result, context, uri)
+                }
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Two-way sync failed", e)
+                }
+                _syncStatus.value = "Sync failed: ${e.localizedMessage ?: "Sync error"}"
+                showMessage("Sync failed: ${e.localizedMessage}")
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    private suspend fun applySyncResult(result: SyncResult, context: android.content.Context, uri: android.net.Uri) {
+        // 1. Sync Categories
+        if (result.newCategoriesForApp.isNotEmpty()) {
+            database.categoryDao().insertCategories(result.newCategoriesForApp)
+        }
+        for (cat in result.updatedCategoriesForApp) {
+            database.categoryDao().updateCategory(cat)
+        }
+
+        // 2. Sync Rules
+        if (result.newRulesForApp.isNotEmpty()) {
+            database.categorizationRuleDao().insertRules(result.newRulesForApp)
+        }
+        for (rule in result.updatedRulesForApp) {
+            database.categorizationRuleDao().updateRule(rule)
+        }
+
+        // Fetch fresh categories from DB so we have all true autogenerated IDs
+        val freshCategories = database.categoryDao().getAllCategoriesList()
+        val catMap = freshCategories.associateBy { it.name.trim().lowercase() }
+
+        // 3. Sync Transactions with resolved category IDs
+        if (result.newTransactionsForApp.isNotEmpty()) {
+            val resolvedNew = result.newTransactionsForApp.map { tx ->
+                val realCatId = catMap[tx.categoryName.trim().lowercase()]?.id ?: tx.categoryId
+                tx.copy(categoryId = realCatId)
+            }
+            database.transactionDao().insertTransactions(resolvedNew)
+        }
+        for (tx in result.updatedTransactionsForApp) {
+            val realCatId = catMap[tx.categoryName.trim().lowercase()]?.id ?: tx.categoryId
+            database.transactionDao().updateTransaction(tx.copy(categoryId = realCatId))
+        }
+        for (syncId in result.deleteSyncIdsFromApp) {
+            val tx = database.transactionDao().getTransactionBySyncId(syncId)
+            if (tx != null) {
+                database.transactionDao().deleteTransaction(tx.id)
+            }
+        }
+
+        // 4. Update balances for all accounts
+        val freshRules = database.categorizationRuleDao().getAllRulesList()
+        val freshAccounts = database.accountDao().getAllAccountsList()
+        freshAccounts.forEach { acc ->
+            transactionRepository.recalculateAccountBalance(acc.id)
+        }
+
+        // 5. Update in-memory preview with latest reconciled rows
+        val allFreshTxs = database.transactionDao().getAllTransactionsList()
+        val accMap = freshAccounts.associate { it.id to (it.bankName.ifBlank { it.accountName }) }
+        val freshExcelRows = allFreshTxs.map { tx ->
+            val accountName = accMap[tx.accountId] ?: "Primary Account"
+            val actualAmount = if (tx.amount > 0) tx.amount else if (tx.debitAmount > 0) tx.debitAmount else tx.creditAmount
+            ExcelTransactionRow(
+                syncId = tx.syncId.ifBlank { tx.id.toString() },
+                date = tx.transactionDate,
+                description = tx.description,
+                amount = actualAmount,
+                type = tx.transactionType,
+                category = tx.categoryName,
+                account = accountName,
+                notes = tx.notes,
+                runningBalance = tx.balanceAfterTransaction,
+                lastModified = tx.updatedAt
+            )
+        }
+
+        // 6. Update sync metadata & preview
+        val now = System.currentTimeMillis()
+        _lastSyncTime.value = now
+        database.syncDao().setMetadata(SyncMetadataEntity("last_sync_timestamp", now.toString()))
+        _lastSyncResult.value = result
+        _excelPreviewRows.value = freshExcelRows
+        _activeConflicts.value = emptyList()
+        _syncStatus.value = "Sync completed successfully"
+        showMessage(result.message)
+        scanForCompanyExpenses()
+    }
+
+    fun resolveConflict(conflict: SyncConflict, keepApp: Boolean, context: android.content.Context, uri: android.net.Uri?) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (keepApp) {
+                    val updated = conflict.appTransaction.copy(updatedAt = System.currentTimeMillis())
+                    database.transactionDao().updateTransaction(updated)
+                } else {
+                    val excelRow = conflict.excelRow
+                    val isCredit = excelRow.type == TransactionType.INCOME || excelRow.type == TransactionType.REFUND
+                    val accounts = database.accountDao().getAllAccountsList()
+                    val categories = database.categoryDao().getAllCategoriesList()
+                    val catId = categories.firstOrNull { it.name.equals(excelRow.category, ignoreCase = true) }?.id
+                    val accId = accounts.firstOrNull { (it.bankName.ifBlank { it.accountName }).equals(excelRow.account, ignoreCase = true) }?.id ?: conflict.appTransaction.accountId
+
+                    val updatedTx = conflict.appTransaction.copy(
+                        transactionDate = excelRow.date,
+                        description = excelRow.description,
+                        amount = excelRow.amount,
+                        debitAmount = if (isCredit) 0.0 else excelRow.amount,
+                        creditAmount = if (isCredit) excelRow.amount else 0.0,
+                        transactionType = excelRow.type,
+                        categoryName = excelRow.category,
+                        categoryId = catId ?: conflict.appTransaction.categoryId,
+                        accountId = accId,
+                        notes = excelRow.notes,
+                        balanceAfterTransaction = excelRow.runningBalance ?: conflict.appTransaction.balanceAfterTransaction,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    database.transactionDao().updateTransaction(updatedTx)
+                }
+
+                val remaining = _activeConflicts.value.filter { it.syncId != conflict.syncId }
+                _activeConflicts.value = remaining
+
+                if (remaining.isEmpty() && uri != null) {
+                    performTwoWaySync(context, uri)
+                }
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Conflict resolution failed", e)
+                }
+            }
+        }
+    }
 }
 
 private data class FilterParams(

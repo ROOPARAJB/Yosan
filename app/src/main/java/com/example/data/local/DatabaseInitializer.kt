@@ -21,31 +21,33 @@ object DatabaseInitializer {
         categoryDao.deleteAllCategories()
         ruleDao.deleteAllRules()
 
-        // Re-seed clean essential defaults
+        // Re-seed clean essential defaults (categories and profile)
         seedInitialData(database)
     }
 
     suspend fun seedInitialData(database: AppDatabase) {
-        val accountDao = database.accountDao()
         val categoryDao = database.categoryDao()
-        val ruleDao = database.categorizationRuleDao()
         val profileDao = database.userProfileDao()
 
-        // 1. Seed Profile if none exists
-        if (profileDao.getUserProfileOnce() == null) {
+        // 1. Seed Profile if none exists or reset
+        val existingProfile = profileDao.getUserProfileOnce()
+        if (existingProfile == null) {
             profileDao.insertOrUpdateProfile(
                 UserProfileEntity(
                     id = 1,
                     name = "User",
                     email = "",
                     currencySymbol = "₹",
-                    isDarkMode = false
+                    isDarkMode = false,
+                    isOnboardingCompleted = false
                 )
             )
         }
 
-
-        // 2. Seed Default Primary Account (removed - user adds manually)
-        // 3. Seed Essential Default Categories (removed - user adds manually)
+        // 2. Ensure Essential Default Categories exist
+        val existingCats = categoryDao.getAllCategoriesList()
+        if (existingCats.isEmpty()) {
+            categoryDao.insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
+        }
     }
 }

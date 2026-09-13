@@ -67,15 +67,15 @@ fun ImportStatementScreen(
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            val fileName = getFileNameFromUri(context, it)
-            if (fileName.lowercase().endsWith(".xlsx") || fileName.lowercase().endsWith(".xls")) {
-                selectedFileName = fileName
-                viewModel.parseStatementUri(context, it, fileName)
+            val resolved = resolveStatementFileInfo(context, it)
+            if (resolved.isSupported) {
+                selectedFileName = resolved.fileName
+                viewModel.parseStatementUri(context, it, resolved.fileName)
             } else {
-                viewModel.showMessage("Invalid file. Only Excel files (.xlsx, .xls) are allowed.")
+                viewModel.showMessage("Invalid file format. Please select an Excel (.xlsx, .xls) or PDF (.pdf) statement.")
             }
         }
     }
@@ -94,7 +94,7 @@ fun ImportStatementScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Text(
-                    text = "Upload bank statements in Excel (.xlsx, .xls) formats with automatic categorization.",
+                    text = "Upload bank statements in Excel (.xlsx, .xls) or PDF (.pdf) formats with automatic categorization.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -119,14 +119,14 @@ fun ImportStatementScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Upload Excel Statement",
+                            text = "Upload Bank Statement (Excel / PDF)",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Select an Excel spreadsheet (.xlsx, .xls) statement from your device storage.",
+                        text = "Select an Excel spreadsheet (.xlsx, .xls) or PDF statement from your device storage.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -158,13 +158,13 @@ fun ImportStatementScreen(
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
-                        onClick = { filePickerLauncher.launch("*/*") },
+                        onClick = { filePickerLauncher.launch(SUPPORTED_STATEMENT_MIMES) },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Select Excel File (.xlsx, .xls)")
+                        Text("Select Statement File (.xlsx, .xls, .pdf)")
                     }
                 }
             }
@@ -333,16 +333,92 @@ fun ImportStatementScreen(
     }
 }
 
-private fun getFileNameFromUri(context: Context, uri: Uri): String {
-    var fileName = "bank_statement"
-    val cursor = context.contentResolver.query(uri, null, null, null, null)
-    cursor?.use {
-        if (it.moveToFirst()) {
-            val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (nameIndex != -1) fileName = it.getString(nameIndex)
+data class ResolvedStatementFile(
+    val fileName: String,
+    val isSupported: Boolean
+)
+
+private val SUPPORTED_STATEMENT_MIMES = arrayOf(
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "application/x-excel",
+    "application/msexcel",
+    "application/excel",
+    "text/csv",
+    "text/comma-separated-values",
+    "text/plain",
+    "application/octet-stream",
+    "*/*"
+)
+
+private fun resolveStatementFileInfo(context: Context, uri: Uri): ResolvedStatementFile {
+    var fileName = ""
+
+    // 1. Try OpenableColumns.DISPLAY_NAME
+    try {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex != -1) {
+                    fileName = cursor.getString(nameIndex) ?: ""
+                }
+            }
+        }
+    } catch (_: Exception) {}
+
+    // 2. Fallback to URI lastPathSegment
+    if (fileName.isBlank()) {
+        val lastSegment = uri.lastPathSegment
+        if (!lastSegment.isNullOrBlank()) {
+            fileName = lastSegment.substringAfterLast('/').substringAfterLast(':')
         }
     }
-    return fileName
+    if (fileName.isBlank()) {
+        fileName = "statement"
+    }
+
+    val lower = fileName.lowercase()
+    val hasValidExt = lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".pdf") || lower.endsWith(".csv")
+    if (hasValidExt) {
+        return ResolvedStatementFile(fileName, true)
+    }
+
+    // 3. Inspect ContentResolver MIME type
+    val mimeType = try {
+        context.contentResolver.getType(uri)?.lowercase()
+    } catch (_: Exception) { null }
+
+    when {
+        mimeType == "application/pdf" -> return ResolvedStatementFile("$fileName.pdf", true)
+        mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> return ResolvedStatementFile("$fileName.xlsx", true)
+        mimeType == "application/vnd.ms-excel" || mimeType == "application/x-excel" || mimeType == "application/msexcel" || mimeType == "application/excel" -> return ResolvedStatementFile("$fileName.xls", true)
+        mimeType == "text/csv" || mimeType == "text/comma-separated-values" -> return ResolvedStatementFile("$fileName.csv", true)
+    }
+
+    // 4. Magic bytes inspection from stream
+    try {
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            val header = ByteArray(16)
+            val read = stream.read(header)
+            if (read >= 4) {
+                // PDF: %PDF
+                if (header[0] == 0x25.toByte() && header[1] == 0x50.toByte() && header[2] == 0x44.toByte() && header[3] == 0x46.toByte()) {
+                    return ResolvedStatementFile("$fileName.pdf", true)
+                }
+                // ZIP / XLSX: PK\x03\x04
+                if (header[0] == 0x50.toByte() && header[1] == 0x4B.toByte() && header[2] == 0x03.toByte() && header[3] == 0x04.toByte()) {
+                    return ResolvedStatementFile("$fileName.xlsx", true)
+                }
+                // OLE2 / XLS: 0xD0, 0xCF, 0x11, 0xE0
+                if (read >= 8 && header[0] == 0xD0.toByte() && header[1] == 0xCF.toByte() && header[2] == 0x11.toByte() && header[3] == 0xE0.toByte()) {
+                    return ResolvedStatementFile("$fileName.xls", true)
+                }
+            }
+        }
+    } catch (_: Exception) {}
+
+    return ResolvedStatementFile(fileName, false)
 }
 
 @Composable

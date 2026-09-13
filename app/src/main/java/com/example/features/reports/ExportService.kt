@@ -183,36 +183,39 @@ object ExportService {
         }
 
         // 2. Category Spending Breakdown Section
-        canvas.drawText("Category Spending Breakdown", 30f, 305f, sectionTitlePaint)
-        canvas.drawRoundRect(30f, 315f, 565f, 520f, 10f, 10f, cardBgPaint)
-        canvas.drawRoundRect(30f, 315f, 565f, 520f, 10f, 10f, cardBorderPaint)
+        canvas.drawText("Category Spending Breakdown (${categoryBreakdown.size})", 30f, 305f, sectionTitlePaint)
+        val catSectionHeight = (categoryBreakdown.size.coerceAtLeast(1) * 20f + 40f).coerceAtLeast(80f)
+        canvas.drawRoundRect(30f, 315f, 565f, 315f + catSectionHeight, 10f, 10f, cardBgPaint)
+        canvas.drawRoundRect(30f, 315f, 565f, 315f + catSectionHeight, 10f, 10f, cardBorderPaint)
 
-        y = 340f
+        y = 338f
         if (categoryBreakdown.isEmpty()) {
             textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             canvas.drawText("No categorized expenses recorded.", 45f, y, textPaint)
         } else {
-            categoryBreakdown.take(7).forEach { item ->
+            categoryBreakdown.forEach { item ->
                 textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
                 canvas.drawText(item.categoryName, 45f, y, textPaint)
                 
-                val pctStr = "${String.format(java.util.Locale.ENGLISH, "%.1f", item.percentage)}%"
+                val pctStr = "${String.format(java.util.Locale.ENGLISH, "%.1f", item.percentage)}% (${item.count})"
                 canvas.drawText(pctStr, 280f, y, textPaint)
                 
                 val valStr = formatInr(item.amount)
                 textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
                 val width = textPaint.measureText(valStr)
                 canvas.drawText(valStr, 550f - width, y, textPaint)
-                y += 24f
+                y += 20f
             }
         }
 
         // 3. Monthly Trends Summary Section
-        canvas.drawText("Monthly Trends Summary", 30f, 545f, sectionTitlePaint)
-        canvas.drawRoundRect(30f, 555f, 565f, 755f, 10f, 10f, cardBgPaint)
-        canvas.drawRoundRect(30f, 555f, 565f, 755f, 10f, 10f, cardBorderPaint)
+        val monthlyYStart = 315f + catSectionHeight + 25f
+        canvas.drawText("Monthly Trends Summary", 30f, monthlyYStart - 10f, sectionTitlePaint)
+        val monthlyHeight = (monthlyTrends.take(6).size.coerceAtLeast(1) * 22f + 40f).coerceAtLeast(70f)
+        canvas.drawRoundRect(30f, monthlyYStart, 565f, (monthlyYStart + monthlyHeight).coerceAtMost(785f), 10f, 10f, cardBgPaint)
+        canvas.drawRoundRect(30f, monthlyYStart, 565f, (monthlyYStart + monthlyHeight).coerceAtMost(785f), 10f, 10f, cardBorderPaint)
 
-        y = 580f
+        y = monthlyYStart + 25f
         if (monthlyTrends.isEmpty()) {
             textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             canvas.drawText("No monthly trend data recorded.", 45f, y, textPaint)
@@ -226,10 +229,12 @@ object ExportService {
             textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
 
             monthlyTrends.take(6).forEach { trend ->
-                canvas.drawText(trend.monthLabel, 45f, y, textPaint)
-                canvas.drawText(formatInr(trend.income), 240f, y, textPaint)
-                canvas.drawText(formatInr(trend.expense), 420f, y, textPaint)
-                y += 24f
+                if (y < 780f) {
+                    canvas.drawText(trend.monthLabel, 45f, y, textPaint)
+                    canvas.drawText(formatInr(trend.income), 240f, y, textPaint)
+                    canvas.drawText(formatInr(trend.expense), 420f, y, textPaint)
+                    y += 22f
+                }
             }
         }
 
@@ -254,8 +259,9 @@ object ExportService {
 
         val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
         val cleanName = (userName ?: "User").trim().replace("\\s+".toRegex(), "_").replace("[^a-zA-Z0-9_]".toRegex(), "")
-        val fileName = "${cleanName}_${timeStamp}.pdf"
-        val file = File(context.cacheDir, fileName)
+        val fileName = "${cleanName}_Financial_Report_$timeStamp.pdf"
+        val reportsDir = File(context.cacheDir, "reports").apply { if (!exists()) mkdirs() }
+        val file = File(reportsDir, fileName)
         FileOutputStream(file).use { out ->
             pdfDocument.writeTo(out)
         }

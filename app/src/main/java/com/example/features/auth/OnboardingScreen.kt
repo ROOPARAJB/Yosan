@@ -5,7 +5,10 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -17,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -28,6 +32,24 @@ import com.example.ui.theme.LendingIndigo
 import com.example.features.auth.AuthViewModel
 import com.example.features.transactions.FinanceViewModel
 import kotlinx.coroutines.launch
+
+val POPULAR_INDIAN_BANKS = listOf(
+    "State Bank of India (SBI)",
+    "HDFC Bank",
+    "ICICI Bank",
+    "Axis Bank",
+    "Kotak Mahindra Bank",
+    "Punjab National Bank (PNB)",
+    "Bank of Baroda",
+    "Canara Bank",
+    "Union Bank of India",
+    "IndusInd Bank",
+    "IDFC FIRST Bank",
+    "Federal Bank",
+    "Yes Bank",
+    "Paytm Payments Bank",
+    "Cash / UPI Wallet"
+)
 
 @Composable
 fun OnboardingScreen(
@@ -42,10 +64,26 @@ fun OnboardingScreen(
     var isDarkMode by remember { mutableStateOf(false) }
     var isPrivacyBlurEnabled by remember { mutableStateOf(true) }
     var blurTimeoutSeconds by remember { mutableStateOf(5) }
-    var bankName by remember { mutableStateOf("") }
+    var selectedBankName by remember { mutableStateOf("HDFC Bank") }
+    var customBankName by remember { mutableStateOf("") }
+    var isCustomBank by remember { mutableStateOf(false) }
     var accountTypeSelected by remember { mutableStateOf("Savings") }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+
+    val restoreLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        uri?.let {
+            financeViewModel.restoreBackup(context, it) { success ->
+                if (success) {
+                    authViewModel.completeOnboarding()
+                    onComplete()
+                }
+            }
+        }
+    }
 
     val backgroundBrush = Brush.verticalGradient(
         colors = listOf(
@@ -58,7 +96,7 @@ fun OnboardingScreen(
         modifier = modifier
             .fillMaxSize()
             .background(backgroundBrush)
-            .padding(24.dp),
+            .padding(horizontal = 16.dp, vertical = 24.dp),
         contentAlignment = Alignment.Center
     ) {
         Card(
@@ -66,10 +104,12 @@ fun OnboardingScreen(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(28.dp)),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
         ) {
             Column(
-                modifier = Modifier.padding(26.dp),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -79,13 +119,14 @@ fun OnboardingScreen(
                     color = MaterialTheme.colorScheme.primary,
                     letterSpacing = (-0.5).sp
                 )
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Your offline-first personal finance manager",
+                    text = "Offline-first Indian personal finance manager",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 AnimatedContent(
                     targetState = step,
@@ -114,7 +155,7 @@ fun OnboardingScreen(
                                     imageVector = Icons.Default.Person,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(50.dp)
+                                    modifier = Modifier.size(48.dp)
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Text(
@@ -122,32 +163,156 @@ fun OnboardingScreen(
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "This name will be displayed on your personal dashboard.",
+                                    text = "Create a new profile or restore an existing backup",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Spacer(modifier = Modifier.height(18.dp))
+                                Spacer(modifier = Modifier.height(16.dp))
 
                                 OutlinedTextField(
                                     value = userName,
                                     onValueChange = { userName = it },
-                                    label = { Text("Your Name") },
-                                    placeholder = { Text("e.g. Rooparaj Balasundaram") },
+                                    label = { Text("Your Name (New Profile)") },
+                                    placeholder = { Text("e.g. Elliot") },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                                     shape = RoundedCornerShape(14.dp)
                                 )
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.weight(1f),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    )
+                                    Text(
+                                        text = "  ALREADY HAVE AN ACCOUNT?  ",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    HorizontalDivider(
+                                        modifier = Modifier.weight(1f),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                OutlinedButton(
+                                    onClick = { restoreLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = LendingIndigo)
+                                ) {
+                                    Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Restore from Backup", fontWeight = FontWeight.Bold)
+                                }
                             }
 
                             2 -> {
                                 Icon(
+                                    imageVector = Icons.Default.AccountBalance,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "Select Your Primary Bank",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Select your Indian bank or wallet account",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 180.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    POPULAR_INDIAN_BANKS.forEach { bank ->
+                                        val isSelected = !isCustomBank && selectedBankName == bank
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = {
+                                                selectedBankName = bank
+                                                isCustomBank = false
+                                            },
+                                            label = { Text(bank, maxLines = 1) },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                    FilterChip(
+                                        selected = isCustomBank,
+                                        onClick = { isCustomBank = true },
+                                        label = { Text("Other Bank / Wallet", maxLines = 1) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+
+                                if (isCustomBank) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = customBankName,
+                                        onValueChange = { customBankName = it },
+                                        label = { Text("Enter Bank / Wallet Name") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                Text(
+                                    text = "Account Type",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                val types = listOf("Savings", "Current", "Salary", "Wallet", "Credit Card")
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                ) {
+                                    types.forEach { type ->
+                                        val isSelected = accountTypeSelected == type
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = { accountTypeSelected = type },
+                                            label = { Text(type) },
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            3 -> {
+                                Icon(
                                     imageVector = Icons.Default.Palette,
                                     contentDescription = null,
                                     tint = LendingIndigo,
-                                    modifier = Modifier.size(50.dp)
+                                    modifier = Modifier.size(48.dp)
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Text(
@@ -157,16 +322,16 @@ fun OnboardingScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Select your theme and privacy settings",
+                                    text = "Configure visual theme and privacy blur",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Spacer(modifier = Modifier.height(18.dp))
+                                Spacer(modifier = Modifier.height(16.dp))
 
                                 // Theme Preference
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     FilterChip(
                                         selected = !isDarkMode,
@@ -178,7 +343,7 @@ fun OnboardingScreen(
                                             Icon(
                                                 imageVector = Icons.Default.LightMode,
                                                 contentDescription = null,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         },
                                         label = { Text("Light Theme") },
@@ -194,7 +359,7 @@ fun OnboardingScreen(
                                             Icon(
                                                 imageVector = Icons.Default.DarkMode,
                                                 contentDescription = null,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         },
                                         label = { Text("Dark Theme") },
@@ -202,7 +367,7 @@ fun OnboardingScreen(
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(18.dp))
+                                Spacer(modifier = Modifier.height(16.dp))
 
                                 // Financial Privacy Blur
                                 Row(
@@ -217,7 +382,7 @@ fun OnboardingScreen(
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Text(
-                                            text = "Hide balances until tapped",
+                                            text = "Mask amounts; tap to reveal temporarily",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -229,7 +394,7 @@ fun OnboardingScreen(
                                 }
 
                                 if (isPrivacyBlurEnabled) {
-                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Spacer(modifier = Modifier.height(8.dp))
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -245,82 +410,22 @@ fun OnboardingScreen(
                                 }
                             }
 
-                            3 -> {
-                                Icon(
-                                    imageVector = Icons.Default.AccountBalance,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(50.dp)
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Text(
-                                    text = "Add Bank or Wallet",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Track your initial account balances",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(18.dp))
-
-                                OutlinedTextField(
-                                    value = bankName,
-                                    onValueChange = { bankName = it },
-                                    label = { Text("Bank / Account Name (e.g. HDFC, GPay, Cash)") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-
-                                Spacer(modifier = Modifier.height(14.dp))
-
-                                Text(
-                                    text = "Account Type",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                val types = listOf("Savings", "Current", "Wallet", "Credit Card")
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState())
-                                ) {
-                                    types.forEach { type ->
-                                        val isSelected = accountTypeSelected == type
-                                        FilterChip(
-                                            selected = isSelected,
-                                            onClick = { accountTypeSelected = type },
-                                            label = { Text(type) },
-                                            shape = RoundedCornerShape(12.dp)
-                                        )
-                                    }
-                                }
-                            }
-
                             4 -> {
                                 Icon(
                                     imageVector = Icons.Default.CheckCircle,
                                     contentDescription = null,
                                     tint = IncomeGreen,
-                                    modifier = Modifier.size(68.dp)
+                                    modifier = Modifier.size(64.dp)
                                 )
-                                Spacer(modifier = Modifier.height(14.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
                                 Text(
                                     text = "You're All Set!",
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.ExtraBold
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Your profile, preferences, and account setup are complete. Let's start tracking your finances.",
+                                    text = "Your account is initialized. You can now import bank statements directly into Yosan.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -329,7 +434,7 @@ fun OnboardingScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(30.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
                 // Action buttons with strict validation
                 Row(
@@ -345,10 +450,11 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
+                    val finalBank = if (isCustomBank) customBankName.trim() else selectedBankName.trim()
                     val isNextEnabled = when (step) {
                         1 -> userName.isNotBlank()
-                        2 -> true
-                        3 -> bankName.isNotBlank()
+                        2 -> finalBank.isNotBlank()
+                        3 -> true
                         else -> true
                     }
 
@@ -362,16 +468,12 @@ fun OnboardingScreen(
                                     }
                                 }
                                 2 -> {
-                                    financeViewModel.completeOnboarding(isDarkMode, isPrivacyBlurEnabled, blurTimeoutSeconds)
-                                    step = 3
-                                }
-                                3 -> {
-                                    if (bankName.isNotBlank()) {
+                                    if (finalBank.isNotBlank()) {
                                         coroutineScope.launch {
                                             financeViewModel.addAccount(
                                                 AccountEntity(
                                                     accountName = accountTypeSelected,
-                                                    bankName = bankName.trim(),
+                                                    bankName = finalBank,
                                                     accountNumberMasked = "",
                                                     accountType = when (accountTypeSelected) {
                                                         "Wallet" -> AccountType.WALLET
@@ -383,9 +485,13 @@ fun OnboardingScreen(
                                                     isDefault = true
                                                 )
                                             )
-                                            step = 4
+                                            step = 3
                                         }
                                     }
+                                }
+                                3 -> {
+                                    financeViewModel.completeOnboarding(isDarkMode, isPrivacyBlurEnabled, blurTimeoutSeconds)
+                                    step = 4
                                 }
                                 else -> {
                                     financeViewModel.completeOnboarding(isDarkMode, isPrivacyBlurEnabled, blurTimeoutSeconds)

@@ -15,6 +15,15 @@ class FinanceRepository(private val database: AppDatabase) {
     private val loanRepaymentDao = database.loanRepaymentDao()
     private val companyExpenseDao = database.companyExpenseDao()
     private val profileDao = database.userProfileDao()
+    private val undoDao = database.undoDao()
+
+    // Undo History
+    val undoHistory: Flow<List<UndoHistoryEntity>> = undoDao.getRecentUndoActions()
+    suspend fun insertUndoAction(action: UndoHistoryEntity) = undoDao.insertUndoAction(action)
+    suspend fun getLatestUndoAction() = undoDao.getLatestUndoAction()
+    suspend fun getUndoActionById(id: String) = undoDao.getUndoActionById(id)
+    suspend fun deleteUndoAction(id: String) = undoDao.deleteUndoAction(id)
+    suspend fun clearUndoHistory() = undoDao.clearUndoHistory()
 
     // Profile & Settings
     val userProfile: Flow<UserProfileEntity?> = profileDao.getUserProfile()
@@ -119,6 +128,21 @@ class FinanceRepository(private val database: AppDatabase) {
             loanDao.updateLoanRepaymentProgress(loanId, totalRepaid, remaining, status)
         }
         return repaymentId
+    }
+
+    suspend fun deleteRepayment(repaymentId: Long, loanId: Long) {
+        loanRepaymentDao.deleteRepayment(repaymentId)
+        val loan = loanDao.getLoanById(loanId)
+        if (loan != null) {
+            val totalRepaid = (loanRepaymentDao.getTotalRepaidForLoan(loanId) ?: 0.0)
+            val remaining = (loan.amount - totalRepaid).coerceAtLeast(0.0)
+            val status = when {
+                remaining <= 0.0 -> LoanStatus.PAID
+                totalRepaid > 0.0 -> LoanStatus.PARTIALLY_PAID
+                else -> LoanStatus.ACTIVE
+            }
+            loanDao.updateLoanRepaymentProgress(loanId, totalRepaid, remaining, status)
+        }
     }
 
     // Company Expenses

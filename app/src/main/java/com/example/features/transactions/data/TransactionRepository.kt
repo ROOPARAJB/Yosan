@@ -48,7 +48,21 @@ class TransactionRepository(private val database: AppDatabase) {
         transactionDao.updateTransactionCategory(id, categoryId, categoryName, transactionType)
     }
 
-    private suspend fun recalculateAccountBalance(accountId: Long) {
-        // Balance recalculation logic is handled on database/UI side
+    suspend fun updateTransaction(transaction: TransactionEntity) {
+        transactionDao.updateTransaction(transaction)
+    }
+
+    suspend fun recalculateAccountBalance(accountId: Long) {
+        val account = accountDao.getAccountById(accountId) ?: return
+        val txs = transactionDao.getTransactionsByAccountList(accountId)
+        val latestBalance = txs.firstOrNull { it.balanceAfterTransaction != null && it.balanceAfterTransaction > 0.0 }?.balanceAfterTransaction
+        val computedBalance = if (latestBalance != null) {
+            latestBalance
+        } else {
+            val netInflows = txs.sumOf { if (it.creditAmount > 0.0) it.creditAmount else if (it.transactionType == com.example.data.local.entity.TransactionType.INCOME || it.transactionType == com.example.data.local.entity.TransactionType.REFUND) it.amount else 0.0 }
+            val netOutflows = txs.sumOf { if (it.debitAmount > 0.0) it.debitAmount else if (it.transactionType != com.example.data.local.entity.TransactionType.INCOME && it.transactionType != com.example.data.local.entity.TransactionType.REFUND) it.amount else 0.0 }
+            account.openingBalance + netInflows - netOutflows
+        }
+        accountDao.updateBalance(accountId, computedBalance)
     }
 }

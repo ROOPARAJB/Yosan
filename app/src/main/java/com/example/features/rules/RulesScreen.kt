@@ -75,12 +75,30 @@ fun RulesScreen(
         } else null
     }
 
-    LazyColumn(
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(viewModel) {
+        viewModel.undoSnackbarEvent.collect { event ->
+            val result = snackbarHostState.showSnackbar(
+                message = event.message,
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.undoAction(event.actionId)
+            }
+        }
+    }
+
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .testTag("rules_screen"),
-        contentPadding = PaddingValues(bottom = 100.dp)
+            .testTag("rules_screen")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 100.dp)
+        ) {
         item {
             TabRow(
                 selectedTabIndex = activeTab,
@@ -696,6 +714,14 @@ fun RulesScreen(
             }
         }
     }
+
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 16.dp)
+    )
+}
 }
 
 
@@ -744,12 +770,10 @@ fun RuleCard(
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "→", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     CategoryChip(categoryName = rule.categoryName)
+                }
             }
-        }
         }
     }
 }

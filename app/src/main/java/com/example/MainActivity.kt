@@ -31,6 +31,9 @@ import com.example.features.transactions.FinanceViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        try {
+            com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
+        } catch (_: Throwable) {}
         enableEdgeToEdge()
         setContent {
             val authViewModel: AuthViewModel = viewModel()
@@ -39,6 +42,19 @@ class MainActivity : ComponentActivity() {
             val authState by authViewModel.authState.collectAsState()
             val userProfile by financeViewModel.userProfile.collectAsState()
             val accounts by financeViewModel.accounts.collectAsState()
+
+            // VAPT Hardening: Screen scraping / task switcher snapshot prevention
+            LaunchedEffect(userProfile?.isPrivacyBlurEnabled) {
+                val shouldSecure = userProfile?.isPrivacyBlurEnabled ?: true
+                if (shouldSecure) {
+                    window.setFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                        android.view.WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                } else {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
 
             FinanceManagerTheme(darkTheme = userProfile?.isDarkMode ?: false) {
                 Surface(
@@ -53,36 +69,9 @@ class MainActivity : ComponentActivity() {
                                     .background(MaterialTheme.colorScheme.background),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primary,
-                                        shape = CircleShape,
-                                        modifier = Modifier.size(80.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = "予算",
-                                                color = Color.White,
-                                                style = MaterialTheme.typography.headlineMedium,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Text(
-                                        text = "Yosan",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.height(24.dp))
-                                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                                }
+                                CircularProgressIndicator()
                             }
                         }
-
-
-
 
                         is AuthState.Authenticated -> {
                             if (userProfile == null) {
@@ -92,37 +81,12 @@ class MainActivity : ComponentActivity() {
                                         .background(MaterialTheme.colorScheme.background),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.primary,
-                                            shape = CircleShape,
-                                            modifier = Modifier.size(80.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Text(
-                                                    text = "予算",
-                                                    color = Color.White,
-                                                    style = MaterialTheme.typography.headlineMedium,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                        Spacer(modifier = Modifier.height(16.dp))
-                                        Text(
-                                            text = "Yosan",
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(modifier = Modifier.height(24.dp))
-                                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                                    }
+                                    CircularProgressIndicator()
                                 }
                             } else {
                                 val isExistingUser = userProfile?.isOnboardingCompleted == true &&
                                         !userProfile?.name.isNullOrBlank() &&
-                                        !userProfile?.name.equals("User", ignoreCase = true) &&
-                                        accounts.isNotEmpty()
+                                        !userProfile?.name.equals("User", ignoreCase = true)
                                 if (!isExistingUser) {
                                     OnboardingScreen(
                                         authViewModel = authViewModel,

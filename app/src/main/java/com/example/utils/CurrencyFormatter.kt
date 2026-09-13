@@ -8,23 +8,35 @@ import java.util.Locale
 
 object CurrencyFormatter {
 
+    fun roundFinancialAmount(amount: Double): Double {
+        return try {
+            java.math.BigDecimal.valueOf(amount)
+                .setScale(2, java.math.RoundingMode.HALF_EVEN)
+                .toDouble()
+        } catch (_: Exception) {
+            amount
+        }
+    }
+
     fun formatInr(amount: Double, includeDecimals: Boolean = true): String {
         return try {
-            val symbols = DecimalFormatSymbols(Locale("en", "IN"))
+            val rounded = roundFinancialAmount(amount)
+            val symbols = DecimalFormatSymbols(Locale.Builder().setLanguage("en").setRegion("IN").build())
             val pattern = if (includeDecimals) "##,##,##0.00" else "##,##,##0"
             val formatter = DecimalFormat(pattern, symbols)
-            "₹ " + formatter.format(amount)
+            "₹ " + formatter.format(rounded)
         } catch (e: Exception) {
             "₹ " + String.format(Locale.ENGLISH, "%.2f", amount)
         }
     }
 
     fun formatInrCompact(amount: Double): String {
+        val rounded = roundFinancialAmount(amount)
         return when {
-            amount >= 10000000 -> String.format(Locale.ENGLISH, "₹%.2f Cr", amount / 10000000.0)
-            amount >= 100000 -> String.format(Locale.ENGLISH, "₹%.2f L", amount / 100000.0)
-            amount >= 1000 -> String.format(Locale.ENGLISH, "₹%.1f K", amount / 1000.0)
-            else -> formatInr(amount, includeDecimals = false)
+            rounded >= 10000000 -> String.format(Locale.ENGLISH, "₹%.2f Cr", rounded / 10000000.0)
+            rounded >= 100000 -> String.format(Locale.ENGLISH, "₹%.2f L", rounded / 100000.0)
+            rounded >= 1000 -> String.format(Locale.ENGLISH, "₹%.1f K", rounded / 1000.0)
+            else -> formatInr(rounded, includeDecimals = false)
         }
     }
 }

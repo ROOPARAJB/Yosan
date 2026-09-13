@@ -81,55 +81,61 @@ object FinancialCalculationService {
         }
 
         // Income = SUM of credits classified as INCOME or REFUND
-        val totalIncome = transactions
-            .filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
-            .sumOf { resolveCredit(it) }
+        val totalIncome = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            transactions
+                .filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
+                .sumOf { resolveCredit(it) }
+        )
 
         // Expense = SUM of debits classified as EXPENSE
-        val totalExpense = transactions
-            .filter { it.transactionType == TransactionType.EXPENSE }
-            .sumOf { resolveDebit(it) }
+        val totalExpense = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            transactions
+                .filter { it.transactionType == TransactionType.EXPENSE }
+                .sumOf { resolveDebit(it) }
+        )
 
         // Net Savings
-        val netSavings = totalIncome - totalExpense
+        val netSavings = com.example.utils.CurrencyFormatter.roundFinancialAmount(totalIncome - totalExpense)
 
         // Money Lent
-        val moneyLent = loans.sumOf { it.amount }
+        val moneyLent = com.example.utils.CurrencyFormatter.roundFinancialAmount(loans.sumOf { it.amount })
 
         // Repaid
-        val totalRepaid = loans.sumOf { it.amountRepaid }
+        val totalRepaid = com.example.utils.CurrencyFormatter.roundFinancialAmount(loans.sumOf { it.amountRepaid })
 
         // Outstanding
-        val totalOutstanding = loans.sumOf { it.remainingAmount.coerceAtLeast(0.0) }
+        val totalOutstanding = com.example.utils.CurrencyFormatter.roundFinancialAmount(loans.sumOf { it.remainingAmount.coerceAtLeast(0.0) })
 
         // Company Expenses
-        val totalCompanyExpense = companyExpenses.sumOf { it.amount }
+        val totalCompanyExpense = com.example.utils.CurrencyFormatter.roundFinancialAmount(companyExpenses.sumOf { it.amount })
 
         // Current Balance: use latest balanceAfterTransaction if available (most accurate for imported statements)
         // Otherwise fall back to openingBalance + credits - debits per account
-        val totalAccountBalance = if (accounts.isNotEmpty()) {
-            accounts.sumOf { acc ->
-                val accTxs = transactions.filter { it.accountId == acc.id }
-                // Prefer the running balance from the last imported statement row
-                val latestRunningBalance = accTxs
+        val totalAccountBalance = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            if (accounts.isNotEmpty()) {
+                accounts.sumOf { acc ->
+                    val accTxs = transactions.filter { it.accountId == acc.id }
+                    // Prefer the running balance from the last imported statement row
+                    val latestRunningBalance = accTxs
+                        .filter { it.balanceAfterTransaction != null }
+                        .maxByOrNull { it.transactionDate + it.createdAt }
+                        ?.balanceAfterTransaction
+                    latestRunningBalance
+                        ?: run {
+                            val totalCredits = accTxs.sumOf { resolveCredit(it) }
+                            val totalDebits = accTxs.sumOf { resolveDebit(it) }
+                            acc.openingBalance + totalCredits - totalDebits
+                        }
+                }
+            } else {
+                // No accounts set up: use latest statement running balance or net
+                val latestBalance = transactions
                     .filter { it.balanceAfterTransaction != null }
                     .maxByOrNull { it.transactionDate + it.createdAt }
                     ?.balanceAfterTransaction
-                latestRunningBalance
-                    ?: run {
-                        val totalCredits = accTxs.sumOf { resolveCredit(it) }
-                        val totalDebits = accTxs.sumOf { resolveDebit(it) }
-                        acc.openingBalance + totalCredits - totalDebits
-                    }
+                latestBalance ?: (totalIncome - totalExpense)
             }
-        } else {
-            // No accounts set up: use latest statement running balance or net
-            val latestBalance = transactions
-                .filter { it.balanceAfterTransaction != null }
-                .maxByOrNull { it.transactionDate + it.createdAt }
-                ?.balanceAfterTransaction
-            latestBalance ?: (totalIncome - totalExpense)
-        }
+        )
 
         return DashboardSummary(
             currentBalance = totalAccountBalance,
@@ -166,6 +172,38 @@ object FinancialCalculationService {
                 val percentage = if (totalExpense > 0) ((amount / totalExpense) * 100).toFloat() else 0f
                 val color = categoryColorMap[catName.lowercase()]
                     ?: palette[Math.abs(catName.hashCode()) % palette.size]
+                CategoryExpenseItem(
+                    categoryName = catName,
+                    amount = amount,
+                    percentage = percentage,
+                    colorHex = color,
+                    count = txs.size
+                )
+            }
+            .sortedByDescending { it.amount }
+    }
+
+    fun calculateCategoryIncomeBreakdown(
+        transactions: List<TransactionEntity>,
+        categoryEntities: List<CategoryEntity>
+    ): List<CategoryExpenseItem> {
+        val incomeTransactions = transactions.filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
+        val totalIncome = incomeTransactions.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+
+        val categoryColorMap = categoryEntities.associate { it.name.lowercase() to it.colorHex }
+
+        val incomePalette = listOf(
+            "#10B981", "#059669", "#34D399", "#3B82F6", "#6366F1",
+            "#8B5CF6", "#06B6D4", "#14B8A6", "#84CC16", "#F59E0B"
+        )
+
+        return incomeTransactions
+            .groupBy { it.categoryName }
+            .map { (catName, txs) ->
+                val amount = txs.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+                val percentage = if (totalIncome > 0) ((amount / totalIncome) * 100).toFloat() else 0f
+                val color = categoryColorMap[catName.lowercase()]
+                    ?: incomePalette[Math.abs(catName.hashCode()) % incomePalette.size]
                 CategoryExpenseItem(
                     categoryName = catName,
                     amount = amount,
@@ -322,7 +360,7 @@ object FinancialCalculationService {
     }
 
     private fun formatRupee(amount: Double): String {
-        val symbols = DecimalFormatSymbols(Locale("en", "IN"))
+        val symbols = DecimalFormatSymbols(Locale.Builder().setLanguage("en").setRegion("IN").build())
         val formatter = DecimalFormat("##,##,##0.00", symbols)
         return formatter.format(amount)
     }

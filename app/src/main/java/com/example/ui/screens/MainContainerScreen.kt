@@ -24,7 +24,9 @@ import com.example.ui.components.SmartRulePromptDialog
 import com.example.ui.components.OnboardingPreferencesDialog
 import com.example.ui.theme.*
 import com.example.features.auth.AuthViewModel
-import com.example.features.auth.SettingsScreen
+import com.example.features.dashboard.DashboardScreen
+import com.example.features.settings.SettingsScreen
+import com.example.features.sync.ExcelSyncScreen
 import com.example.features.transactions.FinanceViewModel
 import com.example.features.transactions.CompanyExpensePrompt
 import com.example.features.transactions.AddTab
@@ -32,7 +34,7 @@ import com.example.features.transactions.TransactionsScreen
 import com.example.features.transactions.AddTransactionSheet
 import com.example.features.transactions.TransactionDetailSheet
 import com.example.features.rules.RulesScreen
-import com.example.features.reports.CompanyExpensesScreen
+import com.example.features.official_expenses.OfficialExpensesScreen
 import com.example.features.reports.ReportsScreen
 import com.example.features.import.ImportStatementScreen
 import com.example.features.lending.LendingScreen
@@ -46,15 +48,14 @@ enum class MainTab(
 ) {
     DASHBOARD("Dashboard", Icons.Outlined.Dashboard, Icons.Default.Dashboard, "tab_dashboard"),
     TRANSACTIONS("Statement", Icons.Outlined.ReceiptLong, Icons.Default.ReceiptLong, "tab_transactions"),
-    SETTINGS("Settings", Icons.Outlined.Settings, Icons.Default.Settings, "tab_settings"),
     REPORTS("Reports", Icons.Outlined.Assessment, Icons.Default.Assessment, "tab_reports"),
-    DOCUMENT("Guide", Icons.Outlined.MenuBook, Icons.Default.MenuBook, "tab_guide")
+    SETTINGS("Settings", Icons.Outlined.Settings, Icons.Default.Settings, "tab_settings")
 }
 
 
 
 enum class SubScreen {
-    NONE, RULES, COMPANY_EXPENSES, REPORTS, IMPORT_STATEMENT, LENDING
+    NONE, RULES, COMPANY_EXPENSES, REPORTS, IMPORT_STATEMENT, LENDING, EXCEL_SYNC
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,6 +77,13 @@ fun MainContainerScreen(
     val uiMessage by viewModel.uiMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(uiMessage) {
+        uiMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.dismissMessage()
+        }
+    }
 
     val companyExpensePrompt by viewModel.companyExpensePrompt.collectAsState()
 
@@ -165,6 +173,7 @@ fun MainContainerScreen(
                                     SubScreen.REPORTS -> "Reports"
                                     SubScreen.IMPORT_STATEMENT -> "Import Statement"
                                     SubScreen.LENDING -> "Loans & Lending"
+                                    SubScreen.EXCEL_SYNC -> "Excel Two-Way Sync"
                                     SubScreen.NONE -> ""
                                 },
                                 fontWeight = FontWeight.Bold,
@@ -174,8 +183,9 @@ fun MainContainerScreen(
                                 SubScreen.RULES -> "Automatically categorize transactions using your rules."
                                 SubScreen.COMPANY_EXPENSES -> "Spent for Company expense which can be claimed later as reimbursement"
                                 SubScreen.REPORTS -> "Monthly trends & category spending breakdowns"
-                                SubScreen.IMPORT_STATEMENT -> "Upload bank statements in Excel (.xlsx, .xls) formats"
+                                SubScreen.IMPORT_STATEMENT -> "Upload bank statements in Excel (.xlsx, .xls) or PDF (.pdf) formats"
                                 SubScreen.LENDING -> "Track money you have lent and repayments received"
+                                SubScreen.EXCEL_SYNC -> "Bidirectional synchronization with Microsoft Excel (.xlsx)"
                                 SubScreen.NONE -> ""
                             }
                             if (subtitle.isNotEmpty()) {
@@ -248,7 +258,7 @@ fun MainContainerScreen(
             if (currentSubScreen != SubScreen.NONE) {
                 when (currentSubScreen) {
                     SubScreen.RULES -> RulesScreen(viewModel = viewModel)
-                    SubScreen.COMPANY_EXPENSES -> CompanyExpensesScreen(
+                    SubScreen.COMPANY_EXPENSES -> OfficialExpensesScreen(
                         viewModel = viewModel,
                         onAddExpenseClick = {
                             addSheetTab = AddTab.COMPANY_EXPENSE
@@ -276,6 +286,7 @@ fun MainContainerScreen(
                             showAddSheet = true
                         }
                     )
+                    SubScreen.EXCEL_SYNC -> ExcelSyncScreen(viewModel = viewModel)
                     SubScreen.NONE -> {}
                 }
             } else {
@@ -325,12 +336,11 @@ fun MainContainerScreen(
                             onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
                             onNavigateToReports = { currentTab = MainTab.REPORTS },
                             onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
-                            onNavigateToLending = { currentSubScreen = SubScreen.LENDING }
+                            onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
+                            onNavigateToExcelSync = { currentSubScreen = SubScreen.EXCEL_SYNC }
                         )
 
                         MainTab.REPORTS -> ReportsScreen(viewModel = viewModel)
-
-                        MainTab.DOCUMENT -> GuideScreen()
                     }
                 }
 
@@ -351,9 +361,14 @@ fun MainContainerScreen(
                 )
             }
 
-            if (selectedTransactionForDetail != null) {
+            val allTransactionsList by viewModel.allTransactions.collectAsState()
+            val activeDetailTx = remember(allTransactionsList, selectedTransactionForDetail) {
+                allTransactionsList.find { it.id == selectedTransactionForDetail?.id } ?: selectedTransactionForDetail
+            }
+
+            if (activeDetailTx != null) {
                 TransactionDetailSheet(
-                    transaction = selectedTransactionForDetail!!,
+                    transaction = activeDetailTx,
                     viewModel = viewModel,
                     onDismiss = { selectedTransactionForDetail = null }
                 )

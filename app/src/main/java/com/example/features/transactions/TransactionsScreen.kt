@@ -162,14 +162,108 @@ fun TransactionsScreen(
         )
     }
 
-    Column(
+    var showBatchCategoryPicker by remember { mutableStateOf(false) }
+
+    if (showBatchCategoryPicker) {
+        AlertDialog(
+            onDismissRequest = { showBatchCategoryPicker = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Category,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Categorize ${selectedTxIds.size} Items", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Choose a category to apply to all selected transactions:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyColumn(modifier = Modifier.heightIn(max = 260.dp)) {
+                        items(categories) { cat ->
+                            val catColor = try {
+                                androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(cat.colorHex))
+                            } catch (e: Exception) {
+                                MaterialTheme.colorScheme.primary
+                            }
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        viewModel.updateTransactionsCategory(selectedTxIds.toList(), cat)
+                                        selectedTxIds.clear()
+                                        showBatchCategoryPicker = false
+                                    },
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .clip(CircleShape)
+                                            .background(catColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = cat.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showBatchCategoryPicker = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(viewModel) {
+        viewModel.undoSnackbarEvent.collect { event ->
+            val result = snackbarHostState.showSnackbar(
+                message = event.message,
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.undoAction(event.actionId)
+            }
+        }
+    }
+
+    Box(
         modifier = modifier
             .fillMaxSize()
             .testTag("transactions_screen")
     ) {
-        val isSelectionMode = selectedTxIds.isNotEmpty()
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            val isSelectionMode = selectedTxIds.isNotEmpty()
 
-        // Header with Delete All or Multi-delete options
+        // Header with Delete All or Multi-delete / Multi-categorize options
         if (isSelectionMode) {
             Row(
                 modifier = Modifier
@@ -194,20 +288,34 @@ fun TransactionsScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                IconButton(
-                    onClick = {
-                        selectedTxIds.forEach { id ->
-                            viewModel.deleteTransaction(id)
-                        }
-                        selectedTxIds.clear()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = { showBatchCategoryPicker = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Category,
+                            contentDescription = "Categorize Selected",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Categorize", fontSize = 12.sp)
                     }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteOutline,
-                        contentDescription = "Delete Selected",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            viewModel.deleteTransactions(selectedTxIds.toList())
+                            selectedTxIds.clear()
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Delete Selected",
+                            tint = ExpenseRed,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
         } else {
@@ -312,14 +420,27 @@ fun TransactionsScreen(
             }
             item {
                 FilterChip(
-                    selected = selectedType == null,
-                    onClick = { viewModel.setTypeFilter(null) },
+                    selected = selectedType == null && selectedCategory == null,
+                    onClick = { viewModel.clearFilters() },
                     label = { Text("All") }
                 )
             }
             item {
+                val isUncategorized = selectedCategory.equals("Uncategorized", ignoreCase = true)
                 FilterChip(
-                    selected = selectedType == TransactionType.EXPENSE,
+                    selected = isUncategorized,
+                    onClick = {
+                        if (isUncategorized) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Uncategorized")
+                    },
+                    label = { Text("Uncategorized") },
+                    leadingIcon = {
+                        if (isUncategorized) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = selectedType == TransactionType.EXPENSE && selectedCategory == null,
                     onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.EXPENSE) null else TransactionType.EXPENSE) },
                     label = { Text("Expense") },
                     leadingIcon = {
@@ -329,11 +450,64 @@ fun TransactionsScreen(
             }
             item {
                 FilterChip(
-                    selected = selectedType == TransactionType.INCOME,
+                    selected = selectedType == TransactionType.INCOME && selectedCategory == null,
                     onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.INCOME) null else TransactionType.INCOME) },
                     label = { Text("Income") },
                     leadingIcon = {
                         if (selectedType == TransactionType.INCOME) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = selectedType == TransactionType.LENDING && selectedCategory == null,
+                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.LENDING) null else TransactionType.LENDING) },
+                    label = { Text("Lend") },
+                    leadingIcon = {
+                        if (selectedType == TransactionType.LENDING) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = selectedType == TransactionType.BORROWING && selectedCategory == null,
+                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.BORROWING) null else TransactionType.BORROWING) },
+                    label = { Text("Borrow") },
+                    leadingIcon = {
+                        if (selectedType == TransactionType.BORROWING) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = selectedType == TransactionType.INVESTMENT && selectedCategory == null,
+                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.INVESTMENT) null else TransactionType.INVESTMENT) },
+                    label = { Text("Investment") },
+                    leadingIcon = {
+                        if (selectedType == TransactionType.INVESTMENT) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = selectedType == TransactionType.TRANSFER && selectedCategory == null,
+                    onClick = { viewModel.setTypeFilter(if (selectedType == TransactionType.TRANSFER) null else TransactionType.TRANSFER) },
+                    label = { Text("Transfer") },
+                    leadingIcon = {
+                        if (selectedType == TransactionType.TRANSFER) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+            item {
+                val isOfficial = selectedCategory.equals("Official Expense", ignoreCase = true)
+                FilterChip(
+                    selected = isOfficial,
+                    onClick = {
+                        if (isOfficial) viewModel.setCategoryFilter(null) else viewModel.setCategoryFilter("Official Expense")
+                    },
+                    label = { Text("Official") },
+                    leadingIcon = {
+                        if (isOfficial) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     }
                 )
             }
@@ -485,7 +659,14 @@ fun TransactionsScreen(
                     }
                 }
             }
-
         }
     }
+
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 16.dp)
+    )
+}
 }

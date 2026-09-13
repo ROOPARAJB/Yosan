@@ -58,6 +58,7 @@ fun AddTransactionSheet(
     var dateText by remember { mutableStateOf(DateUtils.getCurrentDate()) }
     var selectedCategory by remember { mutableStateOf<CategoryEntity?>(null) }
     var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 1L) }
+    var targetAccountId by remember { mutableStateOf(accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 1L) }
     var notes by remember { mutableStateOf("") }
 
     // Lending fields
@@ -171,6 +172,17 @@ fun AddTransactionSheet(
                         },
                         label = { Text("Company") },
                         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = CompanySky.copy(alpha = 0.2f))
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = selectedTab == AddTab.TRANSFER,
+                        onClick = {
+                            selectedTab = AddTab.TRANSFER
+                            selectedCategory = null
+                        },
+                        label = { Text("Transfer") },
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = TransferSlate.copy(alpha = 0.2f))
                     )
                 }
             }
@@ -426,6 +438,68 @@ fun AddTransactionSheet(
                     )
                 }
 
+                AddTab.TRANSFER -> {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.SyncAlt, contentDescription = "Transfer", tint = TransferSlate, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Transfer funds between your accounts. Both balances will sync automatically.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+
+                    Text("From Account", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(accounts) { acc ->
+                            val isSelected = selectedAccountId == acc.id
+                            Surface(
+                                modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable { selectedAccountId = acc.id },
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text(
+                                    text = acc.accountName,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text("To Account", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(accounts) { acc ->
+                            val isSelected = targetAccountId == acc.id
+                            Surface(
+                                modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable { targetAccountId = acc.id },
+                                color = if (isSelected) TransferSlate else MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text(
+                                    text = acc.accountName,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 else -> {}
             }
 
@@ -529,6 +603,19 @@ fun AddTransactionSheet(
                                 notes = notes
                             )
                         }
+                        AddTab.TRANSFER -> {
+                            if (selectedAccountId == targetAccountId) {
+                                viewModel.showMessage("From and To accounts cannot be the same!")
+                                return@Button
+                            }
+                            viewModel.addTransferTransaction(
+                                fromAccountId = selectedAccountId,
+                                toAccountId = targetAccountId,
+                                amount = amt,
+                                date = dateText,
+                                notes = notes
+                            )
+                        }
                         else -> {}
                     }
                     onDismiss()
@@ -545,6 +632,7 @@ fun AddTransactionSheet(
                         AddTab.LEND_MONEY -> LendingIndigo
                         AddTab.INVESTMENT -> OutstandingAmber
                         AddTab.COMPANY_EXPENSE -> CompanySky
+                        AddTab.TRANSFER -> TransferSlate
                         else -> MaterialTheme.colorScheme.primary
                     }
                 )
