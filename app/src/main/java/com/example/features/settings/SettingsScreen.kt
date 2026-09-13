@@ -48,6 +48,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.example.ui.components.PrivacyAmountText
 import com.example.data.local.entity.UserProfileEntity
 import com.example.data.local.entity.UndoHistoryEntity
+import com.example.BuildConfig
+import com.example.features.updater.UpdateManager
+import com.example.features.updater.UpdateDialog
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,6 +86,9 @@ fun SettingsScreen(
     val authUser by authViewModel?.user?.collectAsState() ?: remember { mutableStateOf(null) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val updateManager = remember { UpdateManager(context) }
+    val updateState by updateManager.uiState.collectAsState()
     val createDocumentLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri: android.net.Uri? ->
@@ -485,6 +492,43 @@ fun SettingsScreen(
             }
         }
 
+        // 6.5. System & Updates Group
+        item {
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "System & Updates",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+            )
+        }
+
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column {
+                    MoreMenuItem(
+                        title = "Check for Updates",
+                        subtitle = "Current version: v${BuildConfig.VERSION_NAME} • Tap to check GitHub",
+                        icon = Icons.Default.SystemUpdate,
+                        iconColor = MaterialTheme.colorScheme.primary,
+                        onClick = {
+                            coroutineScope.launch {
+                                updateManager.checkForUpdates()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
         // 7. Navigation: Data & Privacy Group
         item {
             Spacer(modifier = Modifier.height(14.dp))
@@ -558,10 +602,28 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(3.dp))
                         Text(
-                            text = "Version 1.1",
+                            text = "Version ${BuildConfig.VERSION_NAME}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    updateManager.checkForUpdates()
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Check for Updates", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
                         Spacer(modifier = Modifier.height(10.dp))
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
@@ -1300,6 +1362,19 @@ fun SettingsScreen(
             onDismiss = { showUndoHistorySheet = false }
         )
     }
+
+    UpdateDialog(
+        state = updateState,
+        onDismiss = { updateManager.resetState() },
+        onStartDownload = { info ->
+            coroutineScope.launch {
+                updateManager.downloadAndPrepareApk(info)
+            }
+        },
+        onInstallApk = { file ->
+            updateManager.installApk(file)
+        }
+    )
 }
 
 @Composable
