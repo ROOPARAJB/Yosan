@@ -373,11 +373,16 @@ fun TransactionDetailSheet(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                val sortedCategories = remember(categories, currentTx.transactionType) {
-                    val isIncomeType = currentTx.transactionType == TransactionType.INCOME || currentTx.transactionType == TransactionType.REFUND
-                    val matching = categories.filter { if (isIncomeType) it.type == CategoryType.INCOME else it.type == CategoryType.EXPENSE }
-                    val others = categories.filter { if (isIncomeType) it.type != CategoryType.INCOME else it.type != CategoryType.EXPENSE }
-                    matching + others
+                val allowedCategories = remember(categories, currentTx.transactionType) {
+                    when (currentTx.transactionType) {
+                        TransactionType.EXPENSE -> categories.filter { it.type == CategoryType.EXPENSE }
+                        TransactionType.INCOME, TransactionType.REFUND -> categories.filter { it.type == CategoryType.INCOME }
+                        TransactionType.INVESTMENT -> categories.filter { it.type == CategoryType.INVESTMENT }
+                        TransactionType.TRANSFER -> categories.filter { it.type == CategoryType.OTHER }
+                        TransactionType.LENDING -> categories.filter { it.type == CategoryType.LENDING }
+                        TransactionType.BORROWING -> categories.filter { it.type == CategoryType.BORROWING }
+                        else -> categories
+                    }
                 }
 
                 Row(
@@ -386,7 +391,7 @@ fun TransactionDetailSheet(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    sortedCategories.forEach { cat ->
+                    allowedCategories.forEach { cat ->
                         val isCurrent = currentTx.categoryName.equals(cat.name, ignoreCase = true)
                         val catColor = try {
                             Color(android.graphics.Color.parseColor(cat.colorHex))
@@ -687,15 +692,26 @@ fun TransactionDetailSheet(
                 text = {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         if (!showAddCatInput) {
-                            if (categories.isEmpty()) {
+                            val modalAllowedCats = remember(categories, transaction.transactionType) {
+                                when (transaction.transactionType) {
+                                    TransactionType.EXPENSE -> categories.filter { it.type == CategoryType.EXPENSE }
+                                    TransactionType.INCOME, TransactionType.REFUND -> categories.filter { it.type == CategoryType.INCOME }
+                                    TransactionType.INVESTMENT -> categories.filter { it.type == CategoryType.INVESTMENT }
+                                    TransactionType.TRANSFER -> categories.filter { it.type == CategoryType.OTHER }
+                                    TransactionType.LENDING -> categories.filter { it.type == CategoryType.LENDING }
+                                    TransactionType.BORROWING -> categories.filter { it.type == CategoryType.BORROWING }
+                                    else -> categories
+                                }
+                            }
+                            if (modalAllowedCats.isEmpty()) {
                                 Text(
-                                    text = "No categories defined yet.",
+                                    text = "No matching categories for ${transaction.transactionType.name}.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.padding(vertical = 12.dp)
                                 )
                             }
                             LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
-                                items(categories) { cat: CategoryEntity ->
+                                items(modalAllowedCats) { cat: CategoryEntity ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -717,7 +733,14 @@ fun TransactionDetailSheet(
                             Button(
                                 onClick = {
                                     showAddCatInput = true
-                                    newCatType = if (transaction.transactionType == TransactionType.INCOME || transaction.transactionType == TransactionType.REFUND) CategoryType.INCOME else CategoryType.EXPENSE
+                                    newCatType = when (transaction.transactionType) {
+                                        TransactionType.INCOME, TransactionType.REFUND -> CategoryType.INCOME
+                                        TransactionType.INVESTMENT -> CategoryType.INVESTMENT
+                                        TransactionType.TRANSFER -> CategoryType.OTHER
+                                        TransactionType.LENDING -> CategoryType.LENDING
+                                        TransactionType.BORROWING -> CategoryType.BORROWING
+                                        else -> CategoryType.EXPENSE
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)

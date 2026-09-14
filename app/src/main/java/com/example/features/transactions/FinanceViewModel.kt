@@ -912,10 +912,36 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val oldTx = tx
             val amount = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
+            
+            // Realign category if it conflicts with the new type
+            val allCats = database.categoryDao().getAllCategoriesList()
+            val validCategory = when (newType) {
+                TransactionType.INVESTMENT -> {
+                    if (allCats.any { it.type == CategoryType.INVESTMENT && it.name.equals(tx.categoryName, true) }) tx.categoryName
+                    else allCats.firstOrNull { it.type == CategoryType.INVESTMENT }?.name ?: "Investments"
+                }
+                TransactionType.EXPENSE -> {
+                    if (allCats.any { it.type == CategoryType.EXPENSE && it.name.equals(tx.categoryName, true) }) tx.categoryName
+                    else allCats.firstOrNull { it.type == CategoryType.EXPENSE }?.name ?: "Personal Expense"
+                }
+                TransactionType.INCOME, TransactionType.REFUND -> {
+                    if (allCats.any { it.type == CategoryType.INCOME && it.name.equals(tx.categoryName, true) }) tx.categoryName
+                    else allCats.firstOrNull { it.type == CategoryType.INCOME }?.name ?: "Salary & Income"
+                }
+                TransactionType.TRANSFER -> {
+                    if (allCats.any { it.type == CategoryType.OTHER && it.name.equals(tx.categoryName, true) }) tx.categoryName
+                    else "Transfer"
+                }
+                else -> tx.categoryName
+            }
+            val validCatId = allCats.firstOrNull { it.name.equals(validCategory, true) }?.id ?: tx.categoryId
+
             val updated = when (newType) {
                 TransactionType.INCOME, TransactionType.REFUND -> {
                     tx.copy(
                         transactionType = newType,
+                        categoryName = validCategory,
+                        categoryId = validCatId,
                         creditAmount = amount,
                         debitAmount = 0.0,
                         amount = amount,
@@ -927,6 +953,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     if (wasCredit) {
                         tx.copy(
                             transactionType = newType,
+                            categoryName = validCategory,
+                            categoryId = validCatId,
                             creditAmount = amount,
                             debitAmount = 0.0,
                             amount = amount,
@@ -935,6 +963,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     } else {
                         tx.copy(
                             transactionType = newType,
+                            categoryName = validCategory,
+                            categoryId = validCatId,
                             debitAmount = amount,
                             creditAmount = 0.0,
                             amount = amount,
@@ -945,6 +975,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 else -> {
                     tx.copy(
                         transactionType = newType,
+                        categoryName = validCategory,
+                        categoryId = validCatId,
                         debitAmount = amount,
                         creditAmount = 0.0,
                         amount = amount,

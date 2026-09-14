@@ -71,9 +71,13 @@ jobs:
             echo "notes=${{ github.event.inputs.release_notes }}" >> $GITHUB_OUTPUT
           else
             TAG_NAME=${GITHUB_REF#refs/tags/}
+            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^$/d')
+            if [ -z "$TAG_MSG" ]; then
+              TAG_MSG=$(git log -1 --pretty=%B | sed '/^$/d')
+            fi
             echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
             echo "title=Release $TAG_NAME" >> $GITHUB_OUTPUT
-            echo "notes=Automated release for $TAG_NAME" >> $GITHUB_OUTPUT
+            echo "notes=${TAG_MSG:-Automated release for $TAG_NAME}" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release and Upload APK

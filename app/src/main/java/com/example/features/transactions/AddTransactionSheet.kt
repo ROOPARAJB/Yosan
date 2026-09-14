@@ -314,8 +314,11 @@ fun AddTransactionSheet(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     val filteredCats = categories.filter {
-                        if (selectedTab == AddTab.INCOME) (it.type == CategoryType.INCOME || it.name.equals("Advance", ignoreCase = true))
-                        else (it.type == CategoryType.EXPENSE || it.name.equals("Advance", ignoreCase = true))
+                        when (selectedTab) {
+                            AddTab.INCOME -> it.type == CategoryType.INCOME
+                            AddTab.INVESTMENT -> it.type == CategoryType.INVESTMENT
+                            else -> it.type == CategoryType.EXPENSE
+                        }
                     }
 
                     LazyRow(

@@ -1,11 +1,13 @@
 package com.example.features.lending
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -29,6 +31,18 @@ import com.example.ui.theme.*
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
 
+data class BorrowSummary(
+    val borrowId: String,
+    val inflowTransaction: TransactionEntity?,
+    val lenderName: String,
+    val totalBorrowed: Double,
+    val totalRepaid: Double,
+    val remainingDebt: Double,
+    val progress: Float,
+    val isSettled: Boolean,
+    val linkedRepayments: List<TransactionEntity>
+)
+
 @Composable
 fun BorrowingScreen(
     viewModel: FinanceViewModel,
@@ -38,25 +52,107 @@ fun BorrowingScreen(
 ) {
     val allTransactions by viewModel.allTransactions.collectAsState()
 
-    val borrowTxs = remember(allTransactions) {
-        allTransactions.filter {
+    // 1. Group transactions into Borrow Sets (#BORROW-X)
+    val borrowSummaries = remember(allTransactions) {
+        val borrowInflows = allTransactions.filter {
             it.transactionType == TransactionType.BORROWING ||
-                    it.categoryName.contains("Borrow", ignoreCase = true) ||
-                    it.categoryName.contains("Debt", ignoreCase = true)
+                    (it.creditAmount > 0 && (it.categoryName.contains("Borrow", ignoreCase = true) || it.notes.contains("BORROW", ignoreCase = true)))
         }
+
+        val idPattern = Regex("""#?(BORROW[-_ ]*\d+)""", RegexOption.IGNORE_CASE)
+
+        val groups = mutableMapOf<String, MutableList<TransactionEntity>>()
+        val standalone = mutableListOf<TransactionEntity>()
+
+        borrowInflows.forEach { tx ->
+            val explicitId = tx.advanceId?.takeIf { it.isNotBlank() }
+                ?: idPattern.find(tx.notes)?.groupValues?.get(1)
+                ?: idPattern.find(tx.description)?.groupValues?.get(1)
+
+            if (!explicitId.isNullOrBlank()) {
+                val clean = explicitId.uppercase().replace(Regex("[_ ]"), "-")
+                groups.getOrPut(clean) { mutableListOf() }.add(tx)
+            } else {
+                standalone.add(tx)
+            }
+        }
+
+        val summaries = mutableListOf<BorrowSummary>()
+
+        groups.forEach { (borrowId, inflows) ->
+            val primaryInflow = inflows.maxByOrNull { if (it.creditAmount > 0) it.creditAmount else it.amount }
+            val totalBorrowed = inflows.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+
+            // Find all repayments linked to this borrow ID
+            val repayments = allTransactions.filter { tx ->
+                tx.debitAmount > 0 && (
+                    tx.notes.contains(borrowId, ignoreCase = true) ||
+                    tx.description.contains(borrowId, ignoreCase = true) ||
+                    tx.advanceId.equals(borrowId, ignoreCase = true)
+                )
+            }
+
+            val totalRepaid = repayments.sumOf { if (it.debitAmount > 0) it.debitAmount else it.amount }
+            val remaining = (totalBorrowed - totalRepaid).coerceAtLeast(0.0)
+            val isSettled = remaining <= 0.0 || primaryInflow?.notes?.contains("#SETTLED", ignoreCase = true) == true
+            val progress = if (totalBorrowed > 0) (totalRepaid / totalBorrowed).toFloat().coerceIn(0f, 1f) else 0f
+
+            summaries.add(
+                BorrowSummary(
+                    borrowId = borrowId,
+                    inflowTransaction = primaryInflow,
+                    lenderName = primaryInflow?.description?.ifBlank { "Lender / Creditor" } ?: "Lender / Creditor",
+                    totalBorrowed = totalBorrowed,
+                    totalRepaid = totalRepaid,
+                    remainingDebt = remaining,
+                    progress = progress,
+                    isSettled = isSettled,
+                    linkedRepayments = repayments
+                )
+            )
+        }
+
+        // Standalone records without explicit #BORROW-X
+        standalone.forEachIndexed { index, tx ->
+            val syntheticId = "BORROW-${index + 1}"
+            val totalBorrowed = if (tx.creditAmount > 0) tx.creditAmount else tx.amount
+            val isSettled = tx.notes.contains("#SETTLED", ignoreCase = true)
+
+            summaries.add(
+                BorrowSummary(
+                    borrowId = syntheticId,
+                    inflowTransaction = tx,
+                    lenderName = tx.description.ifBlank { "Lender / Creditor" },
+                    totalBorrowed = totalBorrowed,
+                    totalRepaid = if (isSettled) totalBorrowed else 0.0,
+                    remainingDebt = if (isSettled) 0.0 else totalBorrowed,
+                    progress = if (isSettled) 1f else 0f,
+                    isSettled = isSettled,
+                    linkedRepayments = emptyList()
+                )
+            )
+        }
+
+        summaries.sortedByDescending { it.inflowTransaction?.transactionDate ?: "" }
     }
 
-    val totalBorrowed = remember(borrowTxs) {
-        borrowTxs.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
+    val totalBorrowed = remember(borrowSummaries) {
+        borrowSummaries.sumOf { it.totalBorrowed }
+    }
+    val totalRepaid = remember(borrowSummaries) {
+        borrowSummaries.sumOf { it.totalRepaid }
+    }
+    val totalOutstanding = remember(borrowSummaries) {
+        borrowSummaries.sumOf { it.remainingDebt }
     }
 
     var selectedFilter by remember { mutableStateOf("All") }
 
-    val filteredList = remember(borrowTxs, selectedFilter) {
+    val filteredSummaries = remember(borrowSummaries, selectedFilter) {
         when (selectedFilter) {
-            "Active" -> borrowTxs.filter { !it.notes.contains("#SETTLED", ignoreCase = true) }
-            "Settled" -> borrowTxs.filter { it.notes.contains("#SETTLED", ignoreCase = true) }
-            else -> borrowTxs
+            "Active" -> borrowSummaries.filter { !it.isSettled }
+            "Settled" -> borrowSummaries.filter { it.isSettled }
+            else -> borrowSummaries
         }
     }
 
@@ -98,10 +194,17 @@ fun BorrowingScreen(
                         modifier = Modifier.weight(1f)
                     )
                     MetricCard(
-                        title = "Records",
-                        amount = borrowTxs.size.toDouble(),
-                        icon = Icons.Default.ReceiptLong,
-                        iconColor = MaterialTheme.colorScheme.primary,
+                        title = "Repaid",
+                        amount = totalRepaid,
+                        icon = Icons.Default.PriceCheck,
+                        iconColor = IncomeGreen,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MetricCard(
+                        title = "Outstanding",
+                        amount = totalOutstanding,
+                        icon = Icons.Default.HourglassBottom,
+                        iconColor = ExpenseRed,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -125,7 +228,7 @@ fun BorrowingScreen(
                         FilterChip(
                             selected = selectedFilter == "All",
                             onClick = { selectedFilter = "All" },
-                            label = { Text("All (${borrowTxs.size})") }
+                            label = { Text("All (${borrowSummaries.size})") }
                         )
                     }
                     item {
@@ -157,8 +260,8 @@ fun BorrowingScreen(
             }
         }
 
-        // 3. Borrow List
-        if (filteredList.isEmpty()) {
+        // 3. Borrow Set List
+        if (filteredSummaries.isEmpty()) {
             item {
                 EmptyState(
                     icon = Icons.Outlined.CallReceived,
@@ -169,101 +272,243 @@ fun BorrowingScreen(
                 )
             }
         } else {
-            items(filteredList, key = { it.id }) { tx ->
-                val isSettled = tx.notes.contains("#SETTLED", ignoreCase = true)
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { onTransactionClick(tx) },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+            items(filteredSummaries, key = { it.borrowId }) { summary ->
+                BorrowSetCard(
+                    summary = summary,
+                    onAddSettlementClick = onAddBorrowClick,
+                    onInflowClick = { summary.inflowTransaction?.let(onTransactionClick) },
+                    onRepaymentClick = onTransactionClick,
+                    onUnlinkRepayment = { txId ->
+                        viewModel.linkTransactionToAdvance(txId, null)
+                    },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun BorrowSetCard(
+    summary: BorrowSummary,
+    onAddSettlementClick: () -> Unit,
+    onInflowClick: () -> Unit,
+    onRepaymentClick: (TransactionEntity) -> Unit,
+    onUnlinkRepayment: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    val statusColor = if (summary.isSettled) IncomeGreen else OutstandingAmber
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Top Row: #BORROW-X ID Badge & Status Badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = OutstandingAmber.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val borrowTag = tx.advanceId?.takeIf { it.isNotBlank() } ?: tx.referenceNumber.takeIf { it.isNotBlank() }
-                                if (borrowTag != null) {
-                                    Surface(
-                                        color = OutstandingAmber.copy(alpha = 0.15f),
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text(
-                                            text = if (borrowTag.startsWith("#")) borrowTag else "#$borrowTag",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = OutstandingAmber,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                }
+                        Text(
+                            text = if (summary.borrowId.startsWith("#")) summary.borrowId else "#${summary.borrowId}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = OutstandingAmber,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                    if (summary.inflowTransaction != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = DateUtils.formatShortDisplay(summary.inflowTransaction.transactionDate),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Surface(
+                    color = statusColor.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = if (summary.isSettled) "Fully Settled" else "${CurrencyFormatter.formatInr(summary.remainingDebt)} Due",
+                        color = statusColor,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Lender Name / Description
+            Text(
+                text = summary.lenderName,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                modifier = Modifier.clickable { onInflowClick() }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 2-Column Metric Row: Borrowed vs Repaid
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Total Borrowed", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = CurrencyFormatter.formatInr(summary.totalBorrowed),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = OutstandingAmber
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Repaid / Settled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = CurrencyFormatter.formatInr(summary.totalRepaid),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = IncomeGreen
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Progress Indicator
+            LinearProgressIndicator(
+                progress = { summary.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = if (summary.isSettled) IncomeGreen else OutstandingAmber,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Accordion Action Bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { isExpanded = !isExpanded }
+                        .padding(vertical = 4.dp, horizontal = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (summary.linkedRepayments.isEmpty()) "0 repayments" else "${summary.linkedRepayments.size} repayments",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                if (!summary.isSettled) {
+                    OutlinedButton(
+                        onClick = onAddSettlementClick,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add Repayment", fontSize = 11.sp)
+                    }
+                }
+            }
+
+            // Expanded List of Linked Repayment Items
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (summary.linkedRepayments.isEmpty()) {
+                    Text(
+                        text = "No repayment transactions linked to #${summary.borrowId} yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                } else {
+                    summary.linkedRepayments.forEach { tx ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                                .clickable { onRepaymentClick(tx) },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = tx.description.ifBlank { "Borrowed Amount" },
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1
+                                    text = tx.description.ifBlank { "Settlement Payment" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "${DateUtils.formatShortDisplay(tx.transactionDate)} • ${tx.categoryName}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 10.sp
                                 )
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = RoundedCornerShape(6.dp)
+                                Text(
+                                    text = "-${CurrencyFormatter.formatInr(if (tx.debitAmount > 0) tx.debitAmount else tx.amount)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = IncomeGreen
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                IconButton(
+                                    onClick = { onUnlinkRepayment(tx.id) },
+                                    modifier = Modifier.size(24.dp)
                                 ) {
-                                    Text(
-                                        text = tx.categoryName.ifBlank { "Borrowing" },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Unlink",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(14.dp)
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = DateUtils.formatShortDisplay(tx.transactionDate),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            if (tx.notes.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = tx.notes,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                text = "+${CurrencyFormatter.formatInr(if (tx.creditAmount > 0) tx.creditAmount else tx.amount)}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = OutstandingAmber
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Surface(
-                                color = if (isSettled) IncomeGreen.copy(alpha = 0.15f) else OutstandingAmber.copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    text = if (isSettled) "Settled" else "Outstanding",
-                                    color = if (isSettled) IncomeGreen else OutstandingAmber,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 10.sp,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
                             }
                         }
                     }
