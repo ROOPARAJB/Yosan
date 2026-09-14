@@ -373,12 +373,20 @@ fun TransactionDetailSheet(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                androidx.compose.foundation.layout.FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                val sortedCategories = remember(categories, currentTx.transactionType) {
+                    val isIncomeType = currentTx.transactionType == TransactionType.INCOME || currentTx.transactionType == TransactionType.REFUND
+                    val matching = categories.filter { if (isIncomeType) it.type == CategoryType.INCOME else it.type == CategoryType.EXPENSE }
+                    val others = categories.filter { if (isIncomeType) it.type != CategoryType.INCOME else it.type != CategoryType.EXPENSE }
+                    matching + others
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    categories.forEach { cat ->
+                    sortedCategories.forEach { cat ->
                         val isCurrent = currentTx.categoryName.equals(cat.name, ignoreCase = true)
                         val catColor = try {
                             Color(android.graphics.Color.parseColor(cat.colorHex))
@@ -390,13 +398,11 @@ fun TransactionDetailSheet(
                             selected = isCurrent,
                             onClick = {
                                 viewModel.updateTransactionCategory(currentTx, cat)
-                                onDismiss()
                             },
                             label = {
                                 Text(
                                     text = cat.name,
-                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 12.sp
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium
                                 )
                             },
                             leadingIcon = {
@@ -418,7 +424,7 @@ fun TransactionDetailSheet(
                             },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = catColor.copy(alpha = 0.18f),
-                                selectedLabelColor = MaterialTheme.colorScheme.onSurface
+                                selectedLabelColor = catColor
                             ),
                             border = FilterChipDefaults.filterChipBorder(
                                 enabled = true,
@@ -450,77 +456,168 @@ fun TransactionDetailSheet(
                 DetailRow(label = "Credit", value = CurrencyFormatter.formatInr(currentTx.creditAmount))
             }
 
-            // Advance ID / Batch Tag
-            var isEditingAdvanceId by remember { mutableStateOf(false) }
-            var editedAdvanceIdText by remember(currentTx.advanceId) { mutableStateOf(currentTx.advanceId ?: "") }
+            // Dynamic ID Assignment or Advance Spending Link
+            val advanceSummaries by viewModel.advanceSummaries.collectAsState()
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Advance ID / Batch",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (isEditingAdvanceId) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = editedAdvanceIdText,
-                            onValueChange = { editedAdvanceIdText = it },
-                            placeholder = { Text("advance id 1", fontSize = 12.sp) },
-                            modifier = Modifier.width(150.dp),
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        IconButton(onClick = {
-                            viewModel.updateTransactionAdvanceId(currentTx.id, editedAdvanceIdText)
-                            isEditingAdvanceId = false
-                        }) {
-                            Icon(Icons.Default.Check, contentDescription = "Save Advance ID", tint = IncomeGreen)
-                        }
-                        IconButton(onClick = {
-                            editedAdvanceIdText = currentTx.advanceId ?: ""
-                            isEditingAdvanceId = false
-                        }) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = ExpenseRed)
-                        }
-                    }
-                } else {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { isEditingAdvanceId = true }
+            if (currentTx.transactionType == TransactionType.EXPENSE) {
+                if (advanceSummaries.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
                     ) {
-                        if (!currentTx.advanceId.isNullOrBlank()) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    text = currentTx.advanceId,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        Text(
+                            text = "Spend from Advance",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = currentTx.advanceId.isNullOrBlank(),
+                                onClick = {
+                                    if (!currentTx.advanceId.isNullOrBlank()) {
+                                        viewModel.linkTransactionToAdvance(currentTx.id, null)
+                                    }
+                                },
+                                label = { Text("None") }
+                            )
+                            advanceSummaries.forEach { adv ->
+                                val isSelected = currentTx.advanceId?.equals(adv.advanceId, ignoreCase = true) == true
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.linkTransactionToAdvance(currentTx.id, if (isSelected) null else adv.advanceId)
+                                    },
+                                    label = { Text("#${adv.advanceId} (₹${adv.remainingBalance.toInt()} left)") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                                    )
                                 )
                             }
-                        } else {
-                            Text(
-                                text = "None (tap to add)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
                         }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = "Edit Advance ID",
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    }
+                }
+            } else {
+                var isEditingAdvanceId by remember { mutableStateOf(false) }
+                var editedAdvanceIdText by remember(currentTx.advanceId) { mutableStateOf(currentTx.advanceId ?: "") }
+
+                val idLabel = when (currentTx.transactionType) {
+                    TransactionType.LENDING -> "Lend ID"
+                    TransactionType.BORROWING -> "Borrow ID"
+                    else -> "Advance ID"
+                }
+                val idPlaceholder = when (currentTx.transactionType) {
+                    TransactionType.LENDING -> "e.g. LEND-1"
+                    TransactionType.BORROWING -> "e.g. BORROW-1"
+                    else -> "e.g. ADV-1"
+                }
+                val idColor = when (currentTx.transactionType) {
+                    TransactionType.LENDING -> LendingIndigo
+                    TransactionType.BORROWING -> OutstandingAmber
+                    else -> MaterialTheme.colorScheme.primary
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = idLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (isEditingAdvanceId) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = editedAdvanceIdText,
+                                onValueChange = { editedAdvanceIdText = it },
+                                placeholder = { Text(idPlaceholder, fontSize = 12.sp) },
+                                modifier = Modifier.width(140.dp),
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            IconButton(onClick = {
+                                val autoGen = when (currentTx.transactionType) {
+                                    TransactionType.LENDING -> viewModel.generateNextLendId()
+                                    TransactionType.BORROWING -> viewModel.generateNextBorrowId()
+                                    else -> viewModel.generateNextAdvanceId()
+                                }
+                                editedAdvanceIdText = autoGen
+                            }) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = "Auto Assign", tint = idColor, modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(onClick = {
+                                viewModel.updateTransactionAdvanceId(currentTx.id, editedAdvanceIdText)
+                                isEditingAdvanceId = false
+                            }) {
+                                Icon(Icons.Default.Check, contentDescription = "Save ID", tint = IncomeGreen, modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(onClick = {
+                                editedAdvanceIdText = currentTx.advanceId ?: ""
+                                isEditingAdvanceId = false
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Cancel", tint = ExpenseRed, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (!currentTx.advanceId.isNullOrBlank()) {
+                                Surface(
+                                    color = idColor.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.clickable { isEditingAdvanceId = true }
+                                ) {
+                                    Text(
+                                        text = if (currentTx.advanceId!!.startsWith("#")) currentTx.advanceId!! else "#${currentTx.advanceId}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = idColor,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                IconButton(
+                                    onClick = { isEditingAdvanceId = true },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "Edit $idLabel",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                TextButton(
+                                    onClick = {
+                                        val autoId = when (currentTx.transactionType) {
+                                            TransactionType.LENDING -> viewModel.generateNextLendId()
+                                            TransactionType.BORROWING -> viewModel.generateNextBorrowId()
+                                            else -> viewModel.generateNextAdvanceId()
+                                        }
+                                        viewModel.updateTransactionAdvanceId(currentTx.id, autoId)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Assign $idLabel", fontSize = 12.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -1,5 +1,6 @@
 {
   "name": "Finance Manager",
+  "version": "1.3.0-statement-v1",
   "description": "Personal Finance Management app with automated categorization rules, bank statement imports, lending & loan repayment tracking, and financial analytics.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

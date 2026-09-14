@@ -22,11 +22,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.local.entity.LoanEntity
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
 import com.example.features.reports.FinancialInsight
 import com.example.features.reports.InsightType
+import com.example.features.updater.UpdateManager
+import com.example.features.updater.UpdateUiState
+import kotlinx.coroutines.launch
 import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
@@ -40,8 +46,23 @@ fun DashboardScreen(
     onOpenAddSheet: () -> Unit,
     onTransactionClick: (TransactionEntity) -> Unit,
     onNavigateToCompanyExpenses: () -> Unit,
+    onNavigateToLending: () -> Unit = {},
+    onNavigateToBorrowing: () -> Unit = {},
+    onNavigateToPersonalExpenses: () -> Unit = {},
+    onNavigateToInvestments: () -> Unit = {},
+    onNavigateToTransfers: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val updateManager = remember { UpdateManager(context) }
+    val updateState by updateManager.uiState.collectAsState()
+    var showUpdateDialog by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        updateManager.checkForUpdates()
+    }
+
     val summary by viewModel.dashboardSummary.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
     val loans by viewModel.loans.collectAsState()
@@ -197,8 +218,7 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
-                                            activeDialogTitle = "Personal Expenses"
-                                            activeDialogTransactions = personalTxs
+                                            onNavigateToPersonalExpenses()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -416,8 +436,7 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
-                                            activeDialogTitle = "Lend Records"
-                                            activeDialogTransactions = lendTxs
+                                            onNavigateToLending()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -522,8 +541,7 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
-                                            activeDialogTitle = "Borrow Records"
-                                            activeDialogTransactions = borrowTxs
+                                            onNavigateToBorrowing()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -605,8 +623,7 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
-                                            activeDialogTitle = "Investments"
-                                            activeDialogTransactions = investTxs
+                                            onNavigateToInvestments()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -688,8 +705,7 @@ fun DashboardScreen(
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
                                         .clip(RoundedCornerShape(20.dp))
                                         .clickable {
-                                            activeDialogTitle = "Rotational / Transfers"
-                                            activeDialogTransactions = transferTxs
+                                            onNavigateToTransfers()
                                         },
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -941,6 +957,128 @@ fun DashboardScreen(
             isPrivacyEnabled = privacyEnabled,
             onToggleReveal = { viewModel.revealAmountsTemporarily() }
         )
+    }
+
+    if (showUpdateDialog) {
+        when (val state = updateState) {
+            is UpdateUiState.UpdateAvailable -> {
+                val info = state.info
+                AlertDialog(
+                    onDismissRequest = { showUpdateDialog = false },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.SystemUpdate,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    },
+                    title = {
+                        Text(
+                            text = "🎉 Got an Update!",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = "Version: ${info.versionName} • ${info.releaseTitle}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                            if (info.releaseNotes.isNotBlank()) {
+                                Text(
+                                    text = "What's New:",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = info.releaseNotes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val result = updateManager.downloadAndPrepareApk(info)
+                                    if (result.isSuccess) {
+                                        val apk = result.getOrNull()
+                                        if (apk != null) {
+                                            updateManager.installApk(apk)
+                                        }
+                                    }
+                                }
+                            }
+                        ) {
+                            Text("Update Now")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showUpdateDialog = false }) {
+                            Text("Later")
+                        }
+                    }
+                )
+            }
+            is UpdateUiState.Downloading -> {
+                AlertDialog(
+                    onDismissRequest = { /* Don't dismiss while downloading */ },
+                    title = { Text("Downloading Update...", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            LinearProgressIndicator(
+                                progress = { state.progress },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "${(state.progress * 100).toInt()}% downloaded",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    confirmButton = {}
+                )
+            }
+            is UpdateUiState.ReadyToInstall -> {
+                AlertDialog(
+                    onDismissRequest = { showUpdateDialog = false },
+                    title = { Text("Ready to Install", fontWeight = FontWeight.Bold) },
+                    text = { Text("The update has been downloaded. Tap Install to finish.") },
+                    confirmButton = {
+                        Button(onClick = { updateManager.installApk(state.apkFile) }) {
+                            Text("Install")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showUpdateDialog = false }) {
+                            Text("Close")
+                        }
+                    }
+                )
+            }
+            else -> {}
+        }
     }
 }
 

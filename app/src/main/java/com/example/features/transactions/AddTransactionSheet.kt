@@ -30,10 +30,11 @@ import com.example.data.local.entity.TransactionType
 import com.example.ui.components.CategoryChip
 import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
+import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
 
 enum class AddTab {
-    EXPENSE, INCOME, LEND_MONEY, INVESTMENT, TRANSFER, COMPANY_EXPENSE
+    EXPENSE, INCOME, LEND_MONEY, BORROW_MONEY, INVESTMENT, TRANSFER, COMPANY_EXPENSE
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,6 +52,7 @@ fun AddTransactionSheet(
     val accounts by viewModel.accounts.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val loans by viewModel.loans.collectAsState()
+    val advanceSummaries by viewModel.advanceSummaries.collectAsState()
     val activeLoans = remember(loans) { loans.filter { it.remainingAmount > 0 } }
 
     var amountText by remember { mutableStateOf("") }
@@ -61,8 +63,23 @@ fun AddTransactionSheet(
     var targetAccountId by remember { mutableStateOf(accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 1L) }
     var notes by remember { mutableStateOf("") }
     var advanceId by remember { mutableStateOf("") }
+    var lendId by remember { mutableStateOf("") }
+    var borrowId by remember { mutableStateOf("") }
 
-    // Lending fields
+    // Auto-assign unique IDs when tabs or categories switch
+    LaunchedEffect(selectedTab, selectedCategory) {
+        if (selectedTab == AddTab.LEND_MONEY && lendId.isBlank()) {
+            lendId = viewModel.generateNextLendId()
+        }
+        if (selectedTab == AddTab.BORROW_MONEY && borrowId.isBlank()) {
+            borrowId = viewModel.generateNextBorrowId()
+        }
+        if ((selectedTab == AddTab.INCOME || selectedTab == AddTab.COMPANY_EXPENSE || selectedCategory?.name?.contains("Advance", ignoreCase = true) == true) && advanceId.isBlank()) {
+            advanceId = viewModel.generateNextAdvanceId()
+        }
+    }
+
+    // Lending / Borrowing fields
     var personName by remember { mutableStateOf("") }
     var personPhone by remember { mutableStateOf("") }
     var expectedDate by remember { mutableStateOf("") }
@@ -148,9 +165,22 @@ fun AddTransactionSheet(
                         onClick = {
                             selectedTab = AddTab.LEND_MONEY
                             selectedCategory = null
+                            if (lendId.isBlank()) lendId = viewModel.generateNextLendId()
                         },
                         label = { Text("Lend Money") },
                         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = LendingIndigo.copy(alpha = 0.2f))
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = selectedTab == AddTab.BORROW_MONEY,
+                        onClick = {
+                            selectedTab = AddTab.BORROW_MONEY
+                            selectedCategory = null
+                            if (borrowId.isBlank()) borrowId = viewModel.generateNextBorrowId()
+                        },
+                        label = { Text("Borrow Money") },
+                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = OutstandingAmber.copy(alpha = 0.2f))
                     )
                 }
                 item {
@@ -170,6 +200,7 @@ fun AddTransactionSheet(
                         onClick = {
                             selectedTab = AddTab.COMPANY_EXPENSE
                             selectedCategory = null
+                            if (advanceId.isBlank()) advanceId = viewModel.generateNextAdvanceId()
                         },
                         label = { Text("Company") },
                         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = CompanySky.copy(alpha = 0.2f))
@@ -274,13 +305,13 @@ fun AddTransactionSheet(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Category Selector
+                    // Category Selector (Same FilterChip design format as Transaction Type)
                     Text(
                         text = "Select Category",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     val filteredCats = categories.filter {
                         if (selectedTab == AddTab.INCOME) (it.type == CategoryType.INCOME || it.name.equals("Advance", ignoreCase = true))
@@ -289,48 +320,109 @@ fun AddTransactionSheet(
 
                     LazyRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(filteredCats) { cat ->
                             val isSelected = selectedCategory?.id == cat.id
-                            Surface(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { selectedCategory = cat },
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Text(
-                                    text = cat.name,
-                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                )
+                            val catColor = try {
+                                Color(android.graphics.Color.parseColor(cat.colorHex))
+                            } catch (_: Exception) {
+                                MaterialTheme.colorScheme.primary
                             }
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    selectedCategory = if (isSelected) null else cat
+                                    if (cat.name.equals("Advance", ignoreCase = true) && advanceId.isBlank()) {
+                                        advanceId = viewModel.generateNextAdvanceId()
+                                    }
+                                },
+                                label = { Text(cat.name) },
+                                leadingIcon = {
+                                    if (isSelected) {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                                .background(catColor)
+                                        )
+                                    }
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = catColor.copy(alpha = 0.2f),
+                                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                                    selectedLeadingIconColor = catColor
+                                )
+                            )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Advance ID / Batch Tag Field
-                    OutlinedTextField(
-                        value = advanceId,
-                        onValueChange = { advanceId = it },
-                        label = { Text("Advance ID / Tag (Optional, e.g. advance id 1)") },
-                        placeholder = { Text("e.g. advance id 1") },
-                        leadingIcon = { Icon(Icons.Default.Tag, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+                    if (selectedTab == AddTab.EXPENSE) {
+                        Text(
+                            text = "Spend from Advance (Optional)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            item {
+                                FilterChip(
+                                    selected = advanceId.isBlank(),
+                                    onClick = { advanceId = "" },
+                                    label = { Text("None") }
+                                )
+                            }
+                            items(advanceSummaries) { adv ->
+                                val isSelected = advanceId.equals(adv.advanceId, ignoreCase = true)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { advanceId = if (isSelected) "" else adv.advanceId },
+                                    label = { Text("${adv.advanceId} (₹${CurrencyFormatter.formatInr(adv.remainingBalance)} left)") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                )
+                            }
+                        }
+
+                        if (advanceId.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Linked to #$advanceId (Will be tracked under $advanceId spend set)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontSize = 11.sp
+                            )
+                        }
+                    } else {
+                        // Advance Inflow ID Field (Auto-assigned & unique)
+                        OutlinedTextField(
+                            value = advanceId,
+                            onValueChange = { advanceId = it },
+                            label = { Text("Advance Inflow ID (Unique, Auto-assigned)") },
+                            placeholder = { Text("e.g. ADV-1") },
+                            leadingIcon = { Icon(Icons.Default.Tag, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
                 }
 
                 AddTab.LEND_MONEY -> {
                     OutlinedTextField(
                         value = personName,
                         onValueChange = { personName = it },
-                        label = { Text("Person Name") },
+                        label = { Text("Borrower / Person Name") },
                         leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth(),
@@ -347,6 +439,98 @@ fun AddTransactionSheet(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = lendId,
+                        onValueChange = { lendId = it },
+                        label = { Text("Lend ID (Unique, Auto-assigned)") },
+                        leadingIcon = { Icon(Icons.Default.Tag, contentDescription = null, tint = LendingIndigo) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    if (showExpectedDatePicker) {
+                        DatePickerDialog(
+                            onDismissRequest = { showExpectedDatePicker = false },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        expectedDatePickerState.selectedDateMillis?.let { millis ->
+                                            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                                            expectedDate = sdf.format(java.util.Date(millis))
+                                        }
+                                        showExpectedDatePicker = false
+                                    }
+                                ) {
+                                    Text("OK")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showExpectedDatePicker = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        ) {
+                            DatePicker(state = expectedDatePickerState)
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showExpectedDatePicker = true }
+                    ) {
+                        OutlinedTextField(
+                            value = expectedDate,
+                            onValueChange = { },
+                            label = { Text("Expected Repayment Date (Optional)") },
+                            leadingIcon = { Icon(Icons.Default.Event, contentDescription = null) },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = false,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                disabledLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        )
+                    }
+                }
+
+                AddTab.BORROW_MONEY -> {
+                    OutlinedTextField(
+                        value = personName,
+                        onValueChange = { personName = it },
+                        label = { Text("Lender / Person Name") },
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = personPhone,
+                        onValueChange = { personPhone = it },
+                        label = { Text("Phone Number (Optional)") },
+                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = borrowId,
+                        onValueChange = { borrowId = it },
+                        label = { Text("Borrow ID (Unique, Auto-assigned)") },
+                        leadingIcon = { Icon(Icons.Default.Tag, contentDescription = null, tint = OutstandingAmber) },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
                     if (showExpectedDatePicker) {
                         DatePickerDialog(
                             onDismissRequest = { showExpectedDatePicker = false },
@@ -452,6 +636,51 @@ fun AddTransactionSheet(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Spend from Advance (Linked Advance Set)
+                    Text(
+                        text = "Spend from Advance (Optional)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = advanceId.isBlank(),
+                                onClick = { advanceId = "" },
+                                label = { Text("None") }
+                            )
+                        }
+                        items(advanceSummaries) { adv ->
+                            val isSelected = advanceId.equals(adv.advanceId, ignoreCase = true)
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { advanceId = if (isSelected) "" else adv.advanceId },
+                                label = { Text("${adv.advanceId} (₹${CurrencyFormatter.formatInr(adv.remainingBalance)} left)") },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                        }
+                    }
+
+                    if (advanceId.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Linked to #$advanceId (Will be tracked under $advanceId spend set)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
 
                 AddTab.TRANSFER -> {
@@ -564,6 +793,11 @@ fun AddTransactionSheet(
                                 viewModel.showMessage("Please create an Income category in Settings first!")
                                 return@Button
                             }
+                            val cleanAdvId = advanceId.trim().takeIf { it.isNotBlank() }
+                            if (cleanAdvId != null && !viewModel.isAdvanceIdUnique(cleanAdvId)) {
+                                viewModel.showMessage("Advance ID '$cleanAdvId' already exists! Must be unique.")
+                                return@Button
+                            }
                             viewModel.addManualTransaction(
                                 date = dateText,
                                 description = if (description.isNotBlank()) description else "Income Credit",
@@ -573,12 +807,17 @@ fun AddTransactionSheet(
                                 categoryName = cat.name,
                                 accountId = selectedAccountId,
                                 notes = notes,
-                                advanceId = advanceId.takeIf { it.isNotBlank() }
+                                advanceId = cleanAdvId
                             )
                         }
                         AddTab.LEND_MONEY -> {
                             if (personName.isBlank()) {
                                 viewModel.showMessage("Please enter the borrower's name")
+                                return@Button
+                            }
+                            val cleanLendId = lendId.trim().takeIf { it.isNotBlank() }
+                            if (cleanLendId != null && !viewModel.isLendIdUnique(cleanLendId)) {
+                                viewModel.showMessage("Lend ID '$cleanLendId' already exists! Must be unique.")
                                 return@Button
                             }
                             viewModel.addLoan(
@@ -587,6 +826,28 @@ fun AddTransactionSheet(
                                 amount = amt,
                                 lentDate = dateText,
                                 expectedDate = expectedDate.takeIf { it.isNotBlank() },
+                                notes = notes,
+                                lendId = cleanLendId
+                            )
+                        }
+                        AddTab.BORROW_MONEY -> {
+                            if (personName.isBlank()) {
+                                viewModel.showMessage("Please enter the lender's name")
+                                return@Button
+                            }
+                            val cleanBorrowId = borrowId.trim().takeIf { it.isNotBlank() }
+                            if (cleanBorrowId != null && !viewModel.isBorrowIdUnique(cleanBorrowId)) {
+                                viewModel.showMessage("Borrow ID '$cleanBorrowId' already exists! Must be unique.")
+                                return@Button
+                            }
+                            viewModel.addBorrowRecord(
+                                personName = personName.trim(),
+                                phone = personPhone.trim(),
+                                amount = amt,
+                                borrowDate = dateText,
+                                expectedDate = expectedDate.takeIf { it.isNotBlank() },
+                                accountId = selectedAccountId,
+                                borrowId = cleanBorrowId,
                                 notes = notes
                             )
                         }
@@ -618,7 +879,8 @@ fun AddTransactionSheet(
                                 category = companyCategory,
                                 company = companyName.trim(),
                                 method = paymentMethod,
-                                notes = notes
+                                notes = notes,
+                                advanceId = advanceId.takeIf { it.isNotBlank() }
                             )
                         }
                         AddTab.TRANSFER -> {
@@ -648,6 +910,7 @@ fun AddTransactionSheet(
                         AddTab.EXPENSE -> ExpenseRed
                         AddTab.INCOME -> IncomeGreen
                         AddTab.LEND_MONEY -> LendingIndigo
+                        AddTab.BORROW_MONEY -> OutstandingAmber
                         AddTab.INVESTMENT -> OutstandingAmber
                         AddTab.COMPANY_EXPENSE -> CompanySky
                         AddTab.TRANSFER -> TransferSlate

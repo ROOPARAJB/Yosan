@@ -319,14 +319,14 @@ fun ImportStatementScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
                     Text(
-                        text = "Transactions Preview (First 20)",
+                        text = "Transactions Preview (${preview.validRows.size})",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
 
-            items(preview.validRows.take(20)) { row ->
+            items(preview.validRows) { row ->
                 ImportRowPreviewCard(row = row, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             }
         }
@@ -443,8 +443,16 @@ fun ImportRowPreviewCard(row: ParsedImportRow, modifier: Modifier = Modifier) {
                     text = row.description,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
+                    maxLines = 4
                 )
+                if (row.referenceNumber.isNotBlank()) {
+                    Text(
+                        text = "Ref: ${row.referenceNumber}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CategoryChip(categoryName = row.suggestedCategory)

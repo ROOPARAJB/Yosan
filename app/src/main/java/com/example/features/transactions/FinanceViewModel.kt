@@ -45,6 +45,19 @@ data class CompanyExpensePrompt(
     val matchingExpenseId: Long? = null
 )
 
+data class AdvanceSummary(
+    val advanceId: String,
+    val inflowTransaction: TransactionEntity?,
+    val totalReceived: Double,
+    val totalSpent: Double,
+    val remainingBalance: Double,
+    val linkedTransactions: List<TransactionEntity>,
+    val linkedCompanyExpenses: List<CompanyExpenseEntity>
+) {
+    val isFullySpent: Boolean get() = remainingBalance <= 0.0 && totalSpent > 0.0
+    val progress: Float get() = if (totalReceived > 0) (totalSpent / totalReceived).toFloat().coerceIn(0f, 1f) else 0f
+}
+
 
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -104,6 +117,50 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     val companyExpenses: StateFlow<List<CompanyExpenseEntity>> = getCompanyExpensesUseCase()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val advanceSummaries: StateFlow<List<AdvanceSummary>> = combine(
+        allTransactions,
+        companyExpenses
+    ) { txs, compExpenses ->
+        val advanceIds = mutableSetOf<String>()
+        for (tx in txs) {
+            tx.advanceId?.trim()?.takeIf { it.isNotBlank() }?.let { advanceIds.add(it) }
+        }
+        for (comp in compExpenses) {
+            val match = Regex("""#(ADV[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(comp.notes)
+                ?: Regex("""\b(ADV[-_ ]*\d+)\b""", RegexOption.IGNORE_CASE).find(comp.notes)
+            match?.groupValues?.get(1)?.let { advanceIds.add(it.uppercase().replace(" ", "-")) }
+        }
+
+        advanceIds.map { advId ->
+            val cleanAdvId = advId.trim()
+            val inflows = txs.filter { it.advanceId?.trim().equals(cleanAdvId, ignoreCase = true) && (it.transactionType == TransactionType.INCOME || it.creditAmount > 0) }
+            val primaryInflow = inflows.firstOrNull()
+            val totalReceived = inflows.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+
+            val spentTxs = txs.filter { 
+                it.advanceId?.trim().equals(cleanAdvId, ignoreCase = true) && 
+                it.transactionType != TransactionType.INCOME && 
+                it.creditAmount <= 0 
+            }
+            val spentComp = compExpenses.filter { 
+                it.notes.contains(cleanAdvId, ignoreCase = true) || it.notes.contains("#$cleanAdvId", ignoreCase = true)
+            }
+
+            val totalSpent = spentTxs.sumOf { it.amount } + spentComp.sumOf { it.amount }
+            val remaining = totalReceived - totalSpent
+
+            AdvanceSummary(
+                advanceId = cleanAdvId,
+                inflowTransaction = primaryInflow,
+                totalReceived = totalReceived,
+                totalSpent = totalSpent,
+                remainingBalance = remaining,
+                linkedTransactions = spentTxs,
+                linkedCompanyExpenses = spentComp
+            )
+        }.sortedByDescending { it.inflowTransaction?.transactionDate ?: it.advanceId }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val undoHistory: StateFlow<List<UndoHistoryEntity>> = repository.undoHistory
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -521,6 +578,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val debit = if (finalType == TransactionType.EXPENSE || finalType == TransactionType.LENDING || finalType == TransactionType.INVESTMENT) amount else 0.0
             val credit = if (finalType == TransactionType.INCOME || finalType == TransactionType.REFUND) amount else 0.0
 
+            val cleanAdvanceId = advanceId?.trim()?.takeIf { it.isNotBlank() }
+            val finalAdvId = if (cleanAdvanceId != null) {
+                if (isAdvanceIdUnique(cleanAdvanceId)) cleanAdvanceId else generateNextAdvanceId()
+            } else null
+
             val tx = TransactionEntity(
                 accountId = accountId,
                 transactionDate = date,
@@ -533,15 +595,98 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 categoryName = finalCatName,
                 source = "MANUAL",
                 notes = notes,
-                advanceId = advanceId?.trim()?.takeIf { it.isNotBlank() },
+                advanceId = finalAdvId,
                 isManual = true,
                 isCategorized = true,
                 categorizationConfidence = 1.0f
             )
             repository.insertTransaction(tx)
-            showMessage("Transaction added successfully")
+            showMessage("Transaction added successfully${if (finalAdvId != null) " (ID: $finalAdvId)" else ""}")
             scanForCompanyExpenses()
         }
+    }
+
+    fun generateNextAdvanceId(): String {
+        val txs = allTransactions.value
+        val existingNums = mutableSetOf<Int>()
+        for (tx in txs) {
+            val id = tx.advanceId ?: continue
+            val match = Regex("""(?:ADV|advance[_\s-]*id|advance)[_\s-]*(\d+)""", RegexOption.IGNORE_CASE).find(id)
+            if (match != null) {
+                match.groupValues[1].toIntOrNull()?.let { existingNums.add(it) }
+            } else {
+                id.trim().toIntOrNull()?.let { existingNums.add(it) }
+            }
+        }
+        var nextNum = 1
+        while (existingNums.contains(nextNum) || !isAdvanceIdUnique("ADV-$nextNum")) {
+            nextNum++
+        }
+        return "ADV-$nextNum"
+    }
+
+    fun generateNextLendId(): String {
+        val txs = allTransactions.value
+        val loansList = loans.value
+        val existingNums = mutableSetOf<Int>()
+        for (str in (txs.mapNotNull { it.advanceId ?: it.referenceNumber } + loansList.map { it.notes })) {
+            val match = Regex("""(?:LEND)[_\s-]*(\d+)""", RegexOption.IGNORE_CASE).find(str)
+            if (match != null) {
+                match.groupValues[1].toIntOrNull()?.let { existingNums.add(it) }
+            }
+        }
+        var nextNum = 1
+        while (existingNums.contains(nextNum) || !isLendIdUnique("LEND-$nextNum")) {
+            nextNum++
+        }
+        return "LEND-$nextNum"
+    }
+
+    fun generateNextBorrowId(): String {
+        val txs = allTransactions.value
+        val existingNums = mutableSetOf<Int>()
+        for (str in txs.mapNotNull { it.advanceId ?: it.referenceNumber }) {
+            val match = Regex("""(?:BORROW)[_\s-]*(\d+)""", RegexOption.IGNORE_CASE).find(str)
+            if (match != null) {
+                match.groupValues[1].toIntOrNull()?.let { existingNums.add(it) }
+            }
+        }
+        var nextNum = 1
+        while (existingNums.contains(nextNum) || !isBorrowIdUnique("BORROW-$nextNum")) {
+            nextNum++
+        }
+        return "BORROW-$nextNum"
+    }
+
+    fun isAdvanceIdUnique(id: String, excludeTxId: Long? = null): Boolean {
+        if (id.isBlank()) return true
+        val clean = id.trim()
+        val txs = allTransactions.value
+        return txs.none { 
+            it.id != excludeTxId && 
+            (it.transactionType == TransactionType.INCOME || it.creditAmount > 0) && 
+            it.advanceId?.trim().equals(clean, ignoreCase = true) 
+        }
+    }
+
+    fun isLendIdUnique(id: String, excludeTxId: Long? = null, excludeLoanId: Long? = null): Boolean {
+        if (id.isBlank()) return true
+        val clean = id.trim()
+        val txs = allTransactions.value
+        val loansList = loans.value
+        val inTxs = txs.any { it.id != excludeTxId && (it.advanceId?.trim().equals(clean, ignoreCase = true) || it.referenceNumber.trim().equals(clean, ignoreCase = true)) }
+        val inLoans = loansList.any { it.id != excludeLoanId && (it.notes.contains(clean, ignoreCase = true) || it.notes.contains("#$clean", ignoreCase = true)) }
+        return !inTxs && !inLoans
+    }
+
+    fun isBorrowIdUnique(id: String, excludeTxId: Long? = null, excludeLoanId: Long? = null): Boolean {
+        if (id.isBlank()) return true
+        val clean = id.trim()
+        val txs = allTransactions.value
+        val loansList = loans.value
+        val inTxs = txs.any { it.id != excludeTxId && (it.advanceId?.trim().equals(clean, ignoreCase = true) || it.referenceNumber.trim().equals(clean, ignoreCase = true)) }
+        val inLoans = loansList.any { it.id != excludeLoanId && (it.notes.contains(clean, ignoreCase = true) || it.notes.contains("#$clean", ignoreCase = true)) }
+        return !inTxs && !inLoans
     }
 
     fun updateTransactionAdvanceId(txId: Long, advanceId: String?) {
@@ -549,11 +694,27 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             val tx = repository.getTransactionById(txId)
             if (tx != null) {
                 val cleanId = advanceId?.trim()?.takeIf { it.isNotBlank() }
+                if (cleanId != null) {
+                    val isUnique = when (tx.transactionType) {
+                        TransactionType.LENDING -> isLendIdUnique(cleanId, excludeTxId = txId)
+                        TransactionType.BORROWING -> isBorrowIdUnique(cleanId, excludeTxId = txId)
+                        TransactionType.INCOME -> isAdvanceIdUnique(cleanId, excludeTxId = txId)
+                        else -> true // EXPENSE transactions link to existing Advance IDs!
+                    }
+                    if (!isUnique) {
+                        showMessage("ID '$cleanId' is already assigned to another inflow/loan! Must be unique.")
+                        return@launch
+                    }
+                }
                 val updated = tx.copy(advanceId = cleanId, updatedAt = System.currentTimeMillis())
                 repository.updateTransaction(updated)
-                showMessage(if (cleanId != null) "Advance ID set to '$cleanId'" else "Advance ID cleared")
+                showMessage(if (cleanId != null) "ID set to '$cleanId'" else "ID cleared")
             }
         }
+    }
+
+    fun linkTransactionToAdvance(txId: Long, advanceId: String?) {
+        updateTransactionAdvanceId(txId, advanceId)
     }
 
     // Undo & Recovery Engine
@@ -1292,9 +1453,16 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         amount: Double,
         lentDate: String,
         expectedDate: String?,
-        notes: String
+        notes: String,
+        lendId: String? = null
     ) {
         viewModelScope.launch {
+            val cleanLendId = lendId?.trim()?.takeIf { it.isNotBlank() }
+            val finalLendId = if (cleanLendId != null) {
+                if (isLendIdUnique(cleanLendId)) cleanLendId else generateNextLendId()
+            } else generateNextLendId()
+
+            val combinedNotes = if (notes.isNotBlank()) "#$finalLendId • $notes" else "#$finalLendId"
             val loan = LoanEntity(
                 personName = personName,
                 personPhone = phone,
@@ -1304,7 +1472,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 amountRepaid = 0.0,
                 remainingAmount = amount,
                 status = LoanStatus.ACTIVE,
-                notes = notes
+                notes = combinedNotes
             )
             val loanId = repository.insertLoan(loan)
 
@@ -1321,10 +1489,47 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     transactionType = TransactionType.LENDING,
                     categoryName = "Friend - $personName",
                     linkedLoanId = loanId,
+                    advanceId = finalLendId,
+                    referenceNumber = finalLendId,
                     notes = notes
                 )
             )
-            showMessage("Loan recorded for $personName")
+            showMessage("Lend record created ($finalLendId)")
+        }
+    }
+
+    fun addBorrowRecord(
+        personName: String,
+        phone: String = "",
+        amount: Double,
+        borrowDate: String,
+        expectedDate: String? = null,
+        accountId: Long = accounts.value.firstOrNull()?.id ?: 1,
+        borrowId: String? = null,
+        notes: String = ""
+    ) {
+        viewModelScope.launch {
+            val cleanBorrowId = borrowId?.trim()?.takeIf { it.isNotBlank() }
+            val finalBorrowId = if (cleanBorrowId != null) {
+                if (isBorrowIdUnique(cleanBorrowId)) cleanBorrowId else generateNextBorrowId()
+            } else generateNextBorrowId()
+
+            repository.insertTransaction(
+                TransactionEntity(
+                    accountId = accountId,
+                    transactionDate = borrowDate,
+                    description = "Borrowed from ${personName.trim()}",
+                    debitAmount = 0.0,
+                    creditAmount = amount,
+                    amount = amount,
+                    transactionType = TransactionType.BORROWING,
+                    categoryName = "Borrow - ${personName.trim()}",
+                    advanceId = finalBorrowId,
+                    referenceNumber = finalBorrowId,
+                    notes = notes
+                )
+            )
+            showMessage("Borrow record created ($finalBorrowId)")
         }
     }
 
@@ -1378,9 +1583,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         category: String,
         company: String,
         method: String,
-        notes: String
+        notes: String,
+        advanceId: String? = null
     ) {
         viewModelScope.launch {
+            val finalNotes = if (!advanceId.isNullOrBlank()) {
+                val cleanAdv = advanceId.trim()
+                val tag = if (cleanAdv.startsWith("#")) cleanAdv else "#$cleanAdv"
+                if (notes.contains(cleanAdv, ignoreCase = true)) notes else if (notes.isBlank()) tag else "$notes $tag"
+            } else {
+                notes
+            }
             val exp = CompanyExpenseEntity(
                 date = date,
                 amount = amount,
@@ -1388,10 +1601,29 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 category = category,
                 companyName = company,
                 paymentMethod = method,
-                notes = notes
+                notes = finalNotes
             )
             repository.insertCompanyExpense(exp)
-            showMessage("Company expense recorded")
+            showMessage("Company expense recorded" + (if (!advanceId.isNullOrBlank()) " ($advanceId)" else ""))
+        }
+    }
+
+    fun linkCompanyExpenseToAdvance(expenseId: Long, advanceId: String?) {
+        viewModelScope.launch {
+            val exp = companyExpenses.value.find { it.id == expenseId }
+                ?: database.companyExpenseDao().getAllCompanyExpensesList().find { it.id == expenseId }
+            if (exp != null) {
+                val cleanNotes = exp.notes.replace(Regex("""#(ADV[-_ ]*\d+)""", RegexOption.IGNORE_CASE), "").trim()
+                val newNotes = if (!advanceId.isNullOrBlank()) {
+                    val tag = if (advanceId.startsWith("#")) advanceId else "#$advanceId"
+                    if (cleanNotes.isBlank()) tag else "$cleanNotes $tag"
+                } else {
+                    cleanNotes
+                }
+                val updated = exp.copy(notes = newNotes, updatedAt = System.currentTimeMillis())
+                repository.updateCompanyExpense(updated)
+                showMessage(if (!advanceId.isNullOrBlank()) "Expense linked to $advanceId" else "Unlinked from Advance")
+            }
         }
     }
 
@@ -1406,6 +1638,36 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.updateReimbursementStatus(id, !currentStatus)
             showMessage(if (!currentStatus) "Marked as reimbursed" else "Marked as pending reimbursement")
+        }
+    }
+
+    fun markCompanyExpenseApplied(id: Long, applied: Boolean) {
+        viewModelScope.launch {
+            val exp = companyExpenses.value.find { it.id == id }
+                ?: database.companyExpenseDao().getAllCompanyExpensesList().find { it.id == id }
+            if (exp != null) {
+                val cleanNotes = exp.notes.replace("#APPLIED", "", ignoreCase = true).replace("[APPLIED]", "", ignoreCase = true).trim()
+                val newNotes = if (applied) {
+                    if (cleanNotes.isBlank()) "#APPLIED" else "$cleanNotes #APPLIED"
+                } else {
+                    cleanNotes
+                }
+                val updated = exp.copy(isReimbursed = false, notes = newNotes, updatedAt = System.currentTimeMillis())
+                repository.updateCompanyExpense(updated)
+                showMessage(if (applied) "Claim marked as Applied" else "Claim moved to Pending")
+            }
+        }
+    }
+
+    fun markCompanyExpenseReimbursed(id: Long, reimbursed: Boolean) {
+        viewModelScope.launch {
+            val exp = companyExpenses.value.find { it.id == id }
+                ?: database.companyExpenseDao().getAllCompanyExpensesList().find { it.id == id }
+            if (exp != null) {
+                val updated = exp.copy(isReimbursed = reimbursed, updatedAt = System.currentTimeMillis())
+                repository.updateCompanyExpense(updated)
+                showMessage(if (reimbursed) "Marked as Reimbursed" else "Moved to Pending Claims")
+            }
         }
     }
 

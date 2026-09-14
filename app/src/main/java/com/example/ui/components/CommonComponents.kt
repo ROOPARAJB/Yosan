@@ -219,18 +219,25 @@ fun TransactionItemCard(
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CategoryChip(categoryName = transaction.categoryName)
-                    if (!transaction.advanceId.isNullOrBlank()) {
+                    val idTag = transaction.advanceId?.takeIf { it.isNotBlank() }
+                        ?: transaction.referenceNumber.takeIf { it.startsWith("LEND", true) || it.startsWith("BORROW", true) || it.startsWith("ADV", true) }
+                    if (!idTag.isNullOrBlank()) {
+                        val (tagBg, tagFg) = when {
+                            idTag.startsWith("LEND", true) || transaction.transactionType == TransactionType.LENDING -> LendingIndigo.copy(alpha = 0.15f) to LendingIndigo
+                            idTag.startsWith("BORROW", true) || transaction.transactionType == TransactionType.BORROWING -> OutstandingAmber.copy(alpha = 0.15f) to OutstandingAmber
+                            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) to MaterialTheme.colorScheme.primary
+                        }
                         Spacer(modifier = Modifier.width(4.dp))
                         Surface(
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            color = tagBg,
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = "#${transaction.advanceId}",
+                                text = if (idTag.startsWith("#")) idTag else "#$idTag",
                                 fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                fontWeight = FontWeight.Bold,
+                                color = tagFg,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                             )
                         }
                     }
@@ -371,11 +378,29 @@ fun PersonLoanCard(
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text(
-                            text = loan.personName,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = loan.personName,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val lendIdTag = Regex("""#(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(loan.notes)?.groupValues?.get(1)
+                            if (!lendIdTag.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    color = LendingIndigo.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = "#$lendIdTag",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = LendingIndigo,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
                         if (loan.personPhone.isNotBlank()) {
                             Text(
                                 text = loan.personPhone,

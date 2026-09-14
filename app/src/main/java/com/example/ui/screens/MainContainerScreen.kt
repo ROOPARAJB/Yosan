@@ -38,6 +38,10 @@ import com.example.features.official_expenses.OfficialExpensesScreen
 import com.example.features.reports.ReportsScreen
 import com.example.features.import.ImportStatementScreen
 import com.example.features.lending.LendingScreen
+import com.example.features.lending.BorrowingScreen
+import com.example.features.transactions.PersonalExpensesScreen
+import com.example.features.transactions.InvestmentsScreen
+import com.example.features.transactions.TransfersScreen
 import kotlinx.coroutines.launch
 
 enum class MainTab(
@@ -52,10 +56,8 @@ enum class MainTab(
     SETTINGS("Settings", Icons.Outlined.Settings, Icons.Default.Settings, "tab_settings")
 }
 
-
-
 enum class SubScreen {
-    NONE, RULES, COMPANY_EXPENSES, REPORTS, IMPORT_STATEMENT, LENDING, EXCEL_SYNC
+    NONE, RULES, COMPANY_EXPENSES, REPORTS, IMPORT_STATEMENT, LENDING, BORROWING, PERSONAL_EXPENSES, INVESTMENTS, TRANSFERS, EXCEL_SYNC
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -173,6 +175,10 @@ fun MainContainerScreen(
                                     SubScreen.REPORTS -> "Reports"
                                     SubScreen.IMPORT_STATEMENT -> "Import Statement"
                                     SubScreen.LENDING -> "Loans & Lending"
+                                    SubScreen.BORROWING -> "Money Borrowed & Debts"
+                                    SubScreen.PERSONAL_EXPENSES -> "Personal Expenses"
+                                    SubScreen.INVESTMENTS -> "Investments & Assets"
+                                    SubScreen.TRANSFERS -> "Rotational / Transfers"
                                     SubScreen.EXCEL_SYNC -> "Excel Two-Way Sync"
                                     SubScreen.NONE -> ""
                                 },
@@ -181,10 +187,14 @@ fun MainContainerScreen(
                             )
                             val subtitle = when (currentSubScreen) {
                                 SubScreen.RULES -> "Automatically categorize transactions using your rules."
-                                SubScreen.COMPANY_EXPENSES -> "Spent for Company expense which can be claimed later as reimbursement"
+                                SubScreen.COMPANY_EXPENSES -> "Track official expenses, pending & applied claims, reimbursements, and advance sets."
                                 SubScreen.REPORTS -> "Monthly trends & category spending breakdowns"
                                 SubScreen.IMPORT_STATEMENT -> "Upload bank statements in Excel (.xlsx, .xls) or PDF (.pdf) formats"
                                 SubScreen.LENDING -> "Track money you have lent and repayments received"
+                                SubScreen.BORROWING -> "Track borrowed funds from contacts or lenders and settlements"
+                                SubScreen.PERSONAL_EXPENSES -> "Track day-to-day personal living expenses and inflows"
+                                SubScreen.INVESTMENTS -> "Track capital allocations, stocks, mutual funds, and assets"
+                                SubScreen.TRANSFERS -> "Track self transfers and inter-account movements"
                                 SubScreen.EXCEL_SYNC -> "Bidirectional synchronization with Microsoft Excel (.xlsx)"
                                 SubScreen.NONE -> ""
                             }
@@ -286,6 +296,38 @@ fun MainContainerScreen(
                             showAddSheet = true
                         }
                     )
+                    SubScreen.BORROWING -> BorrowingScreen(
+                        viewModel = viewModel,
+                        onAddBorrowClick = {
+                            addSheetTab = AddTab.BORROW_MONEY
+                            showAddSheet = true
+                        },
+                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
+                    )
+                    SubScreen.PERSONAL_EXPENSES -> PersonalExpensesScreen(
+                        viewModel = viewModel,
+                        onAddExpenseClick = {
+                            addSheetTab = AddTab.EXPENSE
+                            showAddSheet = true
+                        },
+                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
+                    )
+                    SubScreen.INVESTMENTS -> InvestmentsScreen(
+                        viewModel = viewModel,
+                        onAddInvestmentClick = {
+                            addSheetTab = AddTab.INVESTMENT
+                            showAddSheet = true
+                        },
+                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
+                    )
+                    SubScreen.TRANSFERS -> TransfersScreen(
+                        viewModel = viewModel,
+                        onAddTransferClick = {
+                            addSheetTab = AddTab.TRANSFER
+                            showAddSheet = true
+                        },
+                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
+                    )
                     SubScreen.EXCEL_SYNC -> ExcelSyncScreen(viewModel = viewModel)
                     SubScreen.NONE -> {}
                 }
@@ -320,7 +362,12 @@ fun MainContainerScreen(
                                 showAddSheet = true
                             },
                             onTransactionClick = { tx -> selectedTransactionForDetail = tx },
-                            onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES }
+                            onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
+                            onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
+                            onNavigateToBorrowing = { currentSubScreen = SubScreen.BORROWING },
+                            onNavigateToPersonalExpenses = { currentSubScreen = SubScreen.PERSONAL_EXPENSES },
+                            onNavigateToInvestments = { currentSubScreen = SubScreen.INVESTMENTS },
+                            onNavigateToTransfers = { currentSubScreen = SubScreen.TRANSFERS }
                         )
 
                         MainTab.TRANSACTIONS -> TransactionsScreen(

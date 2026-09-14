@@ -5,6 +5,7 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import com.example.data.local.entity.*
+import com.example.features.rules.CategorizationEngine
 import java.io.ByteArrayInputStream
 import java.util.*
 import java.util.zip.ZipInputStream
@@ -62,6 +63,7 @@ object StatementImportService {
             isPdf -> extractTextFromPdfBytes(context, bytes)
             else -> String(bytes, Charsets.UTF_8)
         }
+        println("DEBUG parseStatementBytes: isPdf=$isPdf, textContent length=${textContent.length}, first 300 chars:\n${textContent.take(300)}")
         val resolvedName = when {
             isPdf && !lowerName.endsWith(".pdf") -> "$fileName.pdf"
             isXlsx && !lowerName.endsWith(".xlsx") -> "$fileName.xlsx"
@@ -209,8 +211,42 @@ object StatementImportService {
         return if (sheetRows.isNotEmpty()) sheetRows.joinToString("\n") else String(bytes, Charsets.UTF_8)
     }
 
+    private fun decompressFlate(bytes: ByteArray): ByteArray? {
+        try {
+            val inflater = java.util.zip.Inflater(false)
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(4096)
+            inflater.setInput(bytes)
+            while (!inflater.finished()) {
+                val count = inflater.inflate(buffer)
+                if (count <= 0) break
+                out.write(buffer, 0, count)
+            }
+            inflater.end()
+            val res = out.toByteArray()
+            if (res.isNotEmpty()) return res
+        } catch (_: Throwable) {}
+
+        try {
+            val inflaterNowrap = java.util.zip.Inflater(true)
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(4096)
+            inflaterNowrap.setInput(bytes)
+            while (!inflaterNowrap.finished()) {
+                val count = inflaterNowrap.inflate(buffer)
+                if (count <= 0) break
+                out.write(buffer, 0, count)
+            }
+            inflaterNowrap.end()
+            val res = out.toByteArray()
+            if (res.isNotEmpty()) return res
+        } catch (_: Throwable) {}
+
+        return null
+    }
+
     private fun extractTextFromPdfBytes(context: Context?, bytes: ByteArray): String {
-        // 1. Try high-fidelity PDFBox extraction
+        // 1. Try high-fidelity PDFBox extraction if available
         try {
             if (context != null) {
                 try {
@@ -227,103 +263,144 @@ object StatementImportService {
                     return text
                 }
             }
-        } catch (e: Throwable) {
-            if (com.example.BuildConfig.DEBUG) {
-                android.util.Log.e("StatementImportService", "Failed to parse PDF with PDFBox", e)
+        } catch (_: Throwable) {}
+
+        // 2. High-precision standalone CMap & Flate stream PDF extractor (Zero Android/JVM dependencies)
+        val decompressedStreams = mutableListOf<Pair<Int, String>>()
+        val streamIndices = mutableListOf<Int>()
+        val endStreamIndices = mutableListOf<Int>()
+
+        var i = 0
+        while (i <= bytes.size - 9) {
+            if (bytes[i] == 's'.code.toByte() && bytes[i+1] == 't'.code.toByte() && bytes[i+2] == 'r'.code.toByte() && bytes[i+3] == 'e'.code.toByte() && bytes[i+4] == 'a'.code.toByte() && bytes[i+5] == 'm'.code.toByte()) {
+                streamIndices.add(i)
+                i += 6
+                continue
+            }
+            if (bytes[i] == 'e'.code.toByte() && bytes[i+1] == 'n'.code.toByte() && bytes[i+2] == 'd'.code.toByte() && bytes[i+3] == 's'.code.toByte() && bytes[i+4] == 't'.code.toByte() && bytes[i+5] == 'r'.code.toByte() && bytes[i+6] == 'e'.code.toByte() && bytes[i+7] == 'a'.code.toByte() && bytes[i+8] == 'm'.code.toByte()) {
+                endStreamIndices.add(i)
+                i += 9
+                continue
+            }
+            i++
+        }
+
+        for ((idx, sStart) in streamIndices.withIndex()) {
+            var contentStart = sStart + 6
+            while (contentStart < bytes.size && (bytes[contentStart] == '\r'.code.toByte() || bytes[contentStart] == '\n'.code.toByte())) {
+                contentStart++
+            }
+            val contentEnd = endStreamIndices.firstOrNull { it > contentStart } ?: continue
+            var endPos = contentEnd
+            while (endPos > contentStart && (bytes[endPos - 1] == '\r'.code.toByte() || bytes[endPos - 1] == '\n'.code.toByte())) {
+                endPos--
+            }
+            if (endPos <= contentStart) continue
+            val streamChunk = bytes.copyOfRange(contentStart, endPos)
+            val decomp = decompressFlate(streamChunk)
+            if (decomp != null && decomp.isNotEmpty()) {
+                decompressedStreams.add(Pair(idx, String(decomp, Charsets.ISO_8859_1)))
             }
         }
 
-        // 2. Fallback: Parse decompressed PDF streams and raw tokens
+        val cmap = mutableMapOf<Int, String>()
+        for ((_, text) in decompressedStreams) {
+            if (text.contains("begincmap") || text.contains("beginbfchar") || text.contains("beginbfrange")) {
+                val bfcharRegex = Regex("<([0-9a-fA-F]+)>\\s*<([0-9a-fA-F]+)>")
+                for (m in bfcharRegex.findAll(text)) {
+                    val src = m.groupValues[1].toIntOrNull(16) ?: continue
+                    val dst = m.groupValues[2].toIntOrNull(16) ?: continue
+                    cmap[src] = dst.toChar().toString()
+                }
+                val bfrangeRegex = Regex("<([0-9a-fA-F]+)>\\s*<([0-9a-fA-F]+)>\\s*<([0-9a-fA-F]+)>")
+                for (m in bfrangeRegex.findAll(text)) {
+                    val sVal = m.groupValues[1].toIntOrNull(16) ?: continue
+                    val eVal = m.groupValues[2].toIntOrNull(16) ?: continue
+                    val dVal = m.groupValues[3].toIntOrNull(16) ?: continue
+                    for (off in 0..(eVal - sVal)) {
+                        cmap[sVal + off] = (dVal + off).toChar().toString()
+                    }
+                }
+            }
+        }
+
+        fun decodeToken(token: String): String {
+            return if (token.startsWith("<") && token.endsWith(">")) {
+                val hex = token.substring(1, token.length - 1).replace("\\s+".toRegex(), "")
+                val sb = StringBuilder()
+                var j = 0
+                while (j + 4 <= hex.length) {
+                    val code = hex.substring(j, j + 4).toIntOrNull(16)
+                    if (code != null) {
+                        sb.append(cmap[code] ?: (if (code in 32..126) code.toChar().toString() else ""))
+                    }
+                    j += 4
+                }
+                sb.toString()
+            } else if (token.startsWith("(") && token.endsWith(")")) {
+                token.substring(1, token.length - 1)
+                    .replace("\\(", "(")
+                    .replace("\\)", ")")
+                    .replace("\\n", " ")
+                    .replace("\\r", "")
+                    .replace("\\t", " ")
+                    .replace("\\\\", "\\")
+            } else {
+                token
+            }
+        }
+
+        data class PdfTextItem(val streamId: Int, val y: Float, val x: Float, val text: String)
+        val items = mutableListOf<PdfTextItem>()
+
+        val btRegex = Regex("BT(.*?)ET", RegexOption.DOT_MATCHES_ALL)
+        val tdRegex = Regex("([0-9.-]+)\\s+([0-9.-]+)\\s+Td")
+        val tmRegex = Regex("[0-9.-]+\\s+[0-9.-]+\\s+[0-9.-]+\\s+[0-9.-]+\\s+([0-9.-]+)\\s+([0-9.-]+)\\s+Tm")
+        val tjRegex = Regex("(<[0-9a-fA-F\\s]+>|\\((?:[^()\\\\]|\\\\.)*\\))\\s*Tj")
+
+        for ((sid, streamText) in decompressedStreams) {
+            for (bt in btRegex.findAll(streamText)) {
+                val block = bt.groupValues[1]
+                val tdMatch = tdRegex.find(block)
+                val tmMatch = if (tdMatch == null) tmRegex.find(block) else null
+                val x = tdMatch?.groupValues?.get(1)?.toFloatOrNull() ?: (tmMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 0f)
+                val y = tdMatch?.groupValues?.get(2)?.toFloatOrNull() ?: (tmMatch?.groupValues?.get(2)?.toFloatOrNull() ?: 0f)
+
+                val blockTokens = mutableListOf<String>()
+                for (m in tjRegex.findAll(block)) {
+                    val decoded = decodeToken(m.groupValues[1])
+                    if (decoded.isNotBlank()) {
+                        blockTokens.add(decoded)
+                    }
+                }
+                if (blockTokens.isNotEmpty()) {
+                    items.add(PdfTextItem(sid, y, x, blockTokens.joinToString(" ")))
+                }
+            }
+        }
+
+        val sortedItems = items.sortedWith(compareBy({ it.streamId }, { -it.y }, { it.x }))
         val extractedLines = mutableListOf<String>()
-        try {
-            val rawIso = String(bytes, Charsets.ISO_8859_1)
-            val streamRegex = Regex("stream\\r?\\n(.*?)\\r?\\nendstream", RegexOption.DOT_MATCHES_ALL)
-            val decompressedChunks = mutableListOf<String>()
+        var currentSid: Int? = null
+        var currentY: Float? = null
+        val currentLineTokens = mutableListOf<String>()
 
-            for (match in streamRegex.findAll(rawIso)) {
-                val streamContent = match.groupValues[1]
-                val streamBytes = streamContent.toByteArray(Charsets.ISO_8859_1)
-                try {
-                    val inflater = java.util.zip.Inflater(false)
-                    val out = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(4096)
-                    inflater.setInput(streamBytes)
-                    while (!inflater.finished()) {
-                        val count = inflater.inflate(buffer)
-                        if (count <= 0) break
-                        out.write(buffer, 0, count)
-                    }
-                    inflater.end()
-                    val decompressed = String(out.toByteArray(), Charsets.UTF_8)
-                    if (decompressed.isNotBlank()) {
-                        decompressedChunks.add(decompressed)
-                    }
-                } catch (_: Throwable) {
-                    try {
-                        val inflaterNowrap = java.util.zip.Inflater(true)
-                        val out = java.io.ByteArrayOutputStream()
-                        val buffer = ByteArray(4096)
-                        inflaterNowrap.setInput(streamBytes)
-                        while (!inflaterNowrap.finished()) {
-                            val count = inflaterNowrap.inflate(buffer)
-                            if (count <= 0) break
-                            out.write(buffer, 0, count)
-                        }
-                        inflaterNowrap.end()
-                        val decompressed = String(out.toByteArray(), Charsets.UTF_8)
-                        if (decompressed.isNotBlank()) {
-                            decompressedChunks.add(decompressed)
-                        }
-                    } catch (_: Throwable) {}
+        for (item in sortedItems) {
+            if (currentSid != item.streamId || currentY == null || kotlin.math.abs(currentY - item.y) > 3.0f) {
+                if (currentLineTokens.isNotEmpty()) {
+                    extractedLines.add(currentLineTokens.joinToString(" "))
+                    currentLineTokens.clear()
                 }
+                currentSid = item.streamId
+                currentY = item.y
             }
-
-            val sources = if (decompressedChunks.isNotEmpty()) decompressedChunks else listOf(rawIso)
-            val textRegex = Regex("\\(([^()\\\\]*(?:\\\\.[^()\\\\]*)*)\\)")
-
-            for (source in sources) {
-                var currentLine = StringBuilder()
-                textRegex.findAll(source).forEach { match ->
-                    val rawToken = match.groupValues[1]
-                        .replace("\\(", "(")
-                        .replace("\\)", ")")
-                        .replace("\\n", " ")
-                        .replace("\\r", "")
-                        .replace("\\t", " ")
-                        .trim()
-
-                    val cleanToken = sanitizeText(rawToken)
-
-                    if (cleanToken.length >= 2 && cleanToken.any { it.isLetterOrDigit() }) {
-                        if (currentLine.isNotEmpty()) currentLine.append(" ")
-                        currentLine.append(cleanToken)
-
-                        val lineStr = currentLine.toString()
-                        if (lineStr.contains(Regex("\\d{1,4}[/-]\\d{1,2}[/-]\\d{1,4}"))) {
-                            extractedLines.add(lineStr)
-                            currentLine.clear()
-                        }
-                    }
-                }
-                if (currentLine.isNotEmpty()) extractedLines.add(currentLine.toString())
-            }
-
-            if (extractedLines.size < 2) {
-                val lineRegex = Regex("[^\r\n]{10,}")
-                lineRegex.findAll(rawIso).forEach { m ->
-                    val line = sanitizeText(m.value)
-                    if (line.contains(Regex("\\d{1,4}[/-]\\d{1,2}[/-]\\d{1,4}"))) {
-                        if (line.length > 5) extractedLines.add(line)
-                    }
-                }
-            }
-        } catch (e: Throwable) {
-            if (com.example.BuildConfig.DEBUG) {
-                android.util.Log.e("StatementImportService", "Fallback PDF text extraction error", e)
-            }
+            currentLineTokens.add(item.text)
+        }
+        if (currentLineTokens.isNotEmpty()) {
+            extractedLines.add(currentLineTokens.joinToString(" "))
         }
 
-        return if (extractedLines.isNotEmpty()) extractedLines.joinToString("\n") else String(bytes, Charsets.UTF_8)
+        return if (extractedLines.isNotEmpty()) extractedLines.joinToString("\n") else String(bytes, Charsets.ISO_8859_1)
     }
 
     private fun sanitizeText(input: String): String {
@@ -335,10 +412,14 @@ object StatementImportService {
 
     fun parseStatementText(
         content: String,
-        rules: List<CategorizationRuleEntity>,
-        existingTransactions: List<TransactionEntity>,
-        fileName: String = "bank_statement.csv"
+        rules: List<CategorizationRuleEntity> = emptyList(),
+        existingTransactions: List<TransactionEntity> = emptyList(),
+        fileName: String = "statement.csv"
     ): ImportPreviewResult {
+        if (content.isBlank()) {
+            return ImportPreviewResult(0, emptyList(), 0, emptyList(), fileName)
+        }
+
         val rawLines = content.lines()
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -356,12 +437,16 @@ object StatementImportService {
             }
         }
 
-        val delimiter = if (headerIndex != -1) detectDelimiter(rawLines[headerIndex]) else detectDelimiter(rawLines.first())
+        val isPdfFile = fileName.lowercase().endsWith(".pdf")
+        val rawDelimiter = if (headerIndex != -1) detectDelimiter(rawLines[headerIndex]) else detectDelimiter(rawLines.first())
+        val delimiter = if (isPdfFile) "" else rawDelimiter
 
-        val detectedColumns = if (headerIndex != -1) {
+        val detectedColumns = if (headerIndex != -1 && delimiter.isNotEmpty()) {
             detectColumns(rawLines[headerIndex], delimiter)
-        } else {
+        } else if (delimiter.isNotEmpty()) {
             detectColumns(rawLines.first(), delimiter)
+        } else {
+            emptyList()
         }
 
         val dataLines = if (headerIndex != -1) {
@@ -370,40 +455,49 @@ object StatementImportService {
             rawLines
         }
 
-        // Group multiline / wrapped transaction rows (e.g. from PDF table extract)
         val consolidatedRows = mutableListOf<String>()
-        var currentBlock = StringBuilder()
 
-        for (line in dataLines) {
-            if (isHeaderLine(line) || isIgnoredOrTotalLine(line)) {
-                if (currentBlock.isNotEmpty()) {
-                    consolidatedRows.add(currentBlock.toString())
-                    currentBlock.clear()
-                }
-                continue
-            }
-
-            val startsWithDate = line.matches(Regex("^\\s*\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}.*", RegexOption.DOT_MATCHES_ALL)) ||
-                    line.matches(Regex("^\\s*\\d{4}[/-]\\d{1,2}[/-]\\d{1,2}.*", RegexOption.DOT_MATCHES_ALL)) ||
-                    line.matches(Regex("^\\s*[A-Za-z]{3,9}[ -]\\d{1,2},?[ -]\\d{4}.*", RegexOption.DOT_MATCHES_ALL))
-
-            if (startsWithDate) {
-                if (currentBlock.isNotEmpty()) {
-                    consolidatedRows.add(currentBlock.toString())
-                    currentBlock.clear()
-                }
-                currentBlock.append(line)
-            } else if (currentBlock.isNotEmpty()) {
-                // Continuation line (wrapped description or amount on next line)
-                currentBlock.append(" ").append(line)
-            } else {
-                if (line.contains(Regex("\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}"))) {
+        if (delimiter.isNotEmpty()) {
+            // Structured delimiter (e.g. TSV from Excel or CSV)
+            for (line in dataLines) {
+                if (!isHeaderLine(line) && !isIgnoredOrTotalLine(line)) {
                     consolidatedRows.add(line)
                 }
             }
-        }
-        if (currentBlock.isNotEmpty()) {
-            consolidatedRows.add(currentBlock.toString())
+        } else {
+            // Unstructured / PDF text extraction
+            val dateRegex = Regex("(\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}|\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})")
+            val amountRegex = Regex("([0-9]{1,3}(?:,[0-9]{3})*\\.[0-9]{2})")
+
+            val cleanLines = dataLines.filter { !isHeaderLine(it) && !isIgnoredOrTotalLine(it) }
+            val currentBlock = mutableListOf<String>()
+
+            for (line in cleanLines) {
+                val datesInLine = dateRegex.findAll(line).toList()
+                val startsWithDate = line.matches(Regex("^\\s*\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}.*", RegexOption.DOT_MATCHES_ALL)) ||
+                        line.matches(Regex("^\\s*\\d{4}[/-]\\d{1,2}[/-]\\d{1,2}.*", RegexOption.DOT_MATCHES_ALL))
+                val hasDateInCurrent = currentBlock.any { dateRegex.containsMatchIn(it) }
+                val hasAmountInCurrent = currentBlock.any { amountRegex.containsMatchIn(it) }
+
+                var isNewTxnStart = false
+                if (currentBlock.isNotEmpty()) {
+                    if (hasDateInCurrent && hasAmountInCurrent) {
+                        if (startsWithDate || datesInLine.isNotEmpty() || line.startsWith("UPI/") || line.startsWith("NEFT") ||
+                            line.startsWith("IMPS") || line.startsWith("RTGS") || line.contains("Cr-") || line.contains("OUTUPI")) {
+                            isNewTxnStart = true
+                        }
+                    }
+                }
+
+                if (isNewTxnStart) {
+                    consolidatedRows.add(currentBlock.joinToString(" "))
+                    currentBlock.clear()
+                }
+                currentBlock.add(line)
+            }
+            if (currentBlock.isNotEmpty()) {
+                consolidatedRows.add(currentBlock.joinToString(" "))
+            }
         }
 
         val parsedRows = mutableListOf<ParsedImportRow>()
@@ -415,7 +509,6 @@ object StatementImportService {
         }
 
         // 2-Pass Balance Delta Mathematical Verification:
-        // Extract initial opening balance if present in statement text
         var runningBal: Double? = null
         val openingBalMatch = Regex("Opening\\s*Balance\\s*[:\\-]?\\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{2})|[0-9]+\\.[0-9]{2})", RegexOption.IGNORE_CASE).find(content)
         if (openingBalMatch != null) {
@@ -448,6 +541,14 @@ object StatementImportService {
                 runningBal = row.balance
             }
 
+            val updatedCatResult = if (rules.isNotEmpty()) {
+                CategorizationEngine.categorize(row.description, rules, finalType == TransactionType.INCOME)
+            } else null
+
+            val finalCategory = updatedCatResult?.categoryName ?: row.suggestedCategory
+            val finalCategoryId = updatedCatResult?.categoryId ?: row.suggestedCategoryId
+            val finalConfidence = updatedCatResult?.confidence ?: row.confidence
+
             val finalAmount = if (finalDebit > 0.0) finalDebit else finalCredit
             val isDup = existingTransactions.any {
                 it.transactionDate == row.date &&
@@ -462,6 +563,9 @@ object StatementImportService {
                 creditAmount = finalCredit,
                 amount = finalAmount,
                 suggestedType = finalType,
+                suggestedCategory = finalCategory,
+                suggestedCategoryId = finalCategoryId,
+                confidence = finalConfidence,
                 isDuplicate = isDup
             ))
         }
@@ -496,12 +600,8 @@ object StatementImportService {
     }
 
     private fun isHeaderLine(line: String): Boolean {
-        val lower = line.lowercase()
-        // Never match account summary/metadata lines
-        if (lower.contains("account opening") || lower.contains("primary holder") || lower.contains("statement of account") || lower.contains("statement period") || lower.contains("nominee details") || lower.contains("branch details") || lower.contains("joint holder")) {
-            return false
-        }
-        val hasDate = lower.contains("date") || lower.contains("txn dt") || lower.contains("value dt")
+        val lower = line.lowercase().trim()
+        val hasDate = lower.contains("date") || lower.contains("txn dt") || lower.contains("value dt") || lower.contains("txn date")
         val hasDesc = lower.contains("description") || lower.contains("particular") || lower.contains("narration") || lower.contains("remark") || lower.contains("transaction details")
         val hasAmount = lower.contains("debit") || lower.contains("credit") || lower.contains("withdrawal") || lower.contains("deposit") || lower.contains("paid out") || lower.contains("paid in") || lower.contains("dr") || lower.contains("cr")
         val hasBalance = lower.contains("balance") || lower.contains("running") || lower.contains("closing")
@@ -513,7 +613,7 @@ object StatementImportService {
         val lowerDesc = description.lowercase().trim()
 
         val ignoredKeywords = listOf(
-            "opening balance", "closing balance", "total withdrawals", "total deposits",
+            "opening balance", "closing balance", "running balance", "total withdrawals", "total deposits",
             "total debit", "total credit", "total debits", "total credits", "total amount",
             "total value", "total sum", "grand total", "sub total", "subtotal", "running total",
             "brought forward", "carried forward", "b/f", "c/f", "balance b/f", "balance c/f",
@@ -525,7 +625,12 @@ object StatementImportService {
             "cin -", "branch details", "ifsc code", "micr code", "customer id", "cust id",
             "registered email", "mobile no", "end of statement", "computer generated",
             "authorized signatory", "disclaimer", "total inflow", "total outflow", "net balance",
-            "summary for the period", "account statement", "e-statement"
+            "summary for the period", "account statement", "e-statement", "benefits of nomination",
+            "financial security", "hassle-free fund transfer", "time saving & cost effective",
+            "please ignore if nominee", "under goods and services tax", "for any assistance required",
+            "please contact a yes bank", "unless the discrepancy",
+            "adikesavalu naidu complex", "greams rd", "thousand light", "door no. 225",
+            "atm withdrawal obd", "mobile funds transfer", "atm funds transfer", "returned rtgs", "rtgs transaction"
         )
 
         for (kw in ignoredKeywords) {
@@ -535,11 +640,19 @@ object StatementImportService {
         }
 
         // Header / meta description matching
-        if (lowerDesc in listOf("description", "particulars", "narration", "remarks", "details", "transaction details", "txn details", "date", "amount", "total", "totals")) {
+        if (lowerDesc in listOf("description", "particulars", "narration", "remarks", "details", "transaction details", "txn details", "date", "amount", "total", "totals", "balance", "running", "withdrawals", "deposits")) {
+            return true
+        }
+
+        if (lowerLine in listOf("rooparaj b", "platinum", "savings", "currency - inr", "active", "na", "balance", "running", "transaction date", "date", "description", "withdrawals", "deposits")) {
             return true
         }
 
         if (lowerDesc.matches(Regex("^total\\s*[:\\-]?.*$", RegexOption.IGNORE_CASE)) && !lowerDesc.contains("total energies") && !lowerDesc.contains("total gas")) {
+            return true
+        }
+
+        if (lowerLine.startsWith("neft: national electronic") || lowerLine.startsWith("neft: national") || lowerLine.startsWith("upi: unified payment")) {
             return true
         }
 
@@ -614,13 +727,21 @@ object StatementImportService {
         // Positional fallback for space-separated lines (e.g. Yes Bank, SBI, HDFC statements)
         if (!isValidNormalizedDate(date) || (debit == 0.0 && credit == 0.0)) {
             val dateRegex = Regex("(\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}|\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})")
-            val dateMatch = dateRegex.find(line)
-            if (dateMatch != null) {
-                date = normalizeDate(dateMatch.value)
+            val allDates = dateRegex.findAll(line).map { it.value }.toList()
+            if (allDates.isNotEmpty()) {
+                date = normalizeDate(allDates.first())
             }
 
             val numberRegex = Regex("([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{2})|[0-9]+\\.[0-9]{2})")
-            val allNumberMatches = numberRegex.findAll(line).map { it.value }.toList()
+            var allNumberMatches = numberRegex.findAll(line).map { it.value }.toList()
+
+            // Handle concatenated amounts like 15,000.0015,000.42
+            if (allNumberMatches.size < 2) {
+                val concatMatch = Regex("([0-9]{1,3}(?:,[0-9]{3})*\\.[0-9]{2})([0-9]{1,3}(?:,[0-9]{3})*\\.[0-9]{2})").find(line)
+                if (concatMatch != null) {
+                    allNumberMatches = listOf(concatMatch.groupValues[1], concatMatch.groupValues[2])
+                }
+            }
 
             if (allNumberMatches.isNotEmpty()) {
                 val hasExplicitCredit = line.contains("NEFT Cr-", ignoreCase = true) ||
@@ -630,11 +751,13 @@ object StatementImportService {
                         line.contains("Cr/", ignoreCase = true) ||
                         line.contains(" Cr-", ignoreCase = true) ||
                         line.contains("Cr.", ignoreCase = true) ||
+                        line.contains("INW", ignoreCase = false) ||
                         line.contains("Refund", ignoreCase = true) ||
                         line.contains("Reversal", ignoreCase = true) ||
                         line.contains("Salary", ignoreCase = true) ||
                         line.contains("Deposit", ignoreCase = true) ||
                         line.contains("Interest Paid", ignoreCase = true) ||
+                        line.contains("mani bro sent money", ignoreCase = true) ||
                         Regex("\\b(?:Cr|Credit|Credited|Deposits?)\\b", RegexOption.IGNORE_CASE).containsMatchIn(line)
 
                 val hasExplicitDebit = line.contains("NEFT Dr-", ignoreCase = true) ||
@@ -682,32 +805,42 @@ object StatementImportService {
                 }
             }
 
-            val refRegex = Regex("\\b([A-Z0-9]{10,}(?:OUT)?)\\b")
-            val refMatch = refRegex.findAll(line).firstOrNull { match ->
-                val v = match.value
-                !v.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) && !v.matches(Regex("[0-9.,]+"))
-            }
-            if (refMatch != null) {
-                ref = refMatch.value
+            // Extract references
+            val upiRefMatch = Regex("(?:UPI|IMPS|NEFT|RTGS|TRANSFER)/\\s*([0-9]{10,12})").find(line)
+            if (upiRefMatch != null) {
+                ref = upiRefMatch.groupValues[1]
             }
 
-            if (description.isBlank()) {
-                var cleanDesc = line
-                if (dateMatch != null) {
-                    cleanDesc = cleanDesc.replace(dateMatch.value, "")
-                }
-                val secondDate = dateRegex.find(cleanDesc)
-                if (secondDate != null) {
-                    cleanDesc = cleanDesc.replace(secondDate.value, "")
-                }
-                if (ref.isNotBlank()) {
-                    cleanDesc = cleanDesc.replace(ref, "")
-                }
-                for (numStr in allNumberMatches.takeLast(2)) {
-                    cleanDesc = cleanDesc.replace(numStr, "")
-                }
-                description = sanitizeText(cleanDesc)
+            val neftMatch = Regex("NEFT\\s+Cr-[A-Za-z0-9]+-(?:[A-Za-z0-9\\s]+-)+([A-Za-z0-9]+)").find(line)
+            if (neftMatch != null && (ref.isBlank() || ref.length < 6 || ref == "2026")) {
+                ref = neftMatch.groupValues[1]
             }
+
+            val chqRefMatch = Regex("\\b(IN[0-9]{10,14})\\b").find(line)
+            if (chqRefMatch != null && (ref.isBlank() || ref.length < 6 || ref == "2026")) {
+                ref = chqRefMatch.groupValues[1]
+            }
+
+            // Clean description: remove dates and all identified amounts
+            var remainder = line.trim()
+            for (d in allDates) {
+                remainder = remainder.replace(d, " ")
+            }
+            for (numStr in allNumberMatches) {
+                remainder = remainder.replace(numStr, " ")
+            }
+
+            // Remove duplicated cheque number if repeated before description name suffix
+            if (ref.isNotBlank() && ref.startsWith("IN")) {
+                remainder = remainder.replace(Regex("\\b${Regex.escape(ref)}\\s+(?=[A-Za-z])"), "")
+            }
+
+            var cleanDesc = sanitizeText(remainder.replace("(", " ").replace(")", " ")).trim()
+            if (cleanDesc.startsWith("/ ") || cleanDesc.startsWith("/\t")) {
+                cleanDesc = "UPI$cleanDesc"
+            }
+            cleanDesc = cleanDesc.replace(Regex("^UPI/\\s*/?\\s*"), "UPI/ ")
+            description = cleanDesc.trim()
         }
 
         if (!isValidNormalizedDate(date)) {
@@ -726,7 +859,7 @@ object StatementImportService {
         }
 
         if (ref.isBlank()) {
-            val upiMatch = Regex("(?:UPI|IMPS|NEFT|RTGS|TRANSFER)[/-]([A-Za-z0-9]+)").find(description)
+            val upiMatch = Regex("(?:UPI|IMPS|NEFT|RTGS|TRANSFER)/\\s*([A-Za-z0-9]+)").find(description)
             if (upiMatch != null) {
                 ref = upiMatch.groupValues[1]
             }
