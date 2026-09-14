@@ -181,14 +181,22 @@ fun TransactionDetailSheet(
                         .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val availableTypes = listOf(
-                        TransactionType.EXPENSE to "Expense",
-                        TransactionType.INCOME to "Income",
-                        TransactionType.LENDING to "Lend",
-                        TransactionType.BORROWING to "Borrow",
-                        TransactionType.INVESTMENT to "Investment",
-                        TransactionType.TRANSFER to "Transfer"
-                    )
+                    val isDebitTx = currentTx.debitAmount > 0.0 || (currentTx.creditAmount <= 0.0 && currentTx.transactionType != TransactionType.INCOME && currentTx.transactionType != TransactionType.REFUND && currentTx.transactionType != TransactionType.BORROWING)
+                    val availableTypes = if (isDebitTx) {
+                        listOf(
+                            TransactionType.EXPENSE to "Expense",
+                            TransactionType.INVESTMENT to "Investment",
+                            TransactionType.LENDING to "Lend",
+                            TransactionType.TRANSFER to "Transfer"
+                        )
+                    } else {
+                        listOf(
+                            TransactionType.INCOME to "Income",
+                            TransactionType.BORROWING to "Borrow",
+                            TransactionType.REFUND to "Refund",
+                            TransactionType.TRANSFER to "Transfer"
+                        )
+                    }
 
                     availableTypes.forEach { (type, label) ->
                         val isSelected = currentTx.transactionType == type
@@ -517,16 +525,19 @@ fun TransactionDetailSheet(
                 val idLabel = when (currentTx.transactionType) {
                     TransactionType.LENDING -> "Lend ID"
                     TransactionType.BORROWING -> "Borrow ID"
+                    TransactionType.INVESTMENT -> "Investment Tag"
                     else -> "Advance ID"
                 }
                 val idPlaceholder = when (currentTx.transactionType) {
                     TransactionType.LENDING -> "e.g. LEND-1"
                     TransactionType.BORROWING -> "e.g. BORROW-1"
+                    TransactionType.INVESTMENT -> "e.g. INV-1"
                     else -> "e.g. ADV-1"
                 }
                 val idColor = when (currentTx.transactionType) {
                     TransactionType.LENDING -> LendingIndigo
                     TransactionType.BORROWING -> OutstandingAmber
+                    TransactionType.INVESTMENT -> Color(0xFF10B981)
                     else -> MaterialTheme.colorScheme.primary
                 }
 
@@ -556,6 +567,7 @@ fun TransactionDetailSheet(
                                 val autoGen = when (currentTx.transactionType) {
                                     TransactionType.LENDING -> viewModel.generateNextLendId()
                                     TransactionType.BORROWING -> viewModel.generateNextBorrowId()
+                                    TransactionType.INVESTMENT -> "INV-${(1..99).firstOrNull { num -> viewModel.allTransactions.value.none { it.advanceId == "INV-$num" } } ?: 1}"
                                     else -> viewModel.generateNextAdvanceId()
                                 }
                                 editedAdvanceIdText = autoGen
@@ -611,6 +623,7 @@ fun TransactionDetailSheet(
                                         val autoId = when (currentTx.transactionType) {
                                             TransactionType.LENDING -> viewModel.generateNextLendId()
                                             TransactionType.BORROWING -> viewModel.generateNextBorrowId()
+                                            TransactionType.INVESTMENT -> "INV-${(1..99).firstOrNull { num -> viewModel.allTransactions.value.none { it.advanceId == "INV-$num" } } ?: 1}"
                                             else -> viewModel.generateNextAdvanceId()
                                         }
                                         viewModel.updateTransactionAdvanceId(currentTx.id, autoId)

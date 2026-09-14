@@ -181,7 +181,7 @@ fun LendingScreen(
                     lendId = lendTag,
                     repayments = repayments,
                     onAddRepayClick = { onRepayLoanClick(loan) },
-                    onDeleteLoan = { viewModel.deleteLoan(loan.id) },
+                    onDeleteLoan = { viewModel.deleteLendSet(lendTag, loan.id, deleteLendTx = true) },
                     onUnlinkRepayment = { txId ->
                         viewModel.linkTransactionToAdvance(txId, null)
                     },
@@ -203,10 +203,37 @@ fun LendSetCard(
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
 
     val isSettled = loan.remainingAmount <= 0.0 || loan.status == LoanStatus.PAID
     val statusColor = if (isSettled) IncomeGreen else OutstandingAmber
     val progress = if (loan.amount > 0) (loan.amountRepaid / loan.amount).toFloat().coerceIn(0f, 1f) else 0f
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete Lend Record #${lendId.removePrefix("#")}?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("This will remove this lend record for '${loan.personName}' and unlink all associated repayments.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeleteLoan()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete & Unlink")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     Card(
         modifier = modifier
@@ -221,7 +248,7 @@ fun LendSetCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Top Row: #LEND-X ID Badge & Status Badge
+            // Top Row: #LEND-X ID Badge & Status Badge & Delete Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -248,17 +275,31 @@ fun LendSetCard(
                     )
                 }
 
-                Surface(
-                    color = statusColor.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = if (isSettled) "Fully Settled" else "${CurrencyFormatter.formatInr(loan.remainingAmount)} Due",
-                        color = statusColor,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = statusColor.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = if (isSettled) "Fully Settled" else "${CurrencyFormatter.formatInr(loan.remainingAmount)} Due",
+                            color = statusColor,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = { showDeleteConfirm = true },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = "Delete Lend Set",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 

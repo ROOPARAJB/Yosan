@@ -124,7 +124,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     ) { txs, compExpenses ->
         val advanceIds = mutableSetOf<String>()
         for (tx in txs) {
-            tx.advanceId?.trim()?.takeIf { it.isNotBlank() }?.let { advanceIds.add(it) }
+            val adv = tx.advanceId?.trim()
+            if (!adv.isNullOrBlank() && (adv.startsWith("ADV-", ignoreCase = true) || adv.startsWith("ADV", ignoreCase = true))) {
+                advanceIds.add(adv.uppercase().replace(" ", "-"))
+            }
         }
         for (comp in compExpenses) {
             val match = Regex("""#(ADV[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(comp.notes)
@@ -717,6 +720,129 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         updateTransactionAdvanceId(txId, advanceId)
     }
 
+    fun deleteAdvanceSet(advanceId: String, deleteInflowTx: Boolean = false) {
+        viewModelScope.launch {
+            val cleanAdvId = advanceId.trim().removePrefix("#")
+            val idPattern = Regex("""#?$cleanAdvId\b""", RegexOption.IGNORE_CASE)
+            val matchingTxs = allTransactions.value.filter { 
+                it.advanceId?.trim().equals(cleanAdvId, ignoreCase = true) ||
+                it.advanceId?.trim().equals("#$cleanAdvId", ignoreCase = true) ||
+                idPattern.containsMatchIn(it.notes)
+            }
+            val matchingComp = companyExpenses.value.filter { 
+                idPattern.containsMatchIn(it.notes)
+            }
+            
+            for (tx in matchingTxs) {
+                if (deleteInflowTx && (tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0) && tx.isManual) {
+                    repository.deleteTransaction(tx.id)
+                } else {
+                    val cleanNotes = tx.notes.replace(idPattern, "").trim()
+                    repository.updateTransaction(
+                        tx.copy(
+                            advanceId = null,
+                            notes = cleanNotes,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            
+            for (comp in matchingComp) {
+                val newNotes = comp.notes.replace(idPattern, "").trim()
+                repository.updateCompanyExpense(comp.copy(notes = newNotes))
+            }
+            
+            showMessage("Advance set '#$cleanAdvId' deleted and completely removed")
+        }
+    }
+
+    fun deleteBorrowSet(borrowId: String, deleteInflowTx: Boolean = false) {
+        viewModelScope.launch {
+            val cleanId = borrowId.trim().removePrefix("#")
+            val idPattern = Regex("""#?$cleanId\b""", RegexOption.IGNORE_CASE)
+            val matchingTxs = allTransactions.value.filter {
+                it.advanceId?.trim().equals(cleanId, ignoreCase = true) ||
+                it.advanceId?.trim().equals("#$cleanId", ignoreCase = true) ||
+                idPattern.containsMatchIn(it.notes) ||
+                idPattern.containsMatchIn(it.description)
+            }
+            for (tx in matchingTxs) {
+                if (deleteInflowTx && (tx.transactionType == TransactionType.BORROWING || tx.creditAmount > 0) && tx.isManual) {
+                    repository.deleteTransaction(tx.id)
+                } else {
+                    val cleanNotes = tx.notes.replace(idPattern, "").trim()
+                    repository.updateTransaction(
+                        tx.copy(
+                            advanceId = null,
+                            notes = cleanNotes,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            showMessage("Borrow set '#$cleanId' deleted and unlinked")
+        }
+    }
+
+    fun deleteLendSet(lendTag: String, loanId: Long? = null, deleteLendTx: Boolean = false) {
+        viewModelScope.launch {
+            val cleanId = lendTag.trim().removePrefix("#")
+            val idPattern = Regex("""#?$cleanId\b""", RegexOption.IGNORE_CASE)
+            
+            if (loanId != null) {
+                database.loanRepaymentDao().deleteRepaymentsForLoan(loanId)
+                repository.deleteLoan(loanId)
+            }
+            
+            val matchingTxs = allTransactions.value.filter {
+                (loanId != null && it.linkedLoanId == loanId) ||
+                it.advanceId?.trim().equals(cleanId, ignoreCase = true) ||
+                it.advanceId?.trim().equals("#$cleanId", ignoreCase = true) ||
+                idPattern.containsMatchIn(it.notes) ||
+                idPattern.containsMatchIn(it.description)
+            }
+            for (tx in matchingTxs) {
+                if (deleteLendTx && (tx.transactionType == TransactionType.LENDING || tx.debitAmount > 0) && tx.isManual) {
+                    repository.deleteTransaction(tx.id)
+                } else {
+                    val cleanNotes = tx.notes.replace(idPattern, "").trim()
+                    repository.updateTransaction(
+                        tx.copy(
+                            advanceId = null,
+                            linkedLoanId = null,
+                            notes = cleanNotes,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            showMessage("Lend record '#$cleanId' deleted")
+        }
+    }
+
+    fun deleteInvestmentSet(categoryName: String, deleteTxs: Boolean = false) {
+        viewModelScope.launch {
+            val matchingTxs = allTransactions.value.filter {
+                it.transactionType == TransactionType.INVESTMENT && it.categoryName.equals(categoryName, ignoreCase = true)
+            }
+            for (tx in matchingTxs) {
+                if (deleteTxs) {
+                    repository.deleteTransaction(tx.id)
+                } else {
+                    repository.updateTransaction(
+                        tx.copy(
+                            transactionType = TransactionType.EXPENSE,
+                            categoryName = "Personal Expense",
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            showMessage("Investment category '$categoryName' records cleared")
+        }
+    }
+
     // Undo & Recovery Engine
     suspend fun recordUndoAction(
         actionType: String,
@@ -932,57 +1058,40 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                     if (allCats.any { it.type == CategoryType.OTHER && it.name.equals(tx.categoryName, true) }) tx.categoryName
                     else "Transfer"
                 }
+                TransactionType.LENDING -> {
+                    if (allCats.any { it.type == CategoryType.LENDING && it.name.equals(tx.categoryName, true) }) tx.categoryName
+                    else "Lending"
+                }
+                TransactionType.BORROWING -> {
+                    if (allCats.any { it.type == CategoryType.BORROWING && it.name.equals(tx.categoryName, true) }) tx.categoryName
+                    else "Borrowing"
+                }
                 else -> tx.categoryName
             }
             val validCatId = allCats.firstOrNull { it.name.equals(validCategory, true) }?.id ?: tx.categoryId
 
-            val updated = when (newType) {
-                TransactionType.INCOME, TransactionType.REFUND -> {
-                    tx.copy(
-                        transactionType = newType,
-                        categoryName = validCategory,
-                        categoryId = validCatId,
-                        creditAmount = amount,
-                        debitAmount = 0.0,
-                        amount = amount,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                }
-                TransactionType.TRANSFER -> {
-                    val wasCredit = tx.creditAmount > 0 || tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND
-                    if (wasCredit) {
-                        tx.copy(
-                            transactionType = newType,
-                            categoryName = validCategory,
-                            categoryId = validCatId,
-                            creditAmount = amount,
-                            debitAmount = 0.0,
-                            amount = amount,
-                            updatedAt = System.currentTimeMillis()
-                        )
-                    } else {
-                        tx.copy(
-                            transactionType = newType,
-                            categoryName = validCategory,
-                            categoryId = validCatId,
-                            debitAmount = amount,
-                            creditAmount = 0.0,
-                            amount = amount,
-                            updatedAt = System.currentTimeMillis()
-                        )
-                    }
-                }
-                else -> {
-                    tx.copy(
-                        transactionType = newType,
-                        categoryName = validCategory,
-                        categoryId = validCatId,
-                        debitAmount = amount,
-                        creditAmount = 0.0,
-                        amount = amount,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                }
+            // Strictly preserve cashflow direction (+/- sign integrity) based on the original physical transaction flow
+            val wasCredit = tx.creditAmount > 0 || (tx.debitAmount <= 0 && (tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND || tx.transactionType == TransactionType.BORROWING))
+            val updated = if (wasCredit) {
+                tx.copy(
+                    transactionType = newType,
+                    categoryName = validCategory,
+                    categoryId = validCatId,
+                    creditAmount = amount,
+                    debitAmount = 0.0,
+                    amount = amount,
+                    updatedAt = System.currentTimeMillis()
+                )
+            } else {
+                tx.copy(
+                    transactionType = newType,
+                    categoryName = validCategory,
+                    categoryId = validCatId,
+                    debitAmount = amount,
+                    creditAmount = 0.0,
+                    amount = amount,
+                    updatedAt = System.currentTimeMillis()
+                )
             }
             repository.updateTransaction(updated)
             recordUndoAction(

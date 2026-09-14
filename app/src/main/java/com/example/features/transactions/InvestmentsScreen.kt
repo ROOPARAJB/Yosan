@@ -187,12 +187,17 @@ fun InvestmentsScreen(
                     onActionClick = onAddInvestmentClick
                 )
             }
-        } else {
             items(filteredSummaries, key = { it.categoryName }) { summary ->
                 InvestmentSetCard(
                     summary = summary,
                     onAddDepositClick = onAddInvestmentClick,
                     onTransactionClick = onTransactionClick,
+                    onDeleteInvestmentSet = { catName ->
+                        viewModel.deleteInvestmentSet(catName, deleteTxs = false)
+                    },
+                    onUnlinkTransaction = { txId ->
+                        viewModel.deleteTransaction(txId)
+                    },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
             }
@@ -205,9 +210,38 @@ fun InvestmentSetCard(
     summary: InvestmentSummary,
     onAddDepositClick: () -> Unit,
     onTransactionClick: (TransactionEntity) -> Unit,
+    onDeleteInvestmentSet: (String) -> Unit = {},
+    onUnlinkTransaction: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Clear Investment Group '${summary.categoryName}'?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("This will remove this investment group classification. Transactions will be moved back to general expenses.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeleteInvestmentSet(summary.categoryName)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Clear Group")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     Card(
         modifier = modifier
@@ -222,7 +256,7 @@ fun InvestmentSetCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Top Row: Category Pill & Portfolio Share Pill
+            // Top Row: Category Pill & Portfolio Share Pill & Delete Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -243,18 +277,32 @@ fun InvestmentSetCard(
                     }
                 }
 
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    val pct = (summary.shareOfPortfolio * 100).toInt()
-                    Text(
-                        text = "$pct% of Portfolio",
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        val pct = (summary.shareOfPortfolio * 100).toInt()
+                        Text(
+                            text = "$pct% of Portfolio",
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = { showDeleteConfirm = true },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = "Clear Investment Group",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
@@ -369,12 +417,26 @@ fun InvestmentSetCard(
                                 fontSize = 10.sp
                             )
                         }
-                        Text(
-                            text = CurrencyFormatter.formatInr(if (tx.debitAmount > 0) tx.debitAmount else tx.amount),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF10B981)
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = CurrencyFormatter.formatInr(if (tx.debitAmount > 0) tx.debitAmount else tx.amount),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            IconButton(
+                                onClick = { onUnlinkTransaction(tx.id) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Delete Investment Record",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -579,6 +579,7 @@ fun OfficialExpensesScreen(
                         onAddSpendClick = onAddExpenseClick,
                         onUnlinkTransaction = { txId -> viewModel.linkTransactionToAdvance(txId, null) },
                         onUnlinkCompanyExpense = { expId -> viewModel.linkCompanyExpenseToAdvance(expId, null) },
+                        onDeleteAdvanceSet = { advId -> viewModel.deleteAdvanceSet(advId, deleteInflowTx = true) },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
                 }
@@ -873,15 +874,43 @@ fun AdvanceSetCard(
     onAddSpendClick: () -> Unit,
     onUnlinkTransaction: (Long) -> Unit,
     onUnlinkCompanyExpense: (Long) -> Unit,
+    onDeleteAdvanceSet: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
+    var showDeleteSetConfirm by remember { mutableStateOf(false) }
     val totalLinkedItems = summary.linkedTransactions.size + summary.linkedCompanyExpenses.size
 
     val balanceColor = when {
         summary.remainingBalance > 0.0 -> IncomeGreen
         summary.remainingBalance < 0.0 -> ExpenseRed
         else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    if (showDeleteSetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteSetConfirm = false },
+            title = { Text("Delete Advance Set #${summary.advanceId}?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("This will remove this advance set and unlink all associated expenses. Transactions will remain in your history but will no longer be tagged with #${summary.advanceId}.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteSetConfirm = false
+                        onDeleteAdvanceSet(summary.advanceId)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete & Unlink")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteSetConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     Card(
@@ -899,7 +928,7 @@ fun AdvanceSetCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Top Row: Advance ID & Remaining Pill
+            // Top Row: Advance ID, Remaining Pill, and Delete Action
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -928,21 +957,35 @@ fun AdvanceSetCard(
                     }
                 }
 
-                Surface(
-                    color = balanceColor.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = when {
-                            summary.remainingBalance > 0.0 -> "${CurrencyFormatter.formatInr(summary.remainingBalance)} Left"
-                            summary.remainingBalance < 0.0 -> "Overspent by ${CurrencyFormatter.formatInr(kotlin.math.abs(summary.remainingBalance))}"
-                            else -> "Fully Spent"
-                        },
-                        color = balanceColor,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = balanceColor.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = when {
+                                summary.remainingBalance > 0.0 -> "${CurrencyFormatter.formatInr(summary.remainingBalance)} Left"
+                                summary.remainingBalance < 0.0 -> "Overspent by ${CurrencyFormatter.formatInr(kotlin.math.abs(summary.remainingBalance))}"
+                                else -> "Fully Spent"
+                            },
+                            color = balanceColor,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = { showDeleteSetConfirm = true },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DeleteOutline,
+                            contentDescription = "Delete Advance Set",
+                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
