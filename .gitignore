@@ -1,32 +1,95 @@
-*.iml
-.gradle
-.kotlin
+# Built application files
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Gradle & Build caches
+.gradle/
+.kotlin/
+build/
+/build
+app/build/
+*/build/
+
+# Local configuration & secrets
+local.properties
 /local.properties
+secrets.properties
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Keystores & private signing keys
+*.jks
+*.keystore
+my-upload-key.jks
+debug.keystore
+*.p12
+*.pem
+*.key
+
+# Android Studio & IntelliJ IDEA
+*.iml
+*.ipr
+*.iws
+.idea/
+.idea/*
 /.idea/caches
 /.idea/libraries
 /.idea/modules.xml
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
+
+# VS Code & OS specific
+.vscode/
 .DS_Store
-/build
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Android Profiling & Native build
 /captures
 .externalNativeBuild
 .cxx
-local.properties
-.env
-.env.local
-debug.keystore
 
-# Node & Backend Ignores
+# Server & Database ignores
 node_modules/
 server/node_modules/
 *.db
+*.sqlite
+*.sqlite3
 server/*.db
 server/finance_manager.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# Android Studio
-.idea/
-
-# Private/local data
+# User instructions, prompts & private statements
+userinstructions/
+userinstructions/**
+reference statements/
+*.xlsx
+*.xls
+*.pdf
+*.csv
 Indian bank Apr.xlsx
+
+# Agent rules, AI instructions & workspace metadata
+.agents/
+.agents/**
+GEMINI.md
+metadata.json
+.gemini/
+.claude/
+.cursor/
+AGENT.md
+CLAUDE.md
+
+
