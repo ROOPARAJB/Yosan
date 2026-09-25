@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.financemanager.vpkrz"
     minSdk = 24
     targetSdk = 35
-    versionCode = 7
-    versionName = "1.3.3"
+    versionCode = 1
+    versionName = "1.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
