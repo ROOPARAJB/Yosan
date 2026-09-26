@@ -1,67 +1,51 @@
 # Built application files
 *.apk
-*.ap_
 *.aab
-
-# Files for the ART/Dalvik VM
+*.ap_
 *.dex
-
-# Java class files
 *.class
 
-# Generated build directories
-build/
-**/build/
-bin/
-gen/
-out/
-captures/
-.externalNativeBuild/
-.cxx/
-
-# Gradle files
+# Gradle & Build caches
 .gradle/
 .kotlin/
-buildOutputCleanup/
+build/
+/build
+app/build/
+*/build/
+
+# Local configuration & secrets
+local.properties
+/local.properties
+secrets.properties
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Keystores & private signing keys
+*.jks
+*.keystore
+my-upload-key.jks
+debug.keystore
+*.p12
+*.pem
+*.key
 
 # Android Studio & IntelliJ IDEA
 *.iml
-.idea/
-.shelf/
-.fleet/
 *.ipr
 *.iws
+.idea/
+.idea/*
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
 
-# Local SDK and configuration
-local.properties
-
-# Log files
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Signing keystores & credentials
-*.jks
-*.keystore
-*.p12
-*.key
-!my-upload-key.jks
-
-# Environment & Secret files
-.env
-.env.*
-!.env.example
-
-# Node & Backend dependencies / local storage
-node_modules/
-**/node_modules/
-*.db
-*.sqlite
-server/*.db
-server/finance_manager.db
-
-# OS generated files
+# VS Code & OS specific
+.vscode/
 .DS_Store
 .DS_Store?
 ._*
@@ -69,11 +53,43 @@ server/finance_manager.db
 .Trashes
 ehthumbs.db
 Thumbs.db
-[Dd]esktop.ini
 
-# Local testing statements & private documents
+# Android Profiling & Native build
+/captures
+.externalNativeBuild
+.cxx
+
+# Server & Database ignores
+node_modules/
+server/node_modules/
+*.db
+*.sqlite
+*.sqlite3
+server/*.db
+server/finance_manager.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# User instructions, prompts & private statements
+userinstructions/
+userinstructions/**
+reference statements/
 *.xlsx
 *.xls
 *.pdf
-private/
-temp/
+*.csv
+Indian bank Apr.xlsx
+
+# Agent rules, AI instructions & workspace metadata
+.agents/
+.agents/**
+GEMINI.md
+metadata.json
+.gemini/
+.claude/
+.cursor/
+AGENT.md
+CLAUDE.md
+
+

@@ -178,6 +178,12 @@ class UpdateManager(
                         outputStream.flush()
                     }
                 }
+                if (totalLength > 0 && bytesDownloaded < totalLength) {
+                    apkFile.delete()
+                    val msg = "Download incomplete: expected $totalLength bytes, received $bytesDownloaded bytes."
+                    _uiState.value = UpdateUiState.Error(msg)
+                    return@withContext Result.failure(Exception(msg))
+                }
             }
 
             _uiState.value = UpdateUiState.ReadyToInstall(apkFile)
@@ -191,6 +197,11 @@ class UpdateManager(
 
     fun installApk(apkFile: File) {
         try {
+            if (!apkFile.exists() || apkFile.length() == 0L) {
+                _uiState.value = UpdateUiState.Error("APK file is invalid or missing.")
+                return
+            }
+
             // Android 8.0+ unknown sources permission check
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (!context.packageManager.canRequestPackageInstalls()) {
@@ -210,8 +221,18 @@ class UpdateManager(
 
             val installIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(contentUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
+
+            // Grant explicit URI read permission to all matching package installer handlers
+            val resInfoList = context.packageManager.queryIntentActivities(installIntent, 0)
+            for (resolveInfo in resInfoList) {
+                val pkgName = resolveInfo.activityInfo.packageName
+                context.grantUriPermission(pkgName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
             context.startActivity(installIntent)
         } catch (e: Exception) {
             _uiState.value = UpdateUiState.Error("Failed to launch installer: ${e.localizedMessage}")

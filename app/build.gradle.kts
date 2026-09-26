@@ -32,6 +32,8 @@ android {
         storePassword = System.getenv("STORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "yosanpassword123"
         keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "upload"
         keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "yosanpassword123"
+        enableV1Signing = true
+        enableV2Signing = true
       }
     }
   }

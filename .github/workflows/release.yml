@@ -7,17 +7,17 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v1.2.0)'
+        description: 'Release Tag (e.g. v1.0.0)'
         required: true
-        default: 'v1.2.0'
+        default: 'v1.0.0'
       release_title:
         description: 'Release Title'
         required: true
-        default: 'Release v1.2.0'
+        default: 'Release v1.0.0'
       release_notes:
         description: 'Release Notes / Changelog'
         required: false
-        default: 'New update with improvements and bug fixes.'
+        default: 'Official v1.0.0 release with complete bug fixes and APK signing updates.'
 
 jobs:
   build:
@@ -40,12 +40,25 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Decode Keystore (Optional - if secret provided)
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
+      - name: Setup Signing Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding release keystore from secrets..."
+            echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
+          else
+            echo "Generating fallback release signing keystore..."
+            keytool -genkeypair -v \
+              -keystore my-upload-key.jks \
+              -alias upload \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass yosanpassword123 \
+              -keypass yosanpassword123 \
+              -dname "CN=Yosan Release, OU=Yosan Mobile, O=Yosan, L=Global, S=Global, C=US"
+          fi
 
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
