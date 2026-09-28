@@ -27,7 +27,6 @@ sealed class AuthState {
 class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
     private val tokenManager = SecureTokenManager(application)
-    private val authApi = ApiClient.getAuthApi(application)
     private val database = AppDatabase.getDatabase(application, viewModelScope)
     private val authRepository = AuthRepository(database)
 
@@ -51,82 +50,60 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         checkSession()
     }
 
-    private suspend fun fallbackToMockAuth() {
-        val savedProfile = try {
-            authRepository.getProfileOnce()
-        } catch (e: Exception) {
-            null
-        }
-        val profileName = savedProfile?.name?.takeIf { it.isNotBlank() } ?: "User"
-        val mockUser = UserDto(
-            id = 999L,
-            googleSub = "mock_google_sub",
-            email = savedProfile?.email ?: "",
-            name = profileName,
-            profilePictureUrl = ""
-        )
-        _user.value = mockUser
-        // Do NOT save mock_access_token as refresh token — that tricks checkSession() into
-        // attempting a real network call on next launch, then failing into an infinite loading loop.
-        tokenManager.saveUserSession(999L, "mock_google_sub", savedProfile?.email ?: "", profileName, "")
-
-        // Always sync profile to Room to unblock the userProfile == null loading screen
-        try {
-            syncRoomUserProfile(mockUser)
-        } catch (_: Exception) {}
-
-        val needsOnboarding = profileName.equals("User", ignoreCase = true)
-        _authState.value = AuthState.Authenticated(isNewUser = needsOnboarding)
-        _isLoading.value = false
-    }
-
+    /**
+     * Checks the local Room DB for an existing profile.
+     * No network call is made. The app is fully offline-first.
+     * All data lives on the device and is only deleted when the app is uninstalled.
+     */
     fun checkSession() {
         viewModelScope.launch {
             _isLoading.value = true
-            val refreshToken = tokenManager.getRefreshToken()
-
-            if (refreshToken.isNullOrEmpty()) {
-                fallbackToMockAuth()
-                return@launch
-            }
-
             try {
-                val response = authApi.getCurrentUser()
-                if (response.isSuccessful && response.body() != null) {
-                    val userDto = response.body()!!.user
-                    _user.value = userDto
-                    syncRoomUserProfile(userDto)
-                    _authState.value = AuthState.Authenticated(isNewUser = false)
-                } else {
-                    refreshSession()
+                val savedProfile = authRepository.getProfileOnce()
+
+                when {
+                    savedProfile != null &&
+                    savedProfile.isOnboardingCompleted &&
+                    savedProfile.name.isNotBlank() &&
+                    !savedProfile.name.equals("User", ignoreCase = true) -> {
+                        // Returning user — restore from local profile, no server needed
+                        _user.value = buildLocalUser(savedProfile)
+                        _authState.value = AuthState.Authenticated(isNewUser = false)
+                    }
+                    savedProfile != null -> {
+                        // Profile row exists but onboarding not finished
+                        _user.value = buildLocalUser(savedProfile)
+                        _authState.value = AuthState.Authenticated(isNewUser = true)
+                    }
+                    else -> {
+                        // Fresh install — seed a blank profile and show onboarding
+                        val emptyProfile = UserProfileEntity(id = 1)
+                        authRepository.updateProfile(emptyProfile)
+                        _user.value = buildLocalUser(emptyProfile)
+                        _authState.value = AuthState.Authenticated(isNewUser = true)
+                    }
                 }
             } catch (e: Exception) {
-                // Offline fallback with saved local secure profile if available
-                val savedSub = tokenManager.getGoogleSub()
-                val savedEmail = tokenManager.getUserEmail()
-                val savedName = tokenManager.getUserName()
-
-                if (!savedSub.isNullOrEmpty() && !savedEmail.isNullOrEmpty()) {
-                    val fallbackUser = UserDto(
-                        id = tokenManager.getUserId(),
-                        googleSub = savedSub,
-                        email = savedEmail,
-                        name = savedName ?: "User",
-                        profilePictureUrl = tokenManager.getProfilePic()
-                    )
-                    _user.value = fallbackUser
-                    // Always sync to Room to prevent userProfile == null loading loop
-                    try { syncRoomUserProfile(fallbackUser) } catch (_: Exception) {}
-                    _authState.value = AuthState.Authenticated(isNewUser = false)
-                } else {
-                    fallbackToMockAuth()
-                }
+                // Fallback: treat as new user so onboarding is shown
+                _user.value = UserDto(
+                    id = -1L,
+                    googleSub = "",
+                    email = "",
+                    name = "User",
+                    profilePictureUrl = ""
+                )
+                _authState.value = AuthState.Authenticated(isNewUser = true)
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
+    /**
+     * Optional Google Sign-In to enrich the local profile with the user's
+     * real name and profile picture. The ID token is decoded **locally** — 
+     * no backend server call is made. The app works entirely without this step.
+     */
     fun signInWithGoogle(context: Context) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -134,30 +111,31 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val googleAuthManager = GoogleAuthManager(context)
                 when (val result = googleAuthManager.getGoogleIdToken()) {
                     is GoogleAuthResult.Success -> {
-                        val response = authApi.authenticateGoogle(
-                            GoogleAuthRequest(
-                                idToken = result.idToken
+                        val claims = decodeGoogleIdTokenLocally(result.idToken)
+                        if (claims != null) {
+                            val existing = authRepository.getProfileOnce()
+                            val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
+                                googleSub = claims.sub,
+                                name = claims.name.ifBlank { existing?.name ?: "User" },
+                                email = claims.email,
+                                profilePictureUrl = claims.picture,
+                                updatedAt = System.currentTimeMillis()
                             )
-                        )
-
-                        if (response.isSuccessful && response.body() != null) {
-                            val authResponse = response.body()!!
-                            tokenManager.saveTokens(authResponse.accessToken, authResponse.refreshToken)
+                            authRepository.updateProfile(updatedProfile)
+                            // Save profile identifiers locally (no tokens needed)
                             tokenManager.saveUserSession(
-                                authResponse.user.id,
-                                authResponse.user.googleSub,
-                                authResponse.user.email,
-                                authResponse.user.name,
-                                authResponse.user.profilePictureUrl ?: ""
+                                userId = 1L,
+                                googleSub = claims.sub,
+                                email = claims.email,
+                                name = claims.name,
+                                profilePicture = claims.picture
                             )
-                            _user.value = authResponse.user
-                            syncRoomUserProfile(authResponse.user)
-
-                            val isNew = authResponse.isNewUser || authResponse.user.name.equals("User", ignoreCase = true)
-                            _isNewUser.value = isNew
-                            _authState.value = AuthState.Authenticated(isNewUser = isNew)
+                            _user.value = buildLocalUser(updatedProfile)
+                            _authState.value = AuthState.Authenticated(
+                                isNewUser = !updatedProfile.isOnboardingCompleted
+                            )
                         } else {
-                            _errorMessage.value = "Failed to authenticate with backend server: ${response.message()}"
+                            _errorMessage.value = "Could not read Google profile. You can still use the app locally."
                         }
                     }
                     is GoogleAuthResult.Cancelled -> {
@@ -180,50 +158,22 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         _authState.value = AuthState.Authenticated(isNewUser = false)
     }
 
-    fun refreshSession() {
-        viewModelScope.launch {
-            val refreshToken = tokenManager.getRefreshToken()
-            if (refreshToken.isNullOrEmpty()) {
-                logout()
-                return@launch
-            }
-
-            try {
-                val response = authApi.refreshSession(RefreshTokenRequest(refreshToken))
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    tokenManager.saveTokens(body.accessToken, body.refreshToken)
-                    _authState.value = AuthState.Authenticated(isNewUser = false)
-                } else {
-                    logout()
-                }
-            } catch (e: Exception) {
-                logout()
-            }
-        }
-    }
-
+    /**
+     * Logout: clears the encrypted token store and resets the local Room profile
+     * so onboarding is shown on next launch. Financial data (transactions, accounts,
+     * loans, etc.) is also purged — giving a clean slate.
+     */
     fun logout(onComplete: (() -> Unit)? = null) {
-        val refreshToken = tokenManager.getRefreshToken()
         tokenManager.clearCredentials()
         _user.value = null
         _isNewUser.value = true
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (!refreshToken.isNullOrEmpty()) {
-                    authApi.logout(LogoutRequest(refreshToken))
-                }
-            } catch (_: Exception) {}
-        }
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
                 com.example.data.local.DatabaseInitializer.purgeLegacyDemoData(database)
             } catch (_: Exception) {}
             withContext(Dispatchers.Main) {
-                // Reset profile to trigger onboarding on next launch
-                val resetProfile = com.example.data.local.entity.UserProfileEntity(
+                val resetProfile = UserProfileEntity(
                     id = 1,
                     name = "User",
                     email = "",
@@ -241,9 +191,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount(onComplete: (() -> Unit)? = null) {
         viewModelScope.launch {
             _isLoading.value = true
+            // Local-only: purge all data then reset profile
             withContext(Dispatchers.IO) {
                 try {
-                    authApi.deleteAccount()
+                    com.example.data.local.DatabaseInitializer.purgeLegacyDemoData(database)
                 } catch (_: Exception) {}
             }
             _isLoading.value = false
@@ -251,32 +202,49 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-
-
-
     fun clearError() {
         _errorMessage.value = null
     }
 
-    private suspend fun syncRoomUserProfile(userDto: UserDto) {
-        val existing = authRepository.getProfileOnce()
-        authRepository.updateProfile(
-            UserProfileEntity(
-                id = 1,
-                googleSub = userDto.googleSub,
-                name = userDto.name,
-                email = userDto.email,
-                profilePictureUrl = userDto.profilePictureUrl ?: "",
-                currencySymbol = userDto.currencySymbol,
-                isDarkMode = existing?.isDarkMode ?: false,
-                isPrivacyBlurEnabled = existing?.isPrivacyBlurEnabled ?: true,
-                blurTimeoutSeconds = existing?.blurTimeoutSeconds ?: 5,
-                isOnboardingCompleted = existing?.isOnboardingCompleted ?: false,
-                dashboardCardsConfig = existing?.dashboardCardsConfig ?: "BALANCE:true,OFFICIAL:true,SPENDING:true,MONTHLY:true,INSIGHTS:true,LOANS:true,RECENT:true",
-                updatedAt = System.currentTimeMillis()
+    // ─── Private Helpers ─────────────────────────────────────────────────────
+
+    private fun buildLocalUser(profile: UserProfileEntity): UserDto = UserDto(
+        id = profile.id,
+        googleSub = profile.googleSub.ifEmpty { "local_${profile.id}" },
+        email = profile.email,
+        name = profile.name.ifBlank { "User" },
+        profilePictureUrl = profile.profilePictureUrl.ifEmpty { null },
+        currencySymbol = profile.currencySymbol,
+        isDriveConnected = false,
+        lastBackupAt = null
+    )
+
+    /**
+     * Decodes the Google ID token (JWT) locally to extract name/email/picture.
+     * We do NOT verify the signature — the claims are used only for display (local profile).
+     */
+    private fun decodeGoogleIdTokenLocally(idToken: String): GoogleClaims? {
+        return try {
+            val parts = idToken.split(".")
+            if (parts.size < 2) return null
+            val decoded = android.util.Base64.decode(
+                parts[1].replace('-', '+').replace('_', '/'),
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
             )
-        )
+            val json = org.json.JSONObject(String(decoded, Charsets.UTF_8))
+            GoogleClaims(
+                sub   = json.optString("sub",     ""),
+                email = json.optString("email",   ""),
+                name  = json.optString("name",    ""),
+                picture = json.optString("picture", "")
+            )
+        } catch (_: Exception) { null }
     }
 
-
+    private data class GoogleClaims(
+        val sub: String,
+        val email: String,
+        val name: String,
+        val picture: String
+    )
 }

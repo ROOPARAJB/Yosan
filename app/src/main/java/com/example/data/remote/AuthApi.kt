@@ -99,9 +99,9 @@ interface AuthApi {
     @POST("api/drive/disconnect")
     suspend fun disconnectDrive(): Response<ApiResponse>
 
-    @POST("api/backup/now")
+    @POST("api/drive/backup/now")
     suspend fun backupNow(): Response<ApiResponse>
 
-    @POST("api/backup/restore")
+    @POST("api/drive/backup/restore")
     suspend fun restoreBackup(@Body req: RestoreBackupRequest): Response<ApiResponse>
 }
