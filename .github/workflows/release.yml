@@ -60,6 +60,16 @@ jobs:
               -dname "CN=Yosan Release, OU=Yosan Mobile, O=Yosan, L=Global, S=Global, C=US"
           fi
 
+      - name: Run Backend Tests
+        run: |
+          cd server
+          npm ci
+          npm test
+          cd ..
+
+      - name: Run Android Unit Tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
 

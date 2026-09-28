@@ -13,6 +13,9 @@ async function verifyGoogleToken(idToken) {
 
   // Handle local mock/dev testing tokens if explicitly formatted
   if (idToken.startsWith('mock_id_token_')) {
+    if (config.NODE_ENV === 'production') {
+      throw new Error('MOCK_TOKENS_DISABLED_IN_PRODUCTION');
+    }
     const parts = idToken.split('_');
     const sub = parts[parts.length - 2] || '109123456789012345678';
     const username = parts[parts.length - 1] || 'user';

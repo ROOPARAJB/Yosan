@@ -63,7 +63,6 @@ object StatementImportService {
             isPdf -> extractTextFromPdfBytes(context, bytes)
             else -> String(bytes, Charsets.UTF_8)
         }
-        println("DEBUG parseStatementBytes: isPdf=$isPdf, textContent length=${textContent.length}, first 300 chars:\n${textContent.take(300)}")
         val resolvedName = when {
             isPdf && !lowerName.endsWith(".pdf") -> "$fileName.pdf"
             isXlsx && !lowerName.endsWith(".xlsx") -> "$fileName.xlsx"

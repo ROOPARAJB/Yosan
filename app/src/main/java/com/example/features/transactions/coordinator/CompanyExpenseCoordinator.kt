@@ -1,0 +1,259 @@
+package com.example.features.transactions.coordinator
+
+import com.example.data.local.AppDatabase
+import com.example.data.local.entity.CompanyExpenseEntity
+import com.example.data.local.entity.TransactionEntity
+import com.example.data.local.entity.TransactionType
+import com.example.features.reports.GetCompanyExpensesUseCase
+import com.example.features.transactions.CompanyExpensePrompt
+import com.example.repository.FinanceRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class CompanyExpenseCoordinator(
+    private val database: AppDatabase,
+    private val repository: FinanceRepository,
+    private val scope: CoroutineScope,
+    private val getCompanyExpensesUseCase: GetCompanyExpensesUseCase,
+    private val showMessage: (String) -> Unit
+) {
+    val companyExpenses: StateFlow<List<CompanyExpenseEntity>> = getCompanyExpensesUseCase()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _companyExpensePrompt = MutableStateFlow<CompanyExpensePrompt?>(null)
+    val companyExpensePrompt: StateFlow<CompanyExpensePrompt?> = _companyExpensePrompt.asStateFlow()
+
+    private val _pendingCompanyExpenses = MutableStateFlow<List<CompanyExpensePrompt>>(emptyList())
+    val pendingCompanyExpenses: StateFlow<List<CompanyExpensePrompt>> = _pendingCompanyExpenses.asStateFlow()
+
+    fun scanForCompanyExpenses() {
+        scope.launch {
+            try {
+                val transactions = database.transactionDao().getAllTransactionsList()
+                val expenses = database.companyExpenseDao().getAllCompanyExpensesList()
+
+                val credits = transactions.filter {
+                    (it.creditAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.INCOME)) &&
+                    it.description.contains("company", ignoreCase = true)
+                }
+                val outstandingExpenses = expenses.filter { !it.isReimbursed }
+
+                for (credit in credits) {
+                    val creditAmt = if (credit.creditAmount > 0.0) credit.creditAmount else credit.amount
+                    val match = outstandingExpenses.firstOrNull { Math.abs(it.amount - creditAmt) < 0.01 }
+                    if (match != null) {
+                        _companyExpensePrompt.value = CompanyExpensePrompt(
+                            transactionId = credit.id,
+                            description = credit.description,
+                            amount = creditAmt,
+                            date = credit.transactionDate,
+                            isReimbursement = true,
+                            matchingExpenseId = match.id
+                        )
+                        return@launch
+                    }
+                }
+
+                val debits = transactions.filter {
+                    (it.debitAmount > 0.0 || (it.amount > 0.0 && it.transactionType == TransactionType.EXPENSE)) &&
+                    it.description.contains("company", ignoreCase = true)
+                }
+                val unlogged = debits.filter { debit ->
+                    val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount
+                    !expenses.any { it.date == debit.transactionDate && Math.abs(it.amount - debitAmt) < 0.01 }
+                }.map { debit ->
+                    val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount
+                    CompanyExpensePrompt(
+                        transactionId = debit.id,
+                        description = debit.description,
+                        amount = debitAmt,
+                        date = debit.transactionDate,
+                        isReimbursement = false
+                    )
+                }
+
+                when {
+                    unlogged.size > 1 -> {
+                        _pendingCompanyExpenses.value = unlogged
+                    }
+                    unlogged.size == 1 -> {
+                        _companyExpensePrompt.value = unlogged.first()
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun logAllPendingCompanyExpenses() {
+        scope.launch {
+            try {
+                val pending = _pendingCompanyExpenses.value
+                pending.forEach { prompt ->
+                    val expense = CompanyExpenseEntity(
+                        date = prompt.date,
+                        amount = prompt.amount,
+                        reason = prompt.description,
+                        companyName = "Corporate",
+                        category = "Official Expense",
+                        paymentMethod = "Corporate Card / UPI"
+                    )
+                    repository.insertCompanyExpense(expense)
+                }
+                _pendingCompanyExpenses.value = emptyList()
+                showMessage("${pending.size} official expenses logged successfully")
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun dismissPendingCompanyExpenses() {
+        _pendingCompanyExpenses.value = emptyList()
+    }
+
+    fun acceptCompanyExpensePrompt(prompt: CompanyExpensePrompt) {
+        scope.launch {
+            try {
+                val expense = CompanyExpenseEntity(
+                    date = prompt.date,
+                    amount = prompt.amount,
+                    reason = prompt.description,
+                    companyName = "Corporate",
+                    category = "Travel",
+                    paymentMethod = "Corporate Card / UPI"
+                )
+                repository.insertCompanyExpense(expense)
+                _companyExpensePrompt.value = null
+                showMessage("Official expense of ${prompt.amount} logged")
+                scanForCompanyExpenses()
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun acceptReimbursementPrompt(prompt: CompanyExpensePrompt) {
+        scope.launch {
+            try {
+                if (prompt.matchingExpenseId != null) {
+                    repository.updateReimbursementStatus(prompt.matchingExpenseId, true)
+                    _companyExpensePrompt.value = null
+                    showMessage("Expense marked as reimbursed")
+                    scanForCompanyExpenses()
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun dismissCompanyExpensePrompt() {
+        _companyExpensePrompt.value = null
+    }
+
+    fun addCompanyExpense(
+        date: String,
+        amount: Double,
+        reason: String,
+        category: String,
+        company: String,
+        method: String,
+        notes: String,
+        advanceId: String? = null
+    ) {
+        scope.launch {
+            val finalNotes = if (!advanceId.isNullOrBlank()) {
+                val cleanAdv = advanceId.trim()
+                val tag = if (cleanAdv.startsWith("#")) cleanAdv else "#$cleanAdv"
+                if (notes.contains(cleanAdv, ignoreCase = true)) notes else if (notes.isBlank()) tag else "$notes $tag"
+            } else {
+                notes
+            }
+            val exp = CompanyExpenseEntity(
+                date = date,
+                amount = amount,
+                reason = reason,
+                category = category,
+                companyName = company,
+                paymentMethod = method,
+                notes = finalNotes
+            )
+            repository.insertCompanyExpense(exp)
+            showMessage("Company expense recorded" + (if (!advanceId.isNullOrBlank()) " ($advanceId)" else ""))
+        }
+    }
+
+    fun linkCompanyExpenseToAdvance(expenseId: Long, advanceId: String?) {
+        scope.launch {
+            val exp = companyExpenses.value.find { it.id == expenseId }
+                ?: database.companyExpenseDao().getAllCompanyExpensesList().find { it.id == expenseId }
+            if (exp != null) {
+                val cleanNotes = exp.notes.replace(Regex("""#(ADV[-_ ]*\d+)""", RegexOption.IGNORE_CASE), "").trim()
+                val newNotes = if (!advanceId.isNullOrBlank()) {
+                    val tag = if (advanceId.startsWith("#")) advanceId else "#$advanceId"
+                    if (cleanNotes.isBlank()) tag else "$cleanNotes $tag"
+                } else {
+                    cleanNotes
+                }
+                val updated = exp.copy(notes = newNotes, updatedAt = System.currentTimeMillis())
+                repository.updateCompanyExpense(updated)
+                showMessage(if (!advanceId.isNullOrBlank()) "Expense linked to $advanceId" else "Unlinked from Advance")
+            }
+        }
+    }
+
+    fun updateCompanyExpense(expense: CompanyExpenseEntity) {
+        scope.launch {
+            repository.updateCompanyExpense(expense)
+            showMessage("Company expense updated")
+        }
+    }
+
+    fun toggleCompanyReimbursement(id: Long, currentStatus: Boolean) {
+        scope.launch {
+            repository.updateReimbursementStatus(id, !currentStatus)
+            showMessage(if (!currentStatus) "Marked as reimbursed" else "Marked as pending reimbursement")
+        }
+    }
+
+    fun markCompanyExpenseApplied(id: Long, applied: Boolean) {
+        scope.launch {
+            val exp = companyExpenses.value.find { it.id == id }
+                ?: database.companyExpenseDao().getAllCompanyExpensesList().find { it.id == id }
+            if (exp != null) {
+                val cleanNotes = exp.notes.replace("#APPLIED", "", ignoreCase = true).replace("[APPLIED]", "", ignoreCase = true).trim()
+                val newNotes = if (applied) {
+                    if (cleanNotes.isBlank()) "#APPLIED" else "$cleanNotes #APPLIED"
+                } else {
+                    cleanNotes
+                }
+                val updated = exp.copy(isReimbursed = false, notes = newNotes, updatedAt = System.currentTimeMillis())
+                repository.updateCompanyExpense(updated)
+                showMessage(if (applied) "Claim marked as Applied" else "Claim moved to Pending")
+            }
+        }
+    }
+
+    fun markCompanyExpenseReimbursed(id: Long, reimbursed: Boolean) {
+        scope.launch {
+            val exp = companyExpenses.value.find { it.id == id }
+                ?: database.companyExpenseDao().getAllCompanyExpensesList().find { it.id == id }
+            if (exp != null) {
+                val updated = exp.copy(isReimbursed = reimbursed, updatedAt = System.currentTimeMillis())
+                repository.updateCompanyExpense(updated)
+                showMessage(if (reimbursed) "Marked as Reimbursed" else "Moved to Pending Claims")
+            }
+        }
+    }
+
+    fun deleteCompanyExpense(id: Long) {
+        scope.launch {
+            repository.deleteCompanyExpense(id)
+            showMessage("Company expense removed")
+        }
+    }
+
+    fun clearPrompts() {
+        _companyExpensePrompt.value = null
+        _pendingCompanyExpenses.value = emptyList()
+    }
+}
