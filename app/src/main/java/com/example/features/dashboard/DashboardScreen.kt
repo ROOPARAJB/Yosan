@@ -65,6 +65,7 @@ fun DashboardScreen(
 
     val summary by viewModel.dashboardSummary.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
+    val isDataLoaded by viewModel.isDataLoaded.collectAsState()
     val loans by viewModel.loans.collectAsState()
     val categoryBreakdown by viewModel.categoryBreakdown.collectAsState()
     val categoryIncomeBreakdown by viewModel.categoryIncomeBreakdown.collectAsState()
@@ -102,7 +103,7 @@ fun DashboardScreen(
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
         // Top Header & User Greeting
-        item {
+        item(key = "dashboard_header") {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -130,9 +131,24 @@ fun DashboardScreen(
             }
         }
 
-        // If no transactions exist, only show the import suggestion box
-        if (allTransactions.isEmpty()) {
-            item {
+        // If data is still loading from local DB, don't flash the import card
+        if (!isDataLoaded) {
+            item(key = "dashboard_loading_placeholder") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    )
+                }
+            }
+        } else if (allTransactions.isEmpty() && userProfile?.isOnboardingCompleted != true) {
+            item(key = "dashboard_import_box") {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()

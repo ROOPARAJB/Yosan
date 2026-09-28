@@ -27,14 +27,14 @@ import com.example.ui.theme.FinanceManagerTheme
 import com.example.features.auth.AuthState
 import com.example.features.auth.AuthViewModel
 import com.example.features.transactions.FinanceViewModel
+import com.example.utils.AppPreferences
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        try {
-            com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
-        } catch (_: Throwable) {}
         enableEdgeToEdge()
+
+        val appPreferences = AppPreferences(applicationContext)
         setContent {
             val authViewModel: AuthViewModel = viewModel()
             val financeViewModel: FinanceViewModel = viewModel()
@@ -42,6 +42,18 @@ class MainActivity : ComponentActivity() {
             val authState by authViewModel.authState.collectAsState()
             val userProfile by financeViewModel.userProfile.collectAsState()
             val accounts by financeViewModel.accounts.collectAsState()
+            val allTransactions by financeViewModel.allTransactions.collectAsState()
+            val isDataLoaded by financeViewModel.isDataLoaded.collectAsState()
+
+            // Keep AppPreferences synchronized with Room UserProfile updates
+            LaunchedEffect(userProfile) {
+                userProfile?.let { profile ->
+                    if (profile.isOnboardingCompleted) {
+                        appPreferences.isOnboardingCompleted = true
+                    }
+                    appPreferences.isDarkMode = profile.isDarkMode
+                }
+            }
 
             // VAPT Hardening: Screen scraping / task switcher snapshot prevention
             LaunchedEffect(userProfile?.isPrivacyBlurEnabled) {
@@ -56,53 +68,33 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            FinanceManagerTheme(darkTheme = userProfile?.isDarkMode ?: false) {
+            val systemInDark = isSystemInDarkTheme()
+            val isDark = userProfile?.isDarkMode ?: appPreferences.isDarkMode ?: systemInDark
+
+            FinanceManagerTheme(darkTheme = isDark) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    when (val state = authState) {
-                        AuthState.Loading -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(MaterialTheme.colorScheme.background),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
+                    val isExistingUser = appPreferences.isOnboardingCompleted ||
+                            (userProfile?.isOnboardingCompleted == true) ||
+                            allTransactions.isNotEmpty() ||
+                            (!userProfile?.name.isNullOrBlank() && !userProfile?.name.equals("User", ignoreCase = true))
+
+                    if (!isExistingUser) {
+                        OnboardingScreen(
+                            authViewModel = authViewModel,
+                            financeViewModel = financeViewModel,
+                            onComplete = {
+                                appPreferences.isOnboardingCompleted = true
+                                authViewModel.completeOnboarding()
                             }
-                        }
-
-                        is AuthState.Authenticated -> {
-                            if (userProfile == null) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(MaterialTheme.colorScheme.background),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CircularProgressIndicator()
-                                }
-                            } else {
-                                val isExistingUser = userProfile?.isOnboardingCompleted == true &&
-                                        !userProfile?.name.isNullOrBlank() &&
-                                        !userProfile?.name.equals("User", ignoreCase = true)
-                                if (!isExistingUser) {
-                                    OnboardingScreen(
-                                        authViewModel = authViewModel,
-                                        financeViewModel = financeViewModel,
-                                        onComplete = { authViewModel.completeOnboarding() }
-                                    )
-                                } else {
-                                    MainContainerScreen(
-                                        viewModel = financeViewModel,
-                                        authViewModel = authViewModel
-                                    )
-                                }
-                            }
-                        }
-
-
+                        )
+                    } else {
+                        MainContainerScreen(
+                            viewModel = financeViewModel,
+                            authViewModel = authViewModel
+                        )
                     }
                 }
             }

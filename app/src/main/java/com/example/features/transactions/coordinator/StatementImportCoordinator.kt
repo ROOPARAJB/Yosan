@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class StatementImportCoordinator(
     private val database: AppDatabase,
@@ -92,7 +93,7 @@ class StatementImportCoordinator(
         }
     }
 
-    fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1) {
+    fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1, onComplete: (() -> Unit)? = null) {
         val preview = _importPreview.value ?: return
         scope.launch {
             try {
@@ -145,9 +146,13 @@ class StatementImportCoordinator(
 
                 repository.insertTransactions(txEntities)
                 transactionRepository.recalculateAccountBalance(targetAccountId)
+                database.userProfileDao().updateOnboardingCompleted(true)
                 _importPreview.value = null
                 showMessage("${txEntities.size} transactions imported successfully!")
                 onImportSuccess()
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke()
+                }
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.e("FinanceViewModel", "Confirm import failed", e)

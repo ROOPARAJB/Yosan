@@ -63,9 +63,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
 
                 when {
                     savedProfile != null &&
-                    savedProfile.isOnboardingCompleted &&
-                    savedProfile.name.isNotBlank() &&
-                    !savedProfile.name.equals("User", ignoreCase = true) -> {
+                    (savedProfile.isOnboardingCompleted || (!savedProfile.name.isNullOrBlank() && !savedProfile.name.equals("User", ignoreCase = true))) -> {
                         // Returning user — restore from local profile, no server needed
                         _user.value = buildLocalUser(savedProfile)
                         _authState.value = AuthState.Authenticated(isNewUser = false)
@@ -156,6 +154,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     fun completeOnboarding() {
         _isNewUser.value = false
         _authState.value = AuthState.Authenticated(isNewUser = false)
+        com.example.utils.AppPreferences(getApplication()).isOnboardingCompleted = true
+        viewModelScope.launch(Dispatchers.IO) {
+            database.userProfileDao().updateOnboardingCompleted(true)
+        }
     }
 
     /**
@@ -165,6 +167,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun logout(onComplete: (() -> Unit)? = null) {
         tokenManager.clearCredentials()
+        com.example.utils.AppPreferences(getApplication()).isOnboardingCompleted = false
         _user.value = null
         _isNewUser.value = true
 

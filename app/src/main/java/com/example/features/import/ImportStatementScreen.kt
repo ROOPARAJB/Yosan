@@ -299,8 +299,11 @@ fun ImportStatementScreen(
                     Button(
                         onClick = {
                             val accountId = selectedAccountId ?: (accounts.firstOrNull()?.id ?: 1L)
-                            viewModel.confirmImport(skipDuplicates = skipDuplicates, targetAccountId = accountId)
-                            onImportSuccess()
+                            viewModel.confirmImport(
+                                skipDuplicates = skipDuplicates,
+                                targetAccountId = accountId,
+                                onComplete = onImportSuccess
+                            )
                         },
                         enabled = !isImporting && preview.validRows.isNotEmpty(),
                         modifier = Modifier

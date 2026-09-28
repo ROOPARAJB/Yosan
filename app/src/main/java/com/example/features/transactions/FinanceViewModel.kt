@@ -96,13 +96,17 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     // Base Flows from DB
     val userProfile: StateFlow<UserProfileEntity?> = getUserProfileUseCase()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val accounts: StateFlow<List<AccountEntity>> = getAccountsUseCase()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _isDataLoaded = MutableStateFlow(false)
+    val isDataLoaded: StateFlow<Boolean> = _isDataLoaded.asStateFlow()
 
     val allTransactions: StateFlow<List<TransactionEntity>> = getTransactionsUseCase()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .onEach { _isDataLoaded.value = true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // UI Message
     private val _uiMessage = MutableStateFlow<String?>(null)
@@ -143,6 +147,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun completeOnboarding(isDarkMode: Boolean, privacyBlurEnabled: Boolean, timeoutSeconds: Int) {
         viewModelScope.launch {
+            val appPrefs = com.example.utils.AppPreferences(getApplication())
+            appPrefs.isOnboardingCompleted = true
+            appPrefs.isDarkMode = isDarkMode
             val current = userProfile.value ?: UserProfileEntity(id = 1)
             val updated = current.copy(
                 isDarkMode = isDarkMode,
@@ -157,6 +164,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun resetOnboarding() {
         viewModelScope.launch {
+            com.example.utils.AppPreferences(getApplication()).isOnboardingCompleted = false
             database.userProfileDao().updateOnboardingCompleted(false)
         }
     }
@@ -170,6 +178,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun toggleDarkMode(isDark: Boolean) {
         viewModelScope.launch {
+            com.example.utils.AppPreferences(getApplication()).isDarkMode = isDark
             repository.updateThemePreference(isDark)
         }
     }
@@ -309,25 +318,25 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         accounts
     ) { txs, lns, compExp, accs ->
         FinancialCalculationService.calculateSummary(txs, lns, compExp, accs)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardSummary())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, DashboardSummary())
 
     val categoryBreakdown: StateFlow<List<CategoryExpenseItem>> = combine(
         allTransactions,
         categories
     ) { txs, cats ->
         FinancialCalculationService.calculateCategoryExpenseBreakdown(txs, cats)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val categoryIncomeBreakdown: StateFlow<List<CategoryExpenseItem>> = combine(
         allTransactions,
         categories
     ) { txs, cats ->
         FinancialCalculationService.calculateCategoryIncomeBreakdown(txs, cats)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val monthlyTrends: StateFlow<List<MonthlyTrendItem>> = allTransactions.map { txs ->
         FinancialCalculationService.calculateMonthlyTrends(txs)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val financialInsights: StateFlow<List<FinancialInsight>> = combine(
         dashboardSummary,
@@ -335,7 +344,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         monthlyTrends
     ) { summary, breakdown, trends ->
         FinancialCalculationService.generateInsights(summary, breakdown, trends)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // UI Search & Filters
     private val _searchQuery = MutableStateFlow("")
@@ -391,8 +400,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     // Consolidated Sequential Initialization
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
+                // Yield SQLite database bandwidth to initial UI frame rendering
+                delay(600)
+
                 excelSyncCoordinator.loadSyncMetadata()
 
                 val existingCats = database.categoryDao().getAllCategoriesList()
@@ -540,7 +552,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     // Delegated Statement Import Methods
     fun previewStatement(content: String, fileName: String = "bank_statement.csv") = statementImportCoordinator.previewStatement(content, fileName)
     fun parseStatementUri(context: Context, uri: Uri, fileName: String = "statement.csv") = statementImportCoordinator.parseStatementUri(context, uri, fileName)
-    fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1) = statementImportCoordinator.confirmImport(skipDuplicates, targetAccountId)
+    fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1, onComplete: (() -> Unit)? = null) =
+        statementImportCoordinator.confirmImport(skipDuplicates, targetAccountId, onComplete)
     fun clearImportPreview() = statementImportCoordinator.clearImportPreview()
 
     // Export Reports

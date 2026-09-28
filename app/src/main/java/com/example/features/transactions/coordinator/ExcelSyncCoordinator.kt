@@ -252,6 +252,7 @@ class ExcelSyncCoordinator(
                 tx.copy(categoryId = realCatId)
             }
             database.transactionDao().insertTransactions(resolvedNew)
+            database.userProfileDao().updateOnboardingCompleted(true)
         }
         for (tx in result.updatedTransactionsForApp) {
             val realCatId = catMap[tx.categoryName.trim().lowercase()]?.id ?: tx.categoryId
