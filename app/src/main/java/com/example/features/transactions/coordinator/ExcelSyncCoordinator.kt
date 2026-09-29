@@ -87,36 +87,40 @@ class ExcelSyncCoordinator(
         }
     }
 
+    private suspend fun performExportInternal(context: Context, uri: Uri) {
+        val transactions = database.transactionDao().getAllTransactionsList()
+        val accounts = database.accountDao().getAllAccountsList()
+        val categories = database.categoryDao().getAllCategoriesList()
+        val rules = database.categorizationRuleDao().getAllRulesList()
+
+        val bytes = ExcelSyncService.generateExcelWorkbook(transactions, accounts, categories, rules)
+        context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
+            out.write(bytes)
+            out.flush()
+        }
+
+        val now = System.currentTimeMillis()
+        _lastSyncTime.value = now
+        database.syncDao().setMetadata(SyncMetadataEntity("last_sync_timestamp", now.toString()))
+        database.syncDao().clearAllDeletedTransactions()
+
+        val result = SyncResult(
+            addedInExcel = transactions.size,
+            categoriesAdded = categories.size,
+            rulesAdded = rules.size,
+            message = "Exported ${transactions.size} transactions, ${categories.size} categories & ${rules.size} rules to Excel successfully."
+        )
+        _lastSyncResult.value = result
+        _syncStatus.value = "Export completed successfully"
+        showMessage("Exported full backup to Excel (${transactions.size} txs, ${categories.size} categories, ${rules.size} rules)")
+    }
+
     fun exportToExcel(context: Context, uri: Uri) {
         scope.launch(Dispatchers.IO) {
             _isSyncing.value = true
             _syncStatus.value = "Exporting full workbook (Transactions, Categories, Rules, Accounts)..."
             try {
-                val transactions = database.transactionDao().getAllTransactionsList()
-                val accounts = database.accountDao().getAllAccountsList()
-                val categories = database.categoryDao().getAllCategoriesList()
-                val rules = database.categorizationRuleDao().getAllRulesList()
-
-                val bytes = ExcelSyncService.generateExcelWorkbook(transactions, accounts, categories, rules)
-                context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                    out.write(bytes)
-                    out.flush()
-                }
-
-                val now = System.currentTimeMillis()
-                _lastSyncTime.value = now
-                database.syncDao().setMetadata(SyncMetadataEntity("last_sync_timestamp", now.toString()))
-                database.syncDao().clearAllDeletedTransactions()
-
-                val result = SyncResult(
-                    addedInExcel = transactions.size,
-                    categoriesAdded = categories.size,
-                    rulesAdded = rules.size,
-                    message = "Exported ${transactions.size} transactions, ${categories.size} categories & ${rules.size} rules to Excel successfully."
-                )
-                _lastSyncResult.value = result
-                _syncStatus.value = "Export completed successfully"
-                showMessage("Exported full backup to Excel (${transactions.size} txs, ${categories.size} categories, ${rules.size} rules)")
+                performExportInternal(context, uri)
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.e("FinanceViewModel", "Export to Excel failed", e)
@@ -186,7 +190,7 @@ class ExcelSyncCoordinator(
             try {
                 val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 if (bytes == null || bytes.isEmpty()) {
-                    exportToExcel(context, uri)
+                    performExportInternal(context, uri)
                     return@launch
                 }
 

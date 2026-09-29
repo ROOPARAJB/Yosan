@@ -197,8 +197,13 @@ class TransactionCoordinator(
             }
             val validCatId = allCats.firstOrNull { it.name.equals(validCategory, true) }?.id ?: tx.categoryId
 
-            val wasCredit = tx.creditAmount > 0 || (tx.debitAmount <= 0 && (tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND || tx.transactionType == TransactionType.BORROWING))
-            val updated = if (wasCredit) {
+            val isNewCredit = when (newType) {
+                TransactionType.INCOME, TransactionType.REFUND, TransactionType.BORROWING -> true
+                TransactionType.EXPENSE, TransactionType.LENDING, TransactionType.INVESTMENT -> false
+                TransactionType.TRANSFER -> tx.creditAmount > 0 || tx.transactionType in setOf(TransactionType.INCOME, TransactionType.REFUND, TransactionType.BORROWING)
+                else -> tx.creditAmount > 0
+            }
+            val updated = if (isNewCredit) {
                 tx.copy(
                     transactionType = newType,
                     categoryName = validCategory,

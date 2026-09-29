@@ -74,7 +74,7 @@ fun AddTransactionSheet(
         if (selectedTab == AddTab.BORROW_MONEY && borrowId.isBlank()) {
             borrowId = viewModel.generateNextBorrowId()
         }
-        if ((selectedTab == AddTab.INCOME || selectedTab == AddTab.COMPANY_EXPENSE || selectedCategory?.name?.contains("Advance", ignoreCase = true) == true) && advanceId.isBlank()) {
+        if (selectedCategory?.name?.contains("Advance", ignoreCase = true) == true && advanceId.isBlank()) {
             advanceId = viewModel.generateNextAdvanceId()
         }
     }
@@ -830,7 +830,8 @@ fun AddTransactionSheet(
                                 lentDate = dateText,
                                 expectedDate = expectedDate.takeIf { it.isNotBlank() },
                                 notes = notes,
-                                lendId = cleanLendId
+                                lendId = cleanLendId,
+                                accountId = selectedAccountId
                             )
                         }
                         AddTab.BORROW_MONEY -> {
@@ -859,13 +860,14 @@ fun AddTransactionSheet(
                                 viewModel.showMessage("Please enter the Investment Name/Type")
                                 return@Button
                             }
+                            val investCat = categories.firstOrNull { it.type == CategoryType.INVESTMENT || it.name.equals("Investment", ignoreCase = true) || it.name.equals("Investments", ignoreCase = true) }
                             viewModel.addManualTransaction(
                                 date = dateText,
                                 description = "Investment: ${investmentName.trim()}",
                                 amount = amt,
                                 type = TransactionType.INVESTMENT,
-                                categoryId = 0L,
-                                categoryName = "Investment",
+                                categoryId = investCat?.id,
+                                categoryName = investCat?.name ?: "Investments",
                                 accountId = selectedAccountId,
                                 notes = notes
                             )

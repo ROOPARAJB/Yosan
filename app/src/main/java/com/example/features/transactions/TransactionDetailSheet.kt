@@ -705,8 +705,8 @@ fun TransactionDetailSheet(
                 text = {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         if (!showAddCatInput) {
-                            val modalAllowedCats = remember(categories, transaction.transactionType) {
-                                when (transaction.transactionType) {
+                            val modalAllowedCats = remember(categories, currentTx.transactionType) {
+                                when (currentTx.transactionType) {
                                     TransactionType.EXPENSE -> categories.filter { it.type == CategoryType.EXPENSE }
                                     TransactionType.INCOME, TransactionType.REFUND -> categories.filter { it.type == CategoryType.INCOME }
                                     TransactionType.INVESTMENT -> categories.filter { it.type == CategoryType.INVESTMENT }
@@ -718,7 +718,7 @@ fun TransactionDetailSheet(
                             }
                             if (modalAllowedCats.isEmpty()) {
                                 Text(
-                                    text = "No matching categories for ${transaction.transactionType.name}.",
+                                    text = "No matching categories for ${currentTx.transactionType.name}.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.padding(vertical = 12.dp)
                                 )
@@ -729,9 +729,8 @@ fun TransactionDetailSheet(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable {
-                                                viewModel.updateTransactionCategory(transaction, cat)
+                                                viewModel.updateTransactionCategory(currentTx, cat)
                                                 showCategoryPicker = false
-                                                onDismiss()
                                             }
                                             .padding(vertical = 10.dp, horizontal = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically
@@ -746,7 +745,7 @@ fun TransactionDetailSheet(
                             Button(
                                 onClick = {
                                     showAddCatInput = true
-                                    newCatType = when (transaction.transactionType) {
+                                    newCatType = when (currentTx.transactionType) {
                                         TransactionType.INCOME, TransactionType.REFUND -> CategoryType.INCOME
                                         TransactionType.INVESTMENT -> CategoryType.INVESTMENT
                                         TransactionType.TRANSFER -> CategoryType.OTHER

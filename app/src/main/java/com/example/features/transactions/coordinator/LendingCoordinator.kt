@@ -93,7 +93,8 @@ class LendingCoordinator(
         lentDate: String,
         expectedDate: String?,
         notes: String,
-        lendId: String? = null
+        lendId: String? = null,
+        accountId: Long = accountsFlow.value.firstOrNull()?.id ?: 1
     ) {
         scope.launch {
             val cleanLendId = lendId?.trim()?.takeIf { it.isNotBlank() }
@@ -115,10 +116,9 @@ class LendingCoordinator(
             )
             val loanId = repository.insertLoan(loan)
 
-            val primaryAcc = accountsFlow.value.firstOrNull()?.id ?: 1
             repository.insertTransaction(
                 TransactionEntity(
-                    accountId = primaryAcc,
+                    accountId = accountId,
                     transactionDate = lentDate,
                     description = "Lent to $personName",
                     debitAmount = amount,
@@ -171,14 +171,20 @@ class LendingCoordinator(
         }
     }
 
-    fun recordRepayment(loanId: Long, amount: Double, date: String, method: String, notes: String) {
+    fun recordRepayment(
+        loanId: Long,
+        amount: Double,
+        date: String,
+        method: String,
+        notes: String,
+        accountId: Long = accountsFlow.value.firstOrNull()?.id ?: 1
+    ) {
         scope.launch {
             repository.recordLoanRepayment(loanId, amount, date, method, notes)
             val loan = repository.getLoanById(loanId)
-            val primaryAcc = accountsFlow.value.firstOrNull()?.id ?: 1
             repository.insertTransaction(
                 TransactionEntity(
-                    accountId = primaryAcc,
+                    accountId = accountId,
                     transactionDate = date,
                     description = "Loan repayment from ${loan?.personName ?: "Friend"}",
                     debitAmount = 0.0,

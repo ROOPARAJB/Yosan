@@ -55,12 +55,28 @@ class TransactionRepository(private val database: AppDatabase) {
     suspend fun recalculateAccountBalance(accountId: Long) {
         val account = accountDao.getAccountById(accountId) ?: return
         val txs = transactionDao.getTransactionsByAccountList(accountId)
-        val latestBalance = txs.firstOrNull { it.balanceAfterTransaction != null && it.balanceAfterTransaction > 0.0 }?.balanceAfterTransaction
+        val latestBalance = txs.firstOrNull { it.balanceAfterTransaction != null }?.balanceAfterTransaction
         val computedBalance = if (latestBalance != null) {
             latestBalance
         } else {
-            val netInflows = txs.sumOf { if (it.creditAmount > 0.0) it.creditAmount else if (it.transactionType == com.example.data.local.entity.TransactionType.INCOME || it.transactionType == com.example.data.local.entity.TransactionType.REFUND) it.amount else 0.0 }
-            val netOutflows = txs.sumOf { if (it.debitAmount > 0.0) it.debitAmount else if (it.transactionType != com.example.data.local.entity.TransactionType.INCOME && it.transactionType != com.example.data.local.entity.TransactionType.REFUND) it.amount else 0.0 }
+            val netInflows = txs.sumOf { tx ->
+                when {
+                    tx.creditAmount > 0.0 -> tx.creditAmount
+                    tx.transactionType == com.example.data.local.entity.TransactionType.INCOME ||
+                    tx.transactionType == com.example.data.local.entity.TransactionType.REFUND ||
+                    tx.transactionType == com.example.data.local.entity.TransactionType.BORROWING -> tx.amount
+                    else -> 0.0
+                }
+            }
+            val netOutflows = txs.sumOf { tx ->
+                when {
+                    tx.debitAmount > 0.0 -> tx.debitAmount
+                    tx.transactionType == com.example.data.local.entity.TransactionType.EXPENSE ||
+                    tx.transactionType == com.example.data.local.entity.TransactionType.LENDING ||
+                    tx.transactionType == com.example.data.local.entity.TransactionType.INVESTMENT -> tx.amount
+                    else -> 0.0
+                }
+            }
             account.openingBalance + netInflows - netOutflows
         }
         accountDao.updateBalance(accountId, computedBalance)

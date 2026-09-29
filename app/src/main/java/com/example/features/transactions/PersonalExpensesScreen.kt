@@ -35,6 +35,9 @@ fun PersonalExpensesScreen(
     modifier: Modifier = Modifier
 ) {
     val allTransactions by viewModel.allTransactions.collectAsState()
+    val userProfile by viewModel.userProfile.collectAsState()
+    val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
+    val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
 
     val personalTxs = remember(allTransactions) {
         allTransactions.filter {
@@ -203,7 +206,11 @@ fun PersonalExpensesScreen(
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                     TransactionItemCard(
                         transaction = tx,
-                        onClick = { onTransactionClick(tx) }
+                        onClick = { onTransactionClick(tx) },
+                        isRevealed = isRevealed,
+                        isPrivacyEnabled = privacyEnabled,
+                        onToggleReveal = { viewModel.revealAmountsTemporarily() },
+                        onDelete = { viewModel.deleteTransaction(tx.id) }
                     )
                 }
             }

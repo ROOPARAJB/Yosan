@@ -51,19 +51,6 @@ async function verifyGoogleToken(idToken) {
       emailVerified: payload.email_verified ?? true
     };
   } catch (err) {
-    // If strict audience fails in dev, attempt raw jwt decode signature check or fallback
-    try {
-      const decoded = jwt.decode(idToken);
-      if (decoded && decoded.sub && (decoded.iss === 'accounts.google.com' || decoded.iss === 'https://accounts.google.com')) {
-        return {
-          sub: decoded.sub,
-          email: decoded.email || '',
-          name: decoded.name || 'User',
-          picture: decoded.picture || '',
-          emailVerified: decoded.email_verified ?? true
-        };
-      }
-    } catch (_) {}
     throw new Error('INVALID_GOOGLE_TOKEN');
   }
 }
@@ -82,10 +69,6 @@ function generateTokens(user) {
   const refreshToken = jwt.sign(payload, config.JWT_REFRESH_SECRET, {
     expiresIn: config.JWT_REFRESH_EXPIRES_IN
   });
-
-  // Store refresh token in DB
-  const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
-  userRepository.insertRefreshToken(refreshToken, user.id, expiresAt);
 
   return { accessToken, refreshToken };
 }
@@ -124,6 +107,8 @@ async function handleGoogleAuth(idToken) {
   }
 
   const tokens = generateTokens(user);
+  const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+  userRepository.insertRefreshToken(tokens.refreshToken, user.id, expiresAt);
 
   const profile = userRepository.getUserProfile(user.id);
 

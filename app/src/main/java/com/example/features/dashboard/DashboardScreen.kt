@@ -26,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalContext
 import com.example.data.local.entity.LoanEntity
+import com.example.data.local.entity.LoanStatus
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
 import com.example.features.reports.FinancialInsight
@@ -433,17 +434,19 @@ fun DashboardScreen(
                         DashboardCardType.LEND -> {
                             item {
                                 val lendTotal = remember(loans) {
-                                    loans.sumOf { it.remainingAmount }
+                                    loans.filter { it.status != LoanStatus.PAID && it.status != LoanStatus.CANCELLED }.sumOf { it.remainingAmount }
                                 }
                                 val totalRepaidLend = remember(loans) {
                                     loans.sumOf { it.amountRepaid }
                                 }
                                 val lendTxs = remember(allTransactions) {
                                     allTransactions.filter {
-                                        it.transactionType == TransactionType.LENDING ||
+                                        it.transactionType != TransactionType.BORROWING &&
+                                        !it.categoryName.contains("Borrow", ignoreCase = true) &&
+                                        (it.transactionType == TransactionType.LENDING ||
                                                 it.linkedLoanId != null ||
                                                 it.categoryName.contains("Lend", ignoreCase = true) ||
-                                                it.categoryName.contains("Loan", ignoreCase = true)
+                                                it.categoryName.contains("Loan", ignoreCase = true))
                                     }
                                 }
                                 Card(

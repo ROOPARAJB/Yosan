@@ -10,7 +10,10 @@ const driveRoutes = require('./routes/driveRoutes');
 const app = express();
 
 // Security & Parsing Middleware
-app.use(cors({ origin: true, credentials: true }));
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : ['http://localhost:3000', 'http://localhost:8080'];
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -32,7 +35,6 @@ app.get('/api/health', (req, res) => {
 // Mount API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/drive', driveRoutes);
-app.use('/api', driveRoutes); // for /api/backup/*
 app.use('/api', financeRoutes);
 
 // Error Handling (Section 34 - No stack traces exposed to client)

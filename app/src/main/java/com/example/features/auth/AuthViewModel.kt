@@ -216,7 +216,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         googleSub = profile.googleSub.ifEmpty { "local_${profile.id}" },
         email = profile.email,
         name = profile.name.ifBlank { "User" },
-        profilePictureUrl = profile.profilePictureUrl.ifEmpty { null },
+        profilePictureUrl = profile.profilePictureUrl.takeIf { !it.isNullOrBlank() },
         currencySymbol = profile.currencySymbol,
         isDriveConnected = false,
         lastBackupAt = null
@@ -231,7 +231,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             val parts = idToken.split(".")
             if (parts.size < 2) return null
             val decoded = android.util.Base64.decode(
-                parts[1].replace('-', '+').replace('_', '/'),
+                parts[1],
                 android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
             )
             val json = org.json.JSONObject(String(decoded, Charsets.UTF_8))

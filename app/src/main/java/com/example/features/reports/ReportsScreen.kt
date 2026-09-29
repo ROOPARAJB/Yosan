@@ -7,10 +7,16 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -42,7 +48,8 @@ fun ReportsScreen(
     val monthlyTrends by viewModel.monthlyTrends.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
 
-    var pdfPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var pdfPreviewBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var currentPageIndex by remember { mutableIntStateOf(0) }
     var generatedFile by remember { mutableStateOf<File?>(null) }
     var isRendering by remember { mutableStateOf(true) }
 
@@ -60,21 +67,26 @@ fun ReportsScreen(
                 )
                 generatedFile = file
 
-                val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-                val renderer = PdfRenderer(pfd)
-                if (renderer.pageCount > 0) {
-                    val page = renderer.openPage(0)
-                    val width = (page.width * 1.5f).toInt()
-                    val height = (page.height * 1.5f).toInt()
-                    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(bmp)
-                    canvas.drawColor(android.graphics.Color.WHITE)
-                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    page.close()
-                    pdfPreviewBitmap = bmp
+                val bitmaps = mutableListOf<Bitmap>()
+                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    PdfRenderer(pfd).use { renderer ->
+                        for (i in 0 until renderer.pageCount) {
+                            renderer.openPage(i).use { page ->
+                                val width = (page.width * 1.5f).toInt()
+                                val height = (page.height * 1.5f).toInt()
+                                val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                val canvas = Canvas(bmp)
+                                canvas.drawColor(android.graphics.Color.WHITE)
+                                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                bitmaps.add(bmp)
+                            }
+                        }
+                    }
                 }
-                renderer.close()
-                pfd.close()
+                pdfPreviewBitmaps = bitmaps
+                if (currentPageIndex >= bitmaps.size) {
+                    currentPageIndex = 0
+                }
             } catch (_: Exception) {}
             isRendering = false
         }
@@ -198,23 +210,38 @@ fun ReportsScreen(
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = "A4 Format • Live",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
+                    if (pdfPreviewBitmaps.size > 1) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Page ${currentPageIndex + 1} of ${pdfPreviewBitmaps.size}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    } else {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "A4 Format • Live",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                if (isRendering && pdfPreviewBitmap == null) {
+                if (isRendering && pdfPreviewBitmaps.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -225,7 +252,48 @@ fun ReportsScreen(
                     ) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
-                } else if (pdfPreviewBitmap != null) {
+                } else if (pdfPreviewBitmaps.isNotEmpty()) {
+                    // Multi-page navigation controls
+                    if (pdfPreviewBitmaps.size > 1) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilledTonalButton(
+                                onClick = { if (currentPageIndex > 0) currentPageIndex-- },
+                                enabled = currentPageIndex > 0,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Page", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Previous")
+                            }
+
+                            Text(
+                                text = "Page ${currentPageIndex + 1} / ${pdfPreviewBitmaps.size}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            FilledTonalButton(
+                                onClick = { if (currentPageIndex < pdfPreviewBitmaps.size - 1) currentPageIndex++ },
+                                enabled = currentPageIndex < pdfPreviewBitmaps.size - 1,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("Next")
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Page", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+
+                    val currentBmp = pdfPreviewBitmaps.getOrNull(currentPageIndex) ?: pdfPreviewBitmaps.first()
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -240,13 +308,62 @@ fun ReportsScreen(
                                 .padding(8.dp)
                         ) {
                             Image(
-                                bitmap = pdfPreviewBitmap!!.asImageBitmap(),
-                                contentDescription = "PDF Report Preview",
+                                bitmap = currentBmp.asImageBitmap(),
+                                contentDescription = "PDF Report Preview Page ${currentPageIndex + 1}",
                                 contentScale = ContentScale.FillWidth,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
                             )
+                        }
+                    }
+
+                    // Multi-page thumbnail strip for fast page switching
+                    if (pdfPreviewBitmaps.size > 1) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "All Pages (${pdfPreviewBitmaps.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            itemsIndexed(pdfPreviewBitmaps) { idx, bmp ->
+                                val isSelected = idx == currentPageIndex
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { currentPageIndex = idx }
+                                        .border(
+                                            width = if (isSelected) 2.dp else 1.dp,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(4.dp)
+                                ) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = "Thumbnail Page ${idx + 1}",
+                                        modifier = Modifier
+                                            .height(80.dp)
+                                            .width(56.dp)
+                                            .clip(RoundedCornerShape(4.dp)),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Page ${idx + 1}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }

@@ -101,12 +101,10 @@ object ExportService {
         monthlyTrends: List<MonthlyTrendItem>,
         userName: String? = null
     ): File {
+        val totalPages = if (monthlyTrends.isNotEmpty()) 2 else 1
         val pdfDocument = PdfDocument()
-        val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
-        val page = pdfDocument.startPage(pageInfo)
-        val canvas = page.canvas
 
-        // Title Paint — dark, matching card section style
+        // Common Paints
         val titlePaint = Paint().apply {
             color = Color.BLACK
             textSize = 16f
@@ -114,7 +112,6 @@ object ExportService {
             isAntiAlias = true
         }
 
-        // Subtitle / User info
         val userPaint = Paint().apply {
             color = Color.rgb(100, 100, 100)
             textSize = 10f
@@ -122,10 +119,13 @@ object ExportService {
             isAntiAlias = true
         }
 
-        canvas.drawText("YOSAN FINANCIAL SUMMARY REPORT", 30f, 32f, titlePaint)
-        canvas.drawText("Generated for: ${userName ?: "User"}", 30f, 48f, userPaint)
+        val pageTagPaint = Paint().apply {
+            color = Color.rgb(120, 120, 120)
+            textSize = 10f
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+            isAntiAlias = true
+        }
 
-        // Helper paints
         val textPaint = Paint().apply {
             color = Color.BLACK
             textSize = 11f
@@ -153,15 +153,50 @@ object ExportService {
             isAntiAlias = true
         }
 
+        val linePaint = Paint().apply {
+            color = Color.rgb(224, 224, 224)
+            strokeWidth = 1f
+        }
+
+        val footerPaint = Paint().apply {
+            color = Color.rgb(128, 128, 128)
+            textSize = 9f
+            typeface = Typeface.create("sans-serif", Typeface.ITALIC)
+            isAntiAlias = true
+        }
+
+        val positivePaint = Paint().apply {
+            color = Color.rgb(16, 185, 129)
+            textSize = 11f
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+            isAntiAlias = true
+        }
+
+        val negativePaint = Paint().apply {
+            color = Color.rgb(239, 68, 68)
+            textSize = 11f
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+            isAntiAlias = true
+        }
+
         val formatInr = { valStr: Double -> CurrencyFormatter.formatInr(valStr) }
 
-        // 1. Overview Summary Section
-        canvas.drawText("Overview Summary", 30f, 85f, sectionTitlePaint)
-        // Draw card background
-        canvas.drawRoundRect(30f, 95f, 565f, 280f, 10f, 10f, cardBgPaint)
-        canvas.drawRoundRect(30f, 95f, 565f, 280f, 10f, 10f, cardBorderPaint)
+        // ================= PAGE 1: Overview & Category Breakdown =================
+        val page1Info = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+        val page1 = pdfDocument.startPage(page1Info)
+        val canvas1 = page1.canvas
 
-        var y = 120f
+        canvas1.drawText("YOSAN FINANCIAL SUMMARY REPORT", 30f, 34f, titlePaint)
+        canvas1.drawText("Generated for: ${userName ?: "User"} • Financial Performance Overview", 30f, 50f, userPaint)
+        val p1Tag = "Page 1 of $totalPages"
+        canvas1.drawText(p1Tag, 565f - pageTagPaint.measureText(p1Tag), 34f, pageTagPaint)
+
+        // 1. Overview Summary Section
+        canvas1.drawText("Overview Summary", 30f, 85f, sectionTitlePaint)
+        canvas1.drawRoundRect(30f, 95f, 565f, 290f, 10f, 10f, cardBgPaint)
+        canvas1.drawRoundRect(30f, 95f, 565f, 290f, 10f, 10f, cardBorderPaint)
+
+        var y = 122f
         val metrics = listOf(
             "Current Net Balance" to summary.currentBalance,
             "Total Income Recorded" to summary.totalIncome,
@@ -174,88 +209,136 @@ object ExportService {
 
         metrics.forEach { (label, value) ->
             textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            canvas.drawText(label, 45f, y, textPaint)
+            canvas1.drawText(label, 45f, y, textPaint)
             val valStr = formatInr(value)
             textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
             val width = textPaint.measureText(valStr)
-            canvas.drawText(valStr, 550f - width, y, textPaint)
-            y += 22f
+            canvas1.drawText(valStr, 550f - width, y, textPaint)
+            y += 23f
         }
 
         // 2. Category Spending Breakdown Section
-        canvas.drawText("Category Spending Breakdown (${categoryBreakdown.size})", 30f, 305f, sectionTitlePaint)
-        val catSectionHeight = (categoryBreakdown.size.coerceAtLeast(1) * 20f + 40f).coerceAtLeast(80f)
-        canvas.drawRoundRect(30f, 315f, 565f, 315f + catSectionHeight, 10f, 10f, cardBgPaint)
-        canvas.drawRoundRect(30f, 315f, 565f, 315f + catSectionHeight, 10f, 10f, cardBorderPaint)
+        canvas1.drawText("Category Spending Breakdown (${categoryBreakdown.size})", 30f, 320f, sectionTitlePaint)
+        val maxCatRows = 16
+        val displayedCats = categoryBreakdown.take(maxCatRows)
+        val catSectionHeight = (displayedCats.size.coerceAtLeast(1) * 22f + 45f).coerceAtLeast(85f)
+        val catCardBottom = (332f + catSectionHeight).coerceAtMost(770f)
+        canvas1.drawRoundRect(30f, 332f, 565f, catCardBottom, 10f, 10f, cardBgPaint)
+        canvas1.drawRoundRect(30f, 332f, 565f, catCardBottom, 10f, 10f, cardBorderPaint)
 
-        y = 338f
-        if (categoryBreakdown.isEmpty()) {
+        y = 358f
+        if (displayedCats.isEmpty()) {
             textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            canvas.drawText("No categorized expenses recorded.", 45f, y, textPaint)
+            canvas1.drawText("No categorized expenses recorded.", 45f, y, textPaint)
         } else {
-            categoryBreakdown.forEach { item ->
-                textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-                canvas.drawText(item.categoryName, 45f, y, textPaint)
-                
-                val pctStr = "${String.format(java.util.Locale.ENGLISH, "%.1f", item.percentage)}% (${item.count})"
-                canvas.drawText(pctStr, 280f, y, textPaint)
-                
-                val valStr = formatInr(item.amount)
-                textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
-                val width = textPaint.measureText(valStr)
-                canvas.drawText(valStr, 550f - width, y, textPaint)
-                y += 20f
-            }
-        }
+            displayedCats.forEach { item ->
+                if (y < catCardBottom - 10f) {
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                    canvas1.drawText(item.categoryName, 45f, y, textPaint)
 
-        // 3. Monthly Trends Summary Section
-        val monthlyYStart = 315f + catSectionHeight + 25f
-        canvas.drawText("Monthly Trends Summary", 30f, monthlyYStart - 10f, sectionTitlePaint)
-        val monthlyHeight = (monthlyTrends.take(6).size.coerceAtLeast(1) * 22f + 40f).coerceAtLeast(70f)
-        canvas.drawRoundRect(30f, monthlyYStart, 565f, (monthlyYStart + monthlyHeight).coerceAtMost(785f), 10f, 10f, cardBgPaint)
-        canvas.drawRoundRect(30f, monthlyYStart, 565f, (monthlyYStart + monthlyHeight).coerceAtMost(785f), 10f, 10f, cardBorderPaint)
+                    val pctStr = "${String.format(java.util.Locale.ENGLISH, "%.1f", item.percentage)}% (${item.count})"
+                    canvas1.drawText(pctStr, 280f, y, textPaint)
 
-        y = monthlyYStart + 25f
-        if (monthlyTrends.isEmpty()) {
-            textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            canvas.drawText("No monthly trend data recorded.", 45f, y, textPaint)
-        } else {
-            textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
-            canvas.drawText("Month", 45f, y, textPaint)
-            canvas.drawText("Income", 240f, y, textPaint)
-            canvas.drawText("Expense", 420f, y, textPaint)
-            
-            y += 22f
-            textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-
-            monthlyTrends.take(6).forEach { trend ->
-                if (y < 780f) {
-                    canvas.drawText(trend.monthLabel, 45f, y, textPaint)
-                    canvas.drawText(formatInr(trend.income), 240f, y, textPaint)
-                    canvas.drawText(formatInr(trend.expense), 420f, y, textPaint)
+                    val valStr = formatInr(item.amount)
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                    val width = textPaint.measureText(valStr)
+                    canvas1.drawText(valStr, 550f - width, y, textPaint)
                     y += 22f
                 }
             }
         }
 
+        // Page 1 Footer
+        val footerY1 = 795f
+        canvas1.drawLine(30f, footerY1, 565f, footerY1, linePaint)
+        canvas1.drawText("This report was generated by Yosan app only. • Page 1 of $totalPages", 30f, footerY1 + 15f, footerPaint)
+        pdfDocument.finishPage(page1)
 
-        // 4. Draw Footer
-        val footerY = 795f
-        val linePaint = Paint().apply {
-            color = Color.rgb(224, 224, 224)
-            strokeWidth = 1f
+        // ================= PAGE 2: Full Yearly Monthly Trends =================
+        if (totalPages > 1) {
+            val page2Info = PdfDocument.PageInfo.Builder(595, 842, 2).create()
+            val page2 = pdfDocument.startPage(page2Info)
+            val canvas2 = page2.canvas
+
+            canvas2.drawText("YOSAN FINANCIAL SUMMARY REPORT — YEARLY TRENDS", 30f, 34f, titlePaint)
+            canvas2.drawText("Complete 12-Month Cash Flow & Yearly Performance Analysis", 30f, 50f, userPaint)
+            val p2Tag = "Page 2 of $totalPages"
+            canvas2.drawText(p2Tag, 565f - pageTagPaint.measureText(p2Tag), 34f, pageTagPaint)
+
+            // Monthly Trends Table
+            canvas2.drawText("Yearly Cash Flow Performance (${monthlyTrends.size} Months)", 30f, 85f, sectionTitlePaint)
+            val tableRows = monthlyTrends.take(12)
+            val tableHeight = (tableRows.size * 26f + 50f).coerceAtLeast(90f)
+            val tableBottom = (95f + tableHeight).coerceAtMost(520f)
+            canvas2.drawRoundRect(30f, 95f, 565f, tableBottom, 10f, 10f, cardBgPaint)
+            canvas2.drawRoundRect(30f, 95f, 565f, tableBottom, 10f, 10f, cardBorderPaint)
+
+            // Table Header
+            y = 120f
+            textPaint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+            canvas2.drawText("Month", 45f, y, textPaint)
+            canvas2.drawText("Income", 180f, y, textPaint)
+            canvas2.drawText("Expense", 320f, y, textPaint)
+            canvas2.drawText("Net Savings", 440f, y, textPaint)
+            canvas2.drawLine(40f, y + 8f, 555f, y + 8f, linePaint)
+
+            y += 26f
+            tableRows.forEach { trend ->
+                if (y < tableBottom - 10f) {
+                    textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                    canvas2.drawText(trend.monthLabel, 45f, y, textPaint)
+                    canvas2.drawText(formatInr(trend.income), 180f, y, textPaint)
+                    canvas2.drawText(formatInr(trend.expense), 320f, y, textPaint)
+
+                    val savingsVal = trend.savings
+                    val savingsPaint = if (savingsVal >= 0) positivePaint else negativePaint
+                    canvas2.drawText(formatInr(savingsVal), 440f, y, savingsPaint)
+                    y += 24f
+                }
+            }
+
+            // Annual Insights Summary Card
+            val insightsY = tableBottom + 25f
+            canvas2.drawText("Annual Financial Performance Insights", 30f, insightsY, sectionTitlePaint)
+            val insightsBottom = (insightsY + 160f).coerceAtMost(770f)
+            canvas2.drawRoundRect(30f, insightsY + 10f, 565f, insightsBottom, 10f, 10f, cardBgPaint)
+            canvas2.drawRoundRect(30f, insightsY + 10f, 565f, insightsBottom, 10f, 10f, cardBorderPaint)
+
+            val totalInflow = monthlyTrends.sumOf { it.income }
+            val totalOutflow = monthlyTrends.sumOf { it.expense }
+            val netYearlySavings = totalInflow - totalOutflow
+            val avgIncome = if (monthlyTrends.isNotEmpty()) totalInflow / monthlyTrends.size else 0.0
+            val avgExpense = if (monthlyTrends.isNotEmpty()) totalOutflow / monthlyTrends.size else 0.0
+
+            var iy = insightsY + 35f
+            val insightsList = listOf(
+                "Total Annual Inflow" to totalInflow,
+                "Total Annual Outflow" to totalOutflow,
+                "Net Annual Savings" to netYearlySavings,
+                "Average Monthly Income" to avgIncome,
+                "Average Monthly Expense" to avgExpense
+            )
+
+            insightsList.forEach { (label, value) ->
+                textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                canvas2.drawText(label, 45f, iy, textPaint)
+                val valStr = formatInr(value)
+                val p = if (label == "Net Annual Savings") {
+                    if (value >= 0) positivePaint else negativePaint
+                } else {
+                    Paint(textPaint).apply { typeface = Typeface.create("sans-serif", Typeface.BOLD) }
+                }
+                val width = p.measureText(valStr)
+                canvas2.drawText(valStr, 550f - width, iy, p)
+                iy += 24f
+            }
+
+            // Page 2 Footer
+            val footerY2 = 795f
+            canvas2.drawLine(30f, footerY2, 565f, footerY2, linePaint)
+            canvas2.drawText("This report was generated by Yosan app only. • Page 2 of $totalPages", 30f, footerY2 + 15f, footerPaint)
+            pdfDocument.finishPage(page2)
         }
-        canvas.drawLine(30f, footerY, 565f, footerY, linePaint)
-
-        val footerPaint = Paint().apply {
-            color = Color.rgb(128, 128, 128)
-            textSize = 9f
-            typeface = Typeface.create("sans-serif", Typeface.ITALIC)
-            isAntiAlias = true
-        }
-        canvas.drawText("This report was generated by Yosan app only.", 30f, footerY + 15f, footerPaint)
-
-        pdfDocument.finishPage(page)
 
         val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
         val cleanName = (userName ?: "User").trim().replace("\\s+".toRegex(), "_").replace("[^a-zA-Z0-9_]".toRegex(), "")

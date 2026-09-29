@@ -1,18 +1,28 @@
 package com.example.features.import
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -21,11 +31,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 import com.example.ui.components.CategoryChip
 import com.example.ui.theme.*
@@ -48,6 +62,43 @@ fun ImportStatementScreen(
     var skipDuplicates by remember { mutableStateOf(true) }
     var selectedFileName by remember { mutableStateOf<String?>(null) }
     var selectedAccountId by remember { mutableStateOf<Long?>(null) }
+    var selectedPdfUri by remember { mutableStateOf<Uri?>(null) }
+    var pdfDocPages by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var currentPdfPage by remember { mutableIntStateOf(0) }
+    var isRenderingPdf by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedPdfUri) {
+        val uri = selectedPdfUri
+        if (uri != null) {
+            isRenderingPdf = true
+            withContext(Dispatchers.IO) {
+                val pages = mutableListOf<Bitmap>()
+                try {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        PdfRenderer(pfd).use { renderer ->
+                            val count = renderer.pageCount.coerceAtMost(30)
+                            for (i in 0 until count) {
+                                renderer.openPage(i).use { page ->
+                                    val width = (page.width * 1.4f).toInt()
+                                    val height = (page.height * 1.4f).toInt()
+                                    val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                    val canvas = Canvas(bmp)
+                                    canvas.drawColor(android.graphics.Color.WHITE)
+                                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                    pages.add(bmp)
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+                pdfDocPages = pages
+                currentPdfPage = 0
+                isRenderingPdf = false
+            }
+        } else {
+            pdfDocPages = emptyList()
+        }
+    }
 
     // Auto-detect account from file name when file is selected
     LaunchedEffect(selectedFileName, accounts) {
@@ -73,6 +124,11 @@ fun ImportStatementScreen(
             val resolved = resolveStatementFileInfo(context, it)
             if (resolved.isSupported) {
                 selectedFileName = resolved.fileName
+                if (resolved.fileName.endsWith(".pdf", ignoreCase = true)) {
+                    selectedPdfUri = it
+                } else {
+                    selectedPdfUri = null
+                }
                 viewModel.parseStatementUri(context, it, resolved.fileName)
             } else {
                 viewModel.showMessage("Invalid file format. Please select an Excel (.xlsx, .xls) or PDF (.pdf) statement.")
@@ -165,6 +221,190 @@ fun ImportStatementScreen(
                         Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Select Statement File (.xlsx, .xls, .pdf)")
+                    }
+                }
+            }
+        }
+
+        // 2b. Document Preview (Multi-page display for uploaded PDF statements)
+        if (isRenderingPdf || pdfDocPages.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(16.dp)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.PictureAsPdf,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Document Preview",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            if (pdfDocPages.isNotEmpty()) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Page ${currentPdfPage + 1} of ${pdfDocPages.size}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (isRenderingPdf && pdfDocPages.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(260.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            }
+                        } else if (pdfDocPages.isNotEmpty()) {
+                            // Multi-page navigation controls
+                            if (pdfDocPages.size > 1) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = { if (currentPdfPage > 0) currentPdfPage-- },
+                                        enabled = currentPdfPage > 0,
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Page", modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Previous")
+                                    }
+
+                                    Text(
+                                        text = "Page ${currentPdfPage + 1} / ${pdfDocPages.size}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+
+                                    FilledTonalButton(
+                                        onClick = { if (currentPdfPage < pdfDocPages.size - 1) currentPdfPage++ },
+                                        enabled = currentPdfPage < pdfDocPages.size - 1,
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("Next")
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Page", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+
+                            val currentBmp = pdfDocPages.getOrNull(currentPdfPage) ?: pdfDocPages.first()
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp)),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(6.dp)
+                                ) {
+                                    Image(
+                                        bitmap = currentBmp.asImageBitmap(),
+                                        contentDescription = "Statement Document Page ${currentPdfPage + 1}",
+                                        contentScale = ContentScale.FillWidth,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                    )
+                                }
+                            }
+
+                            // Multi-page thumbnail strip for fast page switching
+                            if (pdfDocPages.size > 1) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "All Document Pages (${pdfDocPages.size})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                LazyRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    itemsIndexed(pdfDocPages) { idx, bmp ->
+                                        val isSelected = idx == currentPdfPage
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable { currentPdfPage = idx }
+                                                .border(
+                                                    width = if (isSelected) 2.dp else 1.dp,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                                    shape = RoundedCornerShape(8.dp)
+                                                )
+                                                .padding(4.dp)
+                                        ) {
+                                            Image(
+                                                bitmap = bmp.asImageBitmap(),
+                                                contentDescription = "Thumbnail Page ${idx + 1}",
+                                                modifier = Modifier
+                                                    .height(80.dp)
+                                                    .width(56.dp)
+                                                    .clip(RoundedCornerShape(4.dp)),
+                                                contentScale = ContentScale.Fit
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "Page ${idx + 1}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontSize = 10.sp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

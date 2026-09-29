@@ -255,8 +255,15 @@ object StatementImportService {
                 } catch (_: Throwable) {}
             }
             PDDocument.load(ByteArrayInputStream(bytes)).use { document ->
+                if (document.isEncrypted) {
+                    try {
+                        document.setAllSecurityToBeRemoved(true)
+                    } catch (_: Throwable) {}
+                }
                 val stripper = PDFTextStripper()
                 stripper.sortByPosition = true
+                stripper.startPage = 1
+                stripper.endPage = document.numberOfPages
                 val text = stripper.getText(document)
                 if (text.isNotBlank()) {
                     return text

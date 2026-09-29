@@ -101,6 +101,9 @@ class CategoryRuleCoordinator(
             val resolvedType = when (category.type) {
                 CategoryType.INCOME -> TransactionType.INCOME
                 CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                CategoryType.LENDING -> TransactionType.LENDING
+                CategoryType.BORROWING -> TransactionType.BORROWING
+                CategoryType.OTHER -> TransactionType.TRANSFER
                 else -> TransactionType.EXPENSE
             }
             val rule = CategorizationRuleEntity(
@@ -215,6 +218,9 @@ class CategoryRuleCoordinator(
                         val resolvedType = when (category.type) {
                             CategoryType.INCOME -> TransactionType.INCOME
                             CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                            CategoryType.LENDING -> TransactionType.LENDING
+                            CategoryType.BORROWING -> TransactionType.BORROWING
+                            CategoryType.OTHER -> TransactionType.TRANSFER
                             else -> TransactionType.EXPENSE
                         }
                         database.transactionDao().updateTransactionCategory(tx.id, category.id, category.name, resolvedType)
@@ -228,6 +234,9 @@ class CategoryRuleCoordinator(
                             transactionType = when (category.type) {
                                 CategoryType.INCOME -> TransactionType.INCOME
                                 CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                                CategoryType.LENDING -> TransactionType.LENDING
+                                CategoryType.BORROWING -> TransactionType.BORROWING
+                                CategoryType.OTHER -> TransactionType.TRANSFER
                                 else -> TransactionType.EXPENSE
                             }
                         )

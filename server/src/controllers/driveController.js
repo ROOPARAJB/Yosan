@@ -58,11 +58,10 @@ class DriveController {
     }
 
     try {
-      let payload = backupData;
-      if (!payload) {
-        payload = driveBackupService.generateBackupPayload(req.user.id);
+      if (!backupData) {
+        return res.status(400).json({ error: 'BACKUP_DATA_REQUIRED', message: 'backupData is required in the request body' });
       }
-      const result = driveBackupService.restoreBackupData(req.user.id, payload);
+      const result = driveBackupService.restoreBackupData(req.user.id, backupData);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: 'RESTORE_FAILED', message: err.message });

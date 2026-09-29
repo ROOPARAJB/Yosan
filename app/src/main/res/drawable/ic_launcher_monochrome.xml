@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Android 13+ Themed App Icon (Material You Monochrome Layer) -->
+    <!-- Centered and scaled within the 66dp safe zone without filled background containers -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="1.35"
+        android:scaleY="1.35">
+        <!-- Horizontal top line of Rupee -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M43,44 L65,44 L65,47 L43,47 Z" />
+        <!-- Horizontal middle line of Rupee -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M43,50 L61,50 L61,53 L43,53 Z" />
+        <!-- Curved loop & stem of Rupee -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M49,44 L49,58 C53,58 56,56 56,53.5 C56,51 53,49 49,49 L46,49 L46,44 Z" />
+        <!-- Diagonal stroke of Rupee -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M49,57 L62,70 L58,70 L46,58 Z" />
+
+        <!-- Upward Trend Indicator Dot -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M68,36 A3,3 0 1,1 68,36.01" />
+    </group>
+</vector>

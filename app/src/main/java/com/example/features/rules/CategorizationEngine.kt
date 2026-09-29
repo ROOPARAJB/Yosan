@@ -57,7 +57,7 @@ object CategorizationEngine {
                 val confidence = when {
                     rule.matchType == MatchType.EXACT -> 1.0f
                     normalizedDesc == normalizedKeyword -> 1.0f
-                    normalizedDesc.contains("\\b$normalizedKeyword\\b".toRegex()) -> 0.95f
+                    runCatching { normalizedDesc.contains("\\b${Regex.escape(normalizedKeyword)}\\b".toRegex()) }.getOrDefault(false) -> 0.95f
                     else -> 0.85f
                 }
                 return CategorizationResult(

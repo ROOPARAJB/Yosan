@@ -310,6 +310,15 @@ object BackupService {
 
             val root = JSONObject(cleanJson)
 
+            // Purge tables that are present in the backup before restoring to prevent duplicates
+            if (root.has("transactions")) database.transactionDao().deleteAllTransactions()
+            if (root.has("loans")) database.loanDao().deleteAllLoans()
+            if (root.has("loanRepayments")) database.loanRepaymentDao().deleteAllRepayments()
+            if (root.has("companyExpenses")) database.companyExpenseDao().deleteAllCompanyExpenses()
+            if (root.has("accounts")) database.accountDao().deleteAllAccounts()
+            if (root.has("categories")) database.categoryDao().deleteAllCategories()
+            if (root.has("rules")) database.categorizationRuleDao().deleteAllRules()
+
             // 1. User Profile
             if (root.has("userProfile")) {
                 try {

@@ -20,7 +20,7 @@ function encryptToken(text) {
 function decryptToken(text) {
   if (!text) return '';
   const textParts = text.split(':');
-  if (textParts.length !== 2) return text;
+  if (textParts.length !== 2) throw new Error('MALFORMED_ENCRYPTED_TOKEN');
   const iv = Buffer.from(textParts[0], 'hex');
   const encryptedText = Buffer.from(textParts[1], 'hex');
   const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
@@ -67,7 +67,11 @@ async function connectDrive(userId, authCode, googleAccountSub) {
     }
   }
 
-  const encrypted = encryptToken(refreshToken || 'mock_drive_refresh_token');
+  if (!refreshToken) {
+    throw new Error('DRIVE_OAUTH_TOKEN_MISSING: Could not obtain a valid Drive refresh token');
+  }
+
+  const encrypted = encryptToken(refreshToken);
 
   driveRepository.insertDriveConnection(userId, googleAccountSub || 'sub', '', encrypted, now);
 
@@ -121,9 +125,23 @@ async function uploadBackup(userId) {
   const dateStr = new Date().toISOString().split('T')[0];
   const filename = `finance-backup-${dateStr}.json`;
 
-  try {
-    const { drive, conn } = getDriveClientForUser(userId);
+  const { drive, conn } = getDriveClientForUser(userId);
+  const refreshToken = decryptToken(conn.encrypted_refresh_token);
 
+  if (refreshToken.startsWith('mock_')) {
+    if (config.NODE_ENV === 'production') {
+      throw new Error('MOCK_TOKENS_DISABLED_IN_PRODUCTION');
+    }
+    driveRepository.updateLastBackup(userId, now);
+    return {
+      success: true,
+      fileId: `backup_${now}`,
+      fileName: filename,
+      backupDate: payload.createdAt
+    };
+  }
+
+  try {
     // Create or find FinanceApp folder
     let folderId = conn.drive_folder_id;
     if (!folderId) {
@@ -153,15 +171,8 @@ async function uploadBackup(userId) {
       backupDate: payload.createdAt
     };
   } catch (err) {
-    // If Drive API call fails or mock connection, return mock response for offline/dev fallback
-    driveRepository.updateLastBackup(userId, now);
-    return {
-      success: true,
-      fileId: `backup_${now}`,
-      fileName: filename,
-      backupDate: payload.createdAt,
-      note: 'Backup saved to account'
-    };
+    // Re-throw real Drive API errors so they are not masked
+    throw err;
   }
 }
 
@@ -284,6 +295,51 @@ function restoreBackupData(userId, data) {
           t.categorization_confidence || t.categorizationConfidence || 1.0,
           now,
           now
+        );
+      }
+    }
+
+    // Restore loans
+    if (Array.isArray(data.loans)) {
+      const stmt = db.prepare(`
+        INSERT OR REPLACE INTO loans (id, user_id, borrower_lender_name, loan_type, amount, total_repaid, remaining_amount, interest_rate, due_date, notes, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const l of data.loans) {
+        stmt.run(
+          l.id || null,
+          userId,
+          l.borrower_lender_name || l.borrowerLenderName || 'Unknown',
+          l.loan_type || l.loanType || 'GIVEN',
+          l.amount || 0,
+          l.total_repaid || l.totalRepaid || 0,
+          l.remaining_amount || l.remainingAmount || l.amount || 0,
+          l.interest_rate || l.interestRate || 0,
+          l.due_date || l.dueDate || '',
+          l.notes || '',
+          l.status || 'ACTIVE',
+          l.created_at || l.createdAt || now,
+          l.updated_at || l.updatedAt || now
+        );
+      }
+    }
+
+    // Restore loan repayments
+    if (Array.isArray(data.loanRepayments)) {
+      const stmt = db.prepare(`
+        INSERT OR REPLACE INTO loan_repayments (id, user_id, loan_id, amount, repayment_date, payment_method, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const r of data.loanRepayments) {
+        stmt.run(
+          r.id || null,
+          userId,
+          r.loan_id || r.loanId,
+          r.amount || 0,
+          r.repayment_date || r.repaymentDate || new Date(now).toISOString().split('T')[0],
+          r.payment_method || r.paymentMethod || 'CASH',
+          r.notes || '',
+          r.created_at || r.createdAt || now
         );
       }
     }

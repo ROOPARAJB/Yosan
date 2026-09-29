@@ -117,12 +117,14 @@ class CompanyExpenseCoordinator(
     fun acceptCompanyExpensePrompt(prompt: CompanyExpensePrompt) {
         scope.launch {
             try {
+                val tx = database.transactionDao().getTransactionById(prompt.transactionId)
+                val cat = tx?.categoryName?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) } ?: "Official Expense"
                 val expense = CompanyExpenseEntity(
                     date = prompt.date,
                     amount = prompt.amount,
                     reason = prompt.description,
                     companyName = "Corporate",
-                    category = "Travel",
+                    category = cat,
                     paymentMethod = "Corporate Card / UPI"
                 )
                 repository.insertCompanyExpense(expense)

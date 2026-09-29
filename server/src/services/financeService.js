@@ -1,5 +1,11 @@
 const financeRepository = require('../repositories/financeRepository');
 
+function validateAmount(amount, label = 'amount') {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw Object.assign(new Error(`${label} must be a positive finite number`), { status: 400 });
+  }
+}
+
 class FinanceService {
   async getAccounts(userId) {
     return financeRepository.getAccounts(userId);
@@ -62,6 +68,7 @@ class FinanceService {
 
   async createTransaction(userId, data) {
     const { accountId, transactionDate, description, debitAmount, creditAmount, amount, transactionType, categoryId, categoryName, notes, source } = data;
+    validateAmount(amount, 'Transaction amount');
     const now = Date.now();
 
     // Validate account belongs to user
@@ -102,6 +109,7 @@ class FinanceService {
 
   async createLoan(userId, data) {
     const { borrowerLenderName, loanType, amount, interestRate, dueDate, notes } = data;
+    validateAmount(amount, 'Loan amount');
     const now = Date.now();
     const result = financeRepository.insertLoan(
       userId,
@@ -118,6 +126,7 @@ class FinanceService {
 
   async recordRepayment(userId, loanId, data) {
     const { amount, repaymentDate, paymentMethod, notes } = data;
+    validateAmount(amount, 'Repayment amount');
     const now = Date.now();
 
     const loan = financeRepository.getLoanById(loanId, userId);
@@ -151,6 +160,7 @@ class FinanceService {
 
   async createCompanyExpense(userId, data) {
     const { expenseDate, title, amount, categoryName, notes } = data;
+    validateAmount(amount, 'Company expense amount');
     const now = Date.now();
     const result = financeRepository.insertCompanyExpense(
       userId,
@@ -161,7 +171,8 @@ class FinanceService {
       notes || '',
       now
     );
-    return financeRepository.getCompanyExpenses(userId).find(e => e.id === result.lastInsertRowid);
+    // Fix S7: use direct ID lookup instead of O(N) scan
+    return financeRepository.getCompanyExpenseById(result.lastInsertRowid, userId);
   }
 
   async getDashboardData(userId) {

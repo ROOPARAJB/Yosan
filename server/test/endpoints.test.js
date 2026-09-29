@@ -282,9 +282,21 @@ test('Comprehensive Backend API Endpoints Test Suite', async (t) => {
   });
 
   await t.test('24. POST /api/drive/backup/restore - Restore backup data', async () => {
+    const backupData = {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      userId: 1,
+      accounts: [{ id: 1, accountName: 'Main Checking', accountType: 'BANK', openingBalance: 1000, currentBalance: 1500, isDefault: 1 }],
+      categories: [{ id: 1, name: 'Food', type: 'EXPENSE' }],
+      rules: [],
+      transactions: [],
+      loans: [],
+      loanRepayments: [],
+      companyExpenses: []
+    };
     const res = await api('/api/drive/backup/restore', {
       method: 'POST',
-      body: JSON.stringify({ confirm: true })
+      body: JSON.stringify({ confirm: true, backupData })
     });
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.success, true);

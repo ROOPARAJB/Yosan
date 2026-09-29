@@ -27,6 +27,7 @@ import com.example.repository.FinanceRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.io.File
@@ -402,8 +403,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     init {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Yield SQLite database bandwidth to initial UI frame rendering
-                delay(600)
+                // Yield coroutine to let initial UI frame render smoothly without blocking
+                yield()
 
                 excelSyncCoordinator.loadSyncMetadata()
 
@@ -411,11 +412,24 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 if (existingCats.isEmpty()) {
                     database.categoryDao().insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
                 } else {
-                    val seenNames = mutableSetOf<String>()
+                    val seenCats = mutableMapOf<String, CategoryEntity>()
+                    val allTxs = database.transactionDao().getAllTransactionsList()
                     for (cat in existingCats) {
                         val key = "${cat.name.trim().lowercase()}_${cat.type}"
-                        if (!seenNames.add(key)) {
+                        val surviving = seenCats[key]
+                        if (surviving != null) {
+                            // Relink any transaction referencing the duplicate category to the surviving one
+                            allTxs.filter { it.categoryId == cat.id }.forEach { tx ->
+                                database.transactionDao().updateTransactionCategory(
+                                    tx.id,
+                                    surviving.id,
+                                    surviving.name,
+                                    tx.transactionType
+                                )
+                            }
                             database.categoryDao().deleteCategory(cat.id)
+                        } else {
+                            seenCats[key] = cat
                         }
                     }
                     if (database.categoryDao().getCategoryByName("EMI") == null) {
@@ -500,12 +514,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun generateNextBorrowId(): String = lendingCoordinator.generateNextBorrowId()
     fun isLendIdUnique(id: String, excludeTxId: Long? = null, excludeLoanId: Long? = null): Boolean = lendingCoordinator.isLendIdUnique(id, excludeTxId, excludeLoanId)
     fun isBorrowIdUnique(id: String, excludeTxId: Long? = null, excludeLoanId: Long? = null): Boolean = lendingCoordinator.isBorrowIdUnique(id, excludeTxId, excludeLoanId)
-    fun addLoan(personName: String, phone: String, amount: Double, lentDate: String, expectedDate: String?, notes: String, lendId: String? = null) =
-        lendingCoordinator.addLoan(personName, phone, amount, lentDate, expectedDate, notes, lendId)
+    fun addLoan(personName: String, phone: String, amount: Double, lentDate: String, expectedDate: String?, notes: String, lendId: String? = null, accountId: Long = accounts.value.firstOrNull()?.id ?: 1) =
+        lendingCoordinator.addLoan(personName, phone, amount, lentDate, expectedDate, notes, lendId, accountId)
     fun addBorrowRecord(personName: String, phone: String = "", amount: Double, borrowDate: String, expectedDate: String? = null, accountId: Long = accounts.value.firstOrNull()?.id ?: 1, borrowId: String? = null, notes: String = "") =
         lendingCoordinator.addBorrowRecord(personName, phone, amount, borrowDate, expectedDate, accountId, borrowId, notes)
-    fun recordRepayment(loanId: Long, amount: Double, date: String, method: String, notes: String) =
-        lendingCoordinator.recordRepayment(loanId, amount, date, method, notes)
+    fun recordRepayment(loanId: Long, amount: Double, date: String, method: String, notes: String, accountId: Long = accounts.value.firstOrNull()?.id ?: 1) =
+        lendingCoordinator.recordRepayment(loanId, amount, date, method, notes, accountId)
     fun deleteRepayment(repaymentId: Long, loanId: Long) = lendingCoordinator.deleteRepayment(repaymentId, loanId)
     fun deleteLoan(id: Long) = lendingCoordinator.deleteLoan(id)
     fun deleteBorrowSet(borrowId: String, deleteInflowTx: Boolean = false) = lendingCoordinator.deleteBorrowSet(borrowId, deleteInflowTx)

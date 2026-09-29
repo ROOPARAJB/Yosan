@@ -69,6 +69,7 @@ class UpdateManager(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     if (response.code == 404) {
+                        android.util.Log.d("UpdateManager", "No releases found on GitHub (404). Current build is considered up to date.")
                         val state = UpdateUiState.UpToDate(BuildConfig.VERSION_NAME)
                         _uiState.value = state
                         return@withContext Result.success(null)

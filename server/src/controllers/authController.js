@@ -41,9 +41,14 @@ class AuthController {
         return res.status(401).json({ error: 'USER_NOT_FOUND', message: 'Associated user account not found or inactive' });
       }
 
-      // Revoke old refresh token & generate new pair
-      userRepository.revokeRefreshToken(refreshToken);
+      // Revoke old token and store new one atomically to prevent race conditions
+      const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
       const newTokens = googleAuthService.generateTokens(user);
+      const rotateTokens = require('../db').transaction(() => {
+        userRepository.revokeRefreshToken(refreshToken);
+        userRepository.insertRefreshToken(newTokens.refreshToken, user.id, expiresAt);
+      });
+      rotateTokens();
 
       return res.status(200).json({
         accessToken: newTokens.accessToken,

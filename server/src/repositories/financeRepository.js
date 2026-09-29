@@ -117,6 +117,10 @@ class FinanceRepository {
       VALUES (?, ?, ?, ?, ?, ?, 0, ?)
     `).run(userId, date, title, amount, categoryName, notes, now);
   }
+
+  getCompanyExpenseById(expenseId, userId) {
+    return db.prepare('SELECT * FROM company_expenses WHERE id = ? AND user_id = ?').get(expenseId, userId);
+  }
 }
 
 module.exports = new FinanceRepository();

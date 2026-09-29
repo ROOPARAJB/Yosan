@@ -51,7 +51,7 @@ class UndoCoordinator(
             ruleSnapshotJson = ruleSnapshot?.let { UndoJsonHelper.serializeRule(it) }
         )
         repository.insertUndoAction(action)
-        _undoSnackbarEvent.tryEmit(UndoSnackbarData(description, action.actionId))
+        _undoSnackbarEvent.emit(UndoSnackbarData(description, action.actionId))
         return action.actionId
     }
 
