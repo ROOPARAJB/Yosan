@@ -45,9 +45,7 @@ class MainActivity : FragmentActivity() {
             var lastPauseTimestamp by remember { mutableLongStateOf(0L) }
 
             val isExistingUser = appPreferences.isOnboardingCompleted ||
-                    (userProfile?.isOnboardingCompleted == true) ||
-                    allTransactions.isNotEmpty() ||
-                    (!userProfile?.name.isNullOrBlank() && !userProfile?.name.equals("User", ignoreCase = true))
+                    (userProfile?.isOnboardingCompleted == true)
 
             // Keep AppPreferences synchronized with Room UserProfile updates
             LaunchedEffect(userProfile) {
@@ -73,14 +71,27 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            // Prompt helper for biometric / PIN authentication
-            val triggerUnlock = remember {
+            val keyguardManager = remember { getSystemService(android.content.Context.KEYGUARD_SERVICE) as android.app.KeyguardManager }
+
+            val deviceCredentialLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                if (result.resultCode == android.app.Activity.RESULT_OK) {
+                    isAppLocked = false
+                    lockErrorMessage = null
+                } else {
+                    lockErrorMessage = "PIN/Pattern authentication failed or was cancelled."
+                }
+            }
+
+            // Dedicated prompt for Biometric (Fingerprint / Face)
+            val triggerBiometricUnlock = remember {
                 {
                     lockErrorMessage = null
-                    biometricAuthManager.authenticate(
+                    biometricAuthManager.authenticateBiometric(
                         activity = this@MainActivity,
                         title = "Unlock Yosan",
-                        subtitle = "Verify your fingerprint or phone lock to continue",
+                        subtitle = "Verify your fingerprint or face to continue",
                         onSuccess = {
                             isAppLocked = false
                             lockErrorMessage = null
@@ -98,10 +109,30 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            // Automatically challenge user when app is in locked state
+            // Dedicated prompt for Device Credential (PIN / Pattern / Password)
+            val triggerPinUnlock = remember {
+                {
+                    lockErrorMessage = null
+                    if (keyguardManager.isDeviceSecure) {
+                        val intent = keyguardManager.createConfirmDeviceCredentialIntent(
+                            "Unlock Yosan",
+                            "Enter your phone PIN, pattern, or password"
+                        )
+                        if (intent != null) {
+                            deviceCredentialLauncher.launch(intent)
+                        } else {
+                            triggerBiometricUnlock()
+                        }
+                    } else {
+                        lockErrorMessage = "No device PIN, pattern, or password is set on this phone."
+                    }
+                }
+            }
+
+            // Automatically challenge user with biometric prompt when app is in locked state
             LaunchedEffect(isAppLocked, isBiometricEnabled, isExistingUser) {
                 if (isAppLocked && isBiometricEnabled && isExistingUser) {
-                    triggerUnlock()
+                    triggerBiometricUnlock()
                 }
             }
 
@@ -149,7 +180,8 @@ class MainActivity : FragmentActivity() {
                         GPayLockScreen(
                             userName = userProfile?.name ?: "User",
                             errorMessage = lockErrorMessage,
-                            onTriggerUnlock = triggerUnlock,
+                            onFingerprintClick = triggerBiometricUnlock,
+                            onPinPatternClick = triggerPinUnlock,
                             onExitApp = { finishAffinity() }
                         )
                     }

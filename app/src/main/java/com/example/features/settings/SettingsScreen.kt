@@ -406,7 +406,7 @@ fun SettingsScreen(
             val appPrefs = remember { AppPreferences(context) }
             val biometricAuthManager = remember { BiometricAuthManager(context) }
             val isBioEnabled = userProfile?.isBiometricEnabled ?: appPrefs.isBiometricEnabled
-            val currentTimeout = appPrefs.appLockTimeoutSeconds
+            val currentTimeout by viewModel.appLockTimeoutSeconds.collectAsState()
             val activity = context as? FragmentActivity
 
             Card(
@@ -1102,16 +1102,51 @@ fun SettingsScreen(
                         } else {
                             accounts.forEach { acc ->
                                 val isSelected = selectedAccountIds.contains(acc.id)
-                                val dynamicBalance = remember(acc, allTransactions) {
-                                    val txs = allTransactions.filter { it.accountId == acc.id }
-                                    val txWithClosingBal = txs.filter { (it.balanceAfterTransaction ?: 0.0) > 0.0 }
-                                        .maxByOrNull { it.transactionDate }
-                                    if (txWithClosingBal != null && (txWithClosingBal.balanceAfterTransaction ?: 0.0) > 0.0) {
-                                        txWithClosingBal.balanceAfterTransaction!!
+                                val dynamicBalance = remember(acc, allTransactions, accounts) {
+                                    val isSingleOrPrimary = accounts.size <= 1 || acc.isDefault || acc.id == 1L
+                                    val txs = allTransactions.filter {
+                                        it.accountId == acc.id || (isSingleOrPrimary && (it.accountId == 0L || it.accountId == 1L || it.accountId == acc.id))
+                                    }
+
+                                    fun getCredit(tx: com.example.data.local.entity.TransactionEntity): Double = when {
+                                        tx.creditAmount > 0.0 -> tx.creditAmount
+                                        tx.transactionType in listOf(
+                                            com.example.data.local.entity.TransactionType.INCOME,
+                                            com.example.data.local.entity.TransactionType.REFUND,
+                                            com.example.data.local.entity.TransactionType.BORROWING
+                                        ) && tx.amount > 0.0 -> tx.amount
+                                        else -> 0.0
+                                    }
+
+                                    fun getDebit(tx: com.example.data.local.entity.TransactionEntity): Double = when {
+                                        tx.debitAmount > 0.0 -> tx.debitAmount
+                                        tx.transactionType in listOf(
+                                            com.example.data.local.entity.TransactionType.EXPENSE,
+                                            com.example.data.local.entity.TransactionType.LENDING,
+                                            com.example.data.local.entity.TransactionType.INVESTMENT
+                                        ) && tx.amount > 0.0 -> tx.amount
+                                        else -> 0.0
+                                    }
+
+                                    val latestTxWithBalance = txs
+                                        .filter { it.balanceAfterTransaction != null }
+                                        .maxWithOrNull(compareBy<com.example.data.local.entity.TransactionEntity> { it.transactionDate }.thenBy { it.id })
+
+                                    if (latestTxWithBalance != null && latestTxWithBalance.balanceAfterTransaction != null) {
+                                        val snapshot = latestTxWithBalance.balanceAfterTransaction!!
+                                        val subCredits = txs.filter {
+                                            (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                                            (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+                                        }.sumOf { getCredit(it) }
+                                        val subDebits = txs.filter {
+                                            (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                                            (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+                                        }.sumOf { getDebit(it) }
+                                        com.example.utils.CurrencyFormatter.roundFinancialAmount(snapshot + subCredits - subDebits)
                                     } else if (txs.isNotEmpty()) {
-                                        val inflows = txs.filter { it.transactionType == com.example.data.local.entity.TransactionType.INCOME }.sumOf { it.amount }
-                                        val outflows = txs.filter { it.transactionType == com.example.data.local.entity.TransactionType.EXPENSE }.sumOf { it.amount }
-                                        acc.openingBalance + inflows - outflows
+                                        val totalCredits = txs.sumOf { getCredit(it) }
+                                        val totalDebits = txs.sumOf { getDebit(it) }
+                                        com.example.utils.CurrencyFormatter.roundFinancialAmount(acc.openingBalance + totalCredits - totalDebits)
                                     } else {
                                         if (acc.currentBalance != 0.0) acc.currentBalance else acc.openingBalance
                                     }

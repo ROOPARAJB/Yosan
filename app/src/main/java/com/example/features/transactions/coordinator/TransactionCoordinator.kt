@@ -105,17 +105,24 @@ class TransactionCoordinator(
 
     fun updateTransactionCategory(tx: TransactionEntity, newCategory: CategoryEntity) {
         scope.launch {
-            val isCredit = tx.creditAmount > 0 || tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND
-            val resolvedType = when {
-                newCategory.type == CategoryType.INCOME -> TransactionType.INCOME
-                newCategory.type == CategoryType.INVESTMENT -> TransactionType.INVESTMENT
-                newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == CategoryType.OTHER -> TransactionType.TRANSFER
-                newCategory.name.equals("Advance", ignoreCase = true) -> if (isCredit) TransactionType.INCOME else TransactionType.EXPENSE
-                else -> TransactionType.EXPENSE
+            val isCredit = tx.creditAmount > 0 || (tx.debitAmount == 0.0 && (tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND || tx.transactionType == TransactionType.BORROWING))
+            val resolvedType = if (isCredit) {
+                when {
+                    newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == CategoryType.OTHER -> TransactionType.TRANSFER
+                    newCategory.type == CategoryType.BORROWING || newCategory.name.contains("Borrow", ignoreCase = true) -> TransactionType.BORROWING
+                    else -> TransactionType.INCOME
+                }
+            } else {
+                when {
+                    newCategory.type == CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                    newCategory.type == CategoryType.LENDING || newCategory.name.contains("Lend", ignoreCase = true) -> TransactionType.LENDING
+                    newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == CategoryType.OTHER -> TransactionType.TRANSFER
+                    else -> TransactionType.EXPENSE
+                }
             }
             val amount = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
-            val newCredit = if (resolvedType == TransactionType.INCOME || resolvedType == TransactionType.REFUND || (resolvedType == TransactionType.TRANSFER && isCredit)) amount else 0.0
-            val newDebit = if (resolvedType == TransactionType.EXPENSE || resolvedType == TransactionType.LENDING || resolvedType == TransactionType.INVESTMENT || (resolvedType == TransactionType.TRANSFER && !isCredit)) amount else 0.0
+            val newCredit = if (isCredit) amount else 0.0
+            val newDebit = if (!isCredit) amount else 0.0
 
             val oldTx = tx
             val updatedTx = tx.copy(
@@ -261,17 +268,24 @@ class TransactionCoordinator(
             txIds.forEach { id ->
                 val tx = repository.getTransactionById(id)
                 if (tx != null) {
-                    val isCredit = tx.creditAmount > 0 || tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND
-                    val resolvedType = when {
-                        newCategory.type == CategoryType.INCOME -> TransactionType.INCOME
-                        newCategory.type == CategoryType.INVESTMENT -> TransactionType.INVESTMENT
-                        newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == CategoryType.OTHER -> TransactionType.TRANSFER
-                        newCategory.name.equals("Advance", ignoreCase = true) -> if (isCredit) TransactionType.INCOME else TransactionType.EXPENSE
-                        else -> TransactionType.EXPENSE
+                    val isCredit = tx.creditAmount > 0 || (tx.debitAmount == 0.0 && (tx.transactionType == TransactionType.INCOME || tx.transactionType == TransactionType.REFUND || tx.transactionType == TransactionType.BORROWING))
+                    val resolvedType = if (isCredit) {
+                        when {
+                            newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == CategoryType.OTHER -> TransactionType.TRANSFER
+                            newCategory.type == CategoryType.BORROWING || newCategory.name.contains("Borrow", ignoreCase = true) -> TransactionType.BORROWING
+                            else -> TransactionType.INCOME
+                        }
+                    } else {
+                        when {
+                            newCategory.type == CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                            newCategory.type == CategoryType.LENDING || newCategory.name.contains("Lend", ignoreCase = true) -> TransactionType.LENDING
+                            newCategory.name.equals("Transfer", ignoreCase = true) || newCategory.type == CategoryType.OTHER -> TransactionType.TRANSFER
+                            else -> TransactionType.EXPENSE
+                        }
                     }
                     val amount = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
-                    val newCredit = if (resolvedType == TransactionType.INCOME || resolvedType == TransactionType.REFUND || (resolvedType == TransactionType.TRANSFER && isCredit)) amount else 0.0
-                    val newDebit = if (resolvedType == TransactionType.EXPENSE || resolvedType == TransactionType.LENDING || resolvedType == TransactionType.INVESTMENT || (resolvedType == TransactionType.TRANSFER && !isCredit)) amount else 0.0
+                    val newCredit = if (isCredit) amount else 0.0
+                    val newDebit = if (!isCredit) amount else 0.0
 
                     prevList.add(tx)
                     val updatedTx = tx.copy(
@@ -294,6 +308,109 @@ class TransactionCoordinator(
                 newTxs = newList
             )
             showMessage("${txIds.size} transactions categorized as '${newCategory.name}'")
+        }
+    }
+
+    fun batchAssignCompanyToTransactions(
+        txIds: List<Long>,
+        companyName: String,
+        officialCategory: String = "Travel",
+        recordAsOfficialExpense: Boolean = true
+    ) {
+        scope.launch {
+            val cleanCompany = companyName.trim()
+            if (cleanCompany.isBlank() || txIds.isEmpty()) return@launch
+
+            val prevList = mutableListOf<TransactionEntity>()
+            val newList = mutableListOf<TransactionEntity>()
+
+            val existingCat = database.categoryDao().getCategoryByName("Official Expenses")
+                ?: database.categoryDao().getCategoryByName("Official Expense")
+            val catId = existingCat?.id
+
+            txIds.forEach { id ->
+                val tx = repository.getTransactionById(id)
+                if (tx != null) {
+                    prevList.add(tx)
+                    val cleanTag = "[Company: $cleanCompany]"
+                    val updatedNotes = if (tx.notes.contains("Company:", ignoreCase = true)) {
+                        tx.notes.replace(Regex("""\[Company:[^\]]+\]""", RegexOption.IGNORE_CASE), cleanTag)
+                    } else if (tx.notes.isNotBlank()) {
+                        "${tx.notes} $cleanTag"
+                    } else {
+                        cleanTag
+                    }
+
+                    val updatedTx = tx.copy(
+                        categoryId = catId ?: tx.categoryId,
+                        categoryName = "Official Expenses",
+                        transactionType = TransactionType.EXPENSE,
+                        notes = updatedNotes,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    repository.updateTransaction(updatedTx)
+                    newList.add(updatedTx)
+
+                    if (recordAsOfficialExpense) {
+                        val amount = if (tx.debitAmount > 0) tx.debitAmount else tx.amount
+                        val allExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
+                        val matchedExpenses = allExpenses.filter {
+                            it.notes.contains("Statement #${tx.id}") ||
+                            (it.date == tx.transactionDate && Math.abs(it.amount - amount) < 0.01 && (it.reason.equals(tx.description, ignoreCase = true) || it.companyName.equals("Corporate", ignoreCase = true) || it.notes.contains("Statement #${tx.id}")))
+                        }
+
+                        if (matchedExpenses.isNotEmpty()) {
+                            val primaryExp = matchedExpenses.first()
+                            val updatedExpNotes = if (primaryExp.notes.contains("Statement #${tx.id}")) {
+                                if (primaryExp.notes.contains("Company:", ignoreCase = true)) {
+                                    primaryExp.notes.replace(Regex("""\[Company:[^\]]+\]""", RegexOption.IGNORE_CASE), cleanTag)
+                                } else {
+                                    "${primaryExp.notes} • $cleanTag"
+                                }
+                            } else {
+                                "Statement #${tx.id} • $cleanTag"
+                            }
+                            val updatedExp = primaryExp.copy(
+                                companyName = cleanCompany,
+                                category = officialCategory.ifBlank { primaryExp.category.ifBlank { "Official" } },
+                                reason = tx.description,
+                                notes = updatedExpNotes,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                            repository.updateCompanyExpense(updatedExp)
+
+                            // Remove any lingering duplicates
+                            if (matchedExpenses.size > 1) {
+                                matchedExpenses.drop(1).forEach { dup ->
+                                    database.companyExpenseDao().deleteCompanyExpense(dup.id)
+                                }
+                            }
+                        } else {
+                            val exp = com.example.data.local.entity.CompanyExpenseEntity(
+                                date = tx.transactionDate,
+                                amount = amount,
+                                reason = tx.description,
+                                category = officialCategory.ifBlank { "Official" },
+                                companyName = cleanCompany,
+                                paymentMethod = "Bank Statement",
+                                notes = "Statement #${tx.id} • $cleanTag"
+                            )
+                            repository.insertCompanyExpense(exp)
+                        }
+                    }
+                }
+            }
+
+            if (newList.isNotEmpty()) {
+                undoCoordinator.recordUndoAction(
+                    actionType = "BULK_COMPANY_ASSIGN",
+                    description = "Assigned '$cleanCompany' to ${newList.size} records",
+                    previousTxs = prevList,
+                    newTxs = newList
+                )
+                onTransactionMutated()
+                showMessage("Assigned Company / Client '$cleanCompany' to ${newList.size} statement records")
+            }
         }
     }
 
@@ -719,6 +836,50 @@ class TransactionCoordinator(
                     onDone(false)
                 }
             }
+        }
+    }
+
+    fun restoreOriginalTransactionFlow(tx: TransactionEntity) {
+        scope.launch {
+            val isCredit = tx.creditAmount > 0
+            val defaultCategoryName = if (isCredit) "Income" else "Expense"
+            val matchingCat = database.categoryDao().getAllCategoriesList().firstOrNull {
+                if (isCredit) it.type == CategoryType.INCOME else it.type == CategoryType.EXPENSE
+            }
+            val updated = tx.copy(
+                transactionType = if (isCredit) TransactionType.INCOME else TransactionType.EXPENSE,
+                categoryId = matchingCat?.id,
+                categoryName = matchingCat?.name ?: defaultCategoryName,
+                linkedLoanId = null,
+                updatedAt = System.currentTimeMillis()
+            )
+            repository.updateTransaction(updated)
+            showMessage("Restored original statement flow for: ${tx.description.take(20)}")
+            onTransactionMutated()
+        }
+    }
+
+    fun restoreAllOriginalFlows(txList: List<TransactionEntity>) {
+        scope.launch {
+            val allCats = database.categoryDao().getAllCategoriesList()
+            val incomeCat = allCats.firstOrNull { it.type == CategoryType.INCOME }
+            val expenseCat = allCats.firstOrNull { it.type == CategoryType.EXPENSE }
+            val updatedList = txList.map { tx ->
+                val isCredit = tx.creditAmount > 0
+                val targetCat = if (isCredit) incomeCat else expenseCat
+                tx.copy(
+                    transactionType = if (isCredit) TransactionType.INCOME else TransactionType.EXPENSE,
+                    categoryId = targetCat?.id,
+                    categoryName = targetCat?.name ?: (if (isCredit) "Income" else "Expense"),
+                    linkedLoanId = null,
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+            for (tx in updatedList) {
+                repository.updateTransaction(tx)
+            }
+            showMessage("Restored ${updatedList.size} transactions to original statement flows")
+            onTransactionMutated()
         }
     }
 }

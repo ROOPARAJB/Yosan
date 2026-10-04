@@ -109,31 +109,56 @@ object FinancialCalculationService {
         // Company Expenses
         val totalCompanyExpense = com.example.utils.CurrencyFormatter.roundFinancialAmount(companyExpenses.sumOf { it.amount })
 
-        // Current Balance: use latest balanceAfterTransaction if available (most accurate for imported statements)
-        // Otherwise fall back to openingBalance + credits - debits per account
+        // Current Balance: use snapshot + subsequent transactions per account
         val totalAccountBalance = com.example.utils.CurrencyFormatter.roundFinancialAmount(
             if (accounts.isNotEmpty()) {
                 accounts.sumOf { acc ->
-                    val accTxs = transactions.filter { it.accountId == acc.id }
-                    // Prefer the running balance from the last imported statement row
-                    val latestRunningBalance = accTxs
+                    val isSingleOrPrimary = accounts.size <= 1 || acc.isDefault || acc.id == 1L
+                    val accTxs = transactions.filter {
+                        it.accountId == acc.id || (isSingleOrPrimary && (it.accountId == 0L || it.accountId == 1L || it.accountId == acc.id))
+                    }
+                    val latestTxWithBalance = accTxs
                         .filter { it.balanceAfterTransaction != null }
-                        .maxByOrNull { it.transactionDate + it.createdAt }
-                        ?.balanceAfterTransaction
-                    latestRunningBalance
-                        ?: run {
-                            val totalCredits = accTxs.sumOf { resolveCredit(it) }
-                            val totalDebits = accTxs.sumOf { resolveDebit(it) }
-                            acc.openingBalance + totalCredits - totalDebits
-                        }
+                        .maxWithOrNull(compareBy<TransactionEntity> { it.transactionDate }.thenBy { it.id })
+
+                    if (latestTxWithBalance != null && latestTxWithBalance.balanceAfterTransaction != null) {
+                        val snapshot = latestTxWithBalance.balanceAfterTransaction!!
+                        val subCredits = accTxs.filter {
+                            (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                            (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+                        }.sumOf { resolveCredit(it) }
+                        val subDebits = accTxs.filter {
+                            (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                            (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+                        }.sumOf { resolveDebit(it) }
+                        snapshot + subCredits - subDebits
+                    } else if (accTxs.isNotEmpty()) {
+                        val totalCredits = accTxs.sumOf { resolveCredit(it) }
+                        val totalDebits = accTxs.sumOf { resolveDebit(it) }
+                        acc.openingBalance + totalCredits - totalDebits
+                    } else {
+                        if (acc.currentBalance != 0.0) acc.currentBalance else acc.openingBalance
+                    }
                 }
             } else {
-                // No accounts set up: use latest statement running balance or net
-                val latestBalance = transactions
+                val latestTxWithBalance = transactions
                     .filter { it.balanceAfterTransaction != null }
-                    .maxByOrNull { it.transactionDate + it.createdAt }
-                    ?.balanceAfterTransaction
-                latestBalance ?: (totalIncome - totalExpense)
+                    .maxWithOrNull(compareBy<TransactionEntity> { it.transactionDate }.thenBy { it.id })
+
+                if (latestTxWithBalance != null && latestTxWithBalance.balanceAfterTransaction != null) {
+                    val snapshot = latestTxWithBalance.balanceAfterTransaction!!
+                    val subCredits = transactions.filter {
+                        (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                        (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+                    }.sumOf { resolveCredit(it) }
+                    val subDebits = transactions.filter {
+                        (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                        (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+                    }.sumOf { resolveDebit(it) }
+                    snapshot + subCredits - subDebits
+                } else {
+                    totalIncome - totalExpense
+                }
             }
         )
 

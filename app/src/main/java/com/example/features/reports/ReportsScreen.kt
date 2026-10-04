@@ -13,16 +13,20 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.asImageBitmap
@@ -45,8 +49,15 @@ fun ReportsScreen(
     val context = LocalContext.current
     val summary by viewModel.dashboardSummary.collectAsState()
     val categoryBreakdown by viewModel.categoryBreakdown.collectAsState()
+    val categoryIncomeBreakdown by viewModel.categoryIncomeBreakdown.collectAsState()
     val monthlyTrends by viewModel.monthlyTrends.collectAsState()
+    val loans by viewModel.loans.collectAsState()
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val companyExpenses by viewModel.companyExpenses.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
+    val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
+    val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
+    val isMasked = privacyEnabled && !isRevealed
 
     var pdfPreviewBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     var currentPageIndex by remember { mutableIntStateOf(0) }
@@ -54,15 +65,19 @@ fun ReportsScreen(
     var isRendering by remember { mutableStateOf(true) }
 
     // Generate & Render PDF Preview
-    LaunchedEffect(summary, categoryBreakdown, monthlyTrends, userProfile?.name) {
+    LaunchedEffect(summary, categoryBreakdown, categoryIncomeBreakdown, monthlyTrends, loans, allTransactions, companyExpenses, userProfile?.name) {
         isRendering = true
         withContext(Dispatchers.IO) {
             try {
                 val file = ExportService.generatePdfReport(
                     context = context,
                     summary = summary,
-                    categoryBreakdown = categoryBreakdown,
+                    categoryExpenseBreakdown = categoryBreakdown,
+                    categoryIncomeBreakdown = categoryIncomeBreakdown,
                     monthlyTrends = monthlyTrends,
+                    loans = loans,
+                    allTransactions = allTransactions,
+                    companyExpenses = companyExpenses,
                     userName = userProfile?.name
                 )
                 generatedFile = file
@@ -94,7 +109,17 @@ fun ReportsScreen(
 
     fun sharePdfReport() {
         try {
-            val file = generatedFile ?: ExportService.generatePdfReport(context, summary, categoryBreakdown, monthlyTrends, userProfile?.name)
+            val file = generatedFile ?: ExportService.generatePdfReport(
+                context = context,
+                summary = summary,
+                categoryExpenseBreakdown = categoryBreakdown,
+                categoryIncomeBreakdown = categoryIncomeBreakdown,
+                monthlyTrends = monthlyTrends,
+                loans = loans,
+                allTransactions = allTransactions,
+                companyExpenses = companyExpenses,
+                userName = userProfile?.name
+            )
             val authority = "${context.packageName}.fileprovider"
             val uri = FileProvider.getUriForFile(context, authority, file)
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -116,7 +141,17 @@ fun ReportsScreen(
 
     fun openPdfReport() {
         try {
-            val file = generatedFile ?: ExportService.generatePdfReport(context, summary, categoryBreakdown, monthlyTrends, userProfile?.name)
+            val file = generatedFile ?: ExportService.generatePdfReport(
+                context = context,
+                summary = summary,
+                categoryExpenseBreakdown = categoryBreakdown,
+                categoryIncomeBreakdown = categoryIncomeBreakdown,
+                monthlyTrends = monthlyTrends,
+                loans = loans,
+                allTransactions = allTransactions,
+                companyExpenses = companyExpenses,
+                userName = userProfile?.name
+            )
             val authority = "${context.packageName}.fileprovider"
             val uri = FileProvider.getUriForFile(context, authority, file)
             val viewIntent = Intent(Intent.ACTION_VIEW).apply {
@@ -210,7 +245,32 @@ fun ReportsScreen(
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    if (pdfPreviewBitmaps.size > 1) {
+                    if (isMasked) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.clickable { viewModel.revealAmountsTemporarily() }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Lock,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Blurred • Tap to reveal",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    } else if (pdfPreviewBitmaps.size > 1) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,
                             shape = RoundedCornerShape(8.dp)
@@ -294,27 +354,80 @@ fun ReportsScreen(
                     }
 
                     val currentBmp = pdfPreviewBitmaps.getOrNull(currentPageIndex) ?: pdfPreviewBitmaps.first()
-                    Card(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .shadow(6.dp, RoundedCornerShape(16.dp))
-                            .clip(RoundedCornerShape(16.dp)),
-                        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(enabled = isMasked) { viewModel.revealAmountsTemporarily() }
                     ) {
-                        Column(
+                        Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(8.dp)
+                                .shadow(6.dp, RoundedCornerShape(16.dp))
+                                .clip(RoundedCornerShape(16.dp))
+                                .blur(if (isMasked) 28.dp else 0.dp),
+                            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                         ) {
-                            Image(
-                                bitmap = currentBmp.asImageBitmap(),
-                                contentDescription = "PDF Report Preview Page ${currentPageIndex + 1}",
-                                contentScale = ContentScale.FillWidth,
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                            )
+                                    .padding(8.dp)
+                            ) {
+                                Image(
+                                    bitmap = currentBmp.asImageBitmap(),
+                                    contentDescription = "PDF Report Preview Page ${currentPageIndex + 1}",
+                                    contentScale = ContentScale.FillWidth,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                )
+                            }
+                        }
+
+                        if (isMasked) {
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
+                                    .clickable { viewModel.revealAmountsTemporarily() }
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = CircleShape,
+                                        modifier = Modifier.size(60.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.VisibilityOff,
+                                                contentDescription = "Hidden by Privacy Blur",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.size(30.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    Text(
+                                        text = "Financial Privacy Mode Active",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Tap anywhere to reveal report preview",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -338,7 +451,10 @@ fun ReportsScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
-                                        .clickable { currentPageIndex = idx }
+                                        .clickable {
+                                            if (isMasked) viewModel.revealAmountsTemporarily()
+                                            currentPageIndex = idx
+                                        }
                                         .border(
                                             width = if (isSelected) 2.dp else 1.dp,
                                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
@@ -352,7 +468,8 @@ fun ReportsScreen(
                                         modifier = Modifier
                                             .height(80.dp)
                                             .width(56.dp)
-                                            .clip(RoundedCornerShape(4.dp)),
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .blur(if (isMasked) 16.dp else 0.dp),
                                         contentScale = ContentScale.Fit
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))

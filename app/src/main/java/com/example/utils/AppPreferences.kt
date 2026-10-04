@@ -9,19 +9,7 @@ class AppPreferences(private val context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     var isOnboardingCompleted: Boolean
-        get() {
-            if (prefs.contains(KEY_ONBOARDING_COMPLETED)) {
-                return prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
-            }
-            // Seamless zero-wait migration: if local SQLite DB file already exists on the device,
-            // the user is an existing returning user who already onboarded / imported data.
-            val dbFile = context.getDatabasePath("finance_manager_db")
-            if (dbFile.exists() && dbFile.length() > 0) {
-                prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, true).apply()
-                return true
-            }
-            return false
-        }
+        get() = prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
         set(value) {
             prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, value).apply()
         }

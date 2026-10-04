@@ -184,6 +184,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // App Lock Auto-lock Timeout StateFlow
+    private val _appLockTimeoutSeconds = MutableStateFlow(
+        com.example.utils.AppPreferences(application).appLockTimeoutSeconds
+    )
+    val appLockTimeoutSeconds: StateFlow<Int> = _appLockTimeoutSeconds.asStateFlow()
+
     fun setBiometricLock(enabled: Boolean) {
         viewModelScope.launch {
             com.example.utils.AppPreferences(getApplication()).isBiometricEnabled = enabled
@@ -193,6 +199,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun setAppLockTimeout(seconds: Int) {
+        _appLockTimeoutSeconds.value = seconds
         viewModelScope.launch {
             com.example.utils.AppPreferences(getApplication()).appLockTimeoutSeconds = seconds
             val label = when (seconds) {
@@ -500,6 +507,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun updateTransactionsCategory(txIds: List<Long>, newCategory: CategoryEntity) =
         transactionCoordinator.updateTransactionsCategory(txIds, newCategory)
 
+    fun batchAssignCompanyToTransactions(
+        txIds: List<Long>,
+        companyName: String,
+        officialCategory: String = "Travel",
+        recordAsOfficialExpense: Boolean = true
+    ) = transactionCoordinator.batchAssignCompanyToTransactions(txIds, companyName, officialCategory, recordAsOfficialExpense)
+
     fun updateTransactionDescription(txId: Long, newDescription: String) =
         transactionCoordinator.updateTransactionDescription(txId, newDescription)
 
@@ -527,6 +541,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun saveBackupToStorageUri(context: Context, uri: Uri, onDone: (Boolean) -> Unit) = transactionCoordinator.saveBackupToStorageUri(context, uri, onDone)
     fun saveBackupToDownloads(context: Context, onDone: (Boolean) -> Unit) = transactionCoordinator.saveBackupToDownloads(context, onDone)
     fun restoreBackup(context: Context, uri: Uri, onDone: (Boolean) -> Unit) = transactionCoordinator.restoreBackup(context, uri, onDone)
+    fun restoreOriginalTransactionFlow(tx: TransactionEntity) = transactionCoordinator.restoreOriginalTransactionFlow(tx)
+    fun restoreAllOriginalFlows(txList: List<TransactionEntity>) = transactionCoordinator.restoreAllOriginalFlows(txList)
 
     // Delegated Advance Methods
     fun generateNextAdvanceId(): String = advanceCoordinator.generateNextAdvanceId()
@@ -548,6 +564,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         lendingCoordinator.recordRepayment(loanId, amount, date, method, notes, accountId)
     fun deleteRepayment(repaymentId: Long, loanId: Long) = lendingCoordinator.deleteRepayment(repaymentId, loanId)
     fun deleteLoan(id: Long) = lendingCoordinator.deleteLoan(id)
+    fun linkTransactionToLoan(txId: Long, loanId: Long?, lendTag: String? = null) = lendingCoordinator.linkTransactionToLoan(txId, loanId, lendTag)
+    fun linkTransactionToBorrow(txId: Long, borrowId: String?) = lendingCoordinator.linkTransactionToBorrow(txId, borrowId)
     fun deleteBorrowSet(borrowId: String, deleteInflowTx: Boolean = false) = lendingCoordinator.deleteBorrowSet(borrowId, deleteInflowTx)
     fun deleteLendSet(lendTag: String, loanId: Long? = null, deleteLendTx: Boolean = false) = lendingCoordinator.deleteLendSet(lendTag, loanId, deleteLendTx)
 
@@ -601,7 +619,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun getLoansCsvExport(): String = ExportService.exportLoansCsv(loans.value)
     fun getCompanyExpensesCsvExport(): String = ExportService.exportCompanyExpensesCsv(companyExpenses.value)
     fun getFullReportSummaryText(): String = ExportService.exportFinancialReportSummary(
-        dashboardSummary.value, categoryBreakdown.value, monthlyTrends.value
+        summary = dashboardSummary.value,
+        categoryExpenseBreakdown = categoryBreakdown.value,
+        categoryIncomeBreakdown = categoryIncomeBreakdown.value,
+        monthlyTrends = monthlyTrends.value,
+        loans = loans.value,
+        allTransactions = allTransactions.value,
+        companyExpenses = companyExpenses.value
     )
 
     // Delegated Excel Sync Methods

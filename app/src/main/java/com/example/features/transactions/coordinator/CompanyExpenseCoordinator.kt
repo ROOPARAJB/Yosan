@@ -65,7 +65,10 @@ class CompanyExpenseCoordinator(
                 }
                 val unlogged = debits.filter { debit ->
                     val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount
-                    !expenses.any { it.date == debit.transactionDate && Math.abs(it.amount - debitAmt) < 0.01 }
+                    !expenses.any {
+                        it.notes.contains("Statement #${debit.id}") ||
+                        (it.date == debit.transactionDate && Math.abs(it.amount - debitAmt) < 0.01 && (it.reason.equals(debit.description, ignoreCase = true) || it.notes.contains("Statement #${debit.id}")))
+                    }
                 }.map { debit ->
                     val debitAmt = if (debit.debitAmount > 0.0) debit.debitAmount else debit.amount
                     CompanyExpensePrompt(
@@ -93,19 +96,31 @@ class CompanyExpenseCoordinator(
         scope.launch {
             try {
                 val pending = _pendingCompanyExpenses.value
+                val currentExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
+                var loggedCount = 0
                 pending.forEach { prompt ->
-                    val expense = CompanyExpenseEntity(
-                        date = prompt.date,
-                        amount = prompt.amount,
-                        reason = prompt.description,
-                        companyName = "Corporate",
-                        category = "Official Expense",
-                        paymentMethod = "Corporate Card / UPI"
-                    )
-                    repository.insertCompanyExpense(expense)
+                    val existingExp = currentExpenses.find {
+                        it.notes.contains("Statement #${prompt.transactionId}") ||
+                        (it.date == prompt.date && Math.abs(it.amount - prompt.amount) < 0.01 && it.reason.equals(prompt.description, ignoreCase = true))
+                    }
+                    if (existingExp == null) {
+                        val expense = CompanyExpenseEntity(
+                            date = prompt.date,
+                            amount = prompt.amount,
+                            reason = prompt.description,
+                            companyName = "Corporate",
+                            category = "Official Expense",
+                            paymentMethod = "Corporate Card / UPI",
+                            notes = "Statement #${prompt.transactionId}"
+                        )
+                        repository.insertCompanyExpense(expense)
+                        loggedCount++
+                    }
                 }
                 _pendingCompanyExpenses.value = emptyList()
-                showMessage("${pending.size} official expenses logged successfully")
+                if (loggedCount > 0) {
+                    showMessage("$loggedCount official expenses logged successfully")
+                }
             } catch (_: Exception) {}
         }
     }
@@ -117,19 +132,29 @@ class CompanyExpenseCoordinator(
     fun acceptCompanyExpensePrompt(prompt: CompanyExpensePrompt) {
         scope.launch {
             try {
-                val tx = database.transactionDao().getTransactionById(prompt.transactionId)
-                val cat = tx?.categoryName?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) } ?: "Official Expense"
-                val expense = CompanyExpenseEntity(
-                    date = prompt.date,
-                    amount = prompt.amount,
-                    reason = prompt.description,
-                    companyName = "Corporate",
-                    category = cat,
-                    paymentMethod = "Corporate Card / UPI"
-                )
-                repository.insertCompanyExpense(expense)
+                val currentExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
+                val existingExp = currentExpenses.find {
+                    it.notes.contains("Statement #${prompt.transactionId}") ||
+                    (it.date == prompt.date && Math.abs(it.amount - prompt.amount) < 0.01 && it.reason.equals(prompt.description, ignoreCase = true))
+                }
+                if (existingExp == null) {
+                    val tx = database.transactionDao().getTransactionById(prompt.transactionId)
+                    val cat = tx?.categoryName?.takeIf { it.isNotBlank() && !it.equals("Uncategorized", ignoreCase = true) } ?: "Official Expense"
+                    val expense = CompanyExpenseEntity(
+                        date = prompt.date,
+                        amount = prompt.amount,
+                        reason = prompt.description,
+                        companyName = "Corporate",
+                        category = cat,
+                        paymentMethod = "Corporate Card / UPI",
+                        notes = "Statement #${prompt.transactionId}"
+                    )
+                    repository.insertCompanyExpense(expense)
+                    showMessage("Official expense of ${prompt.amount} logged")
+                } else {
+                    showMessage("Expense is already logged")
+                }
                 _companyExpensePrompt.value = null
-                showMessage("Official expense of ${prompt.amount} logged")
                 scanForCompanyExpenses()
             } catch (_: Exception) {}
         }

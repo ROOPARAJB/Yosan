@@ -50,12 +50,28 @@ class CategoryRuleCoordinator(
             val list = database.transactionDao().getAllTransactionsList()
             val normalizedKeyword = CategorizationEngine.normalize(keyword)
             if (normalizedKeyword.isBlank()) return Pair(emptyList(), emptyList())
+
+            val isRuleIncome = transactionType in listOf(TransactionType.INCOME, TransactionType.REFUND, TransactionType.BORROWING)
+            val isRuleExpense = transactionType in listOf(TransactionType.EXPENSE, TransactionType.LENDING, TransactionType.INVESTMENT)
+
             list.forEach { tx ->
                 val normalizedDesc = CategorizationEngine.normalize(tx.description)
                 if (normalizedDesc.contains(normalizedKeyword)) {
-                    prevList.add(tx)
-                    database.transactionDao().updateTransactionCategory(tx.id, categoryId, categoryName, transactionType)
-                    newList.add(tx.copy(categoryId = categoryId, categoryName = categoryName, transactionType = transactionType, updatedAt = System.currentTimeMillis()))
+                    val isTxCredit = tx.creditAmount > 0.0 || (tx.debitAmount == 0.0 && tx.transactionType in listOf(TransactionType.INCOME, TransactionType.REFUND, TransactionType.BORROWING))
+                    val isTxDebit = tx.debitAmount > 0.0 || (tx.creditAmount == 0.0 && tx.transactionType in listOf(TransactionType.EXPENSE, TransactionType.LENDING, TransactionType.INVESTMENT))
+
+                    // Only apply if the rule direction matches the transaction direction from statement
+                    val matchesDirection = when {
+                        isRuleIncome -> isTxCredit
+                        isRuleExpense -> isTxDebit
+                        else -> true
+                    }
+
+                    if (matchesDirection) {
+                        prevList.add(tx)
+                        database.transactionDao().updateTransactionCategory(tx.id, categoryId, categoryName, transactionType)
+                        newList.add(tx.copy(categoryId = categoryId, categoryName = categoryName, transactionType = transactionType, updatedAt = System.currentTimeMillis()))
+                    }
                 }
             }
         } catch (_: Exception) {}

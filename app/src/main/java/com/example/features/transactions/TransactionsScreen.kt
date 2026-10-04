@@ -2,12 +2,15 @@ package com.example.features.transactions
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -48,6 +51,7 @@ fun TransactionsScreen(
     val selectedMonth by viewModel.selectedMonthFilter.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
+    val companyExpenses by viewModel.companyExpenses.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
 
     // Group transactions by Date
@@ -66,7 +70,22 @@ fun TransactionsScreen(
     }
 
     var showDeleteAllDialog by remember { mutableStateOf(false) }
+    var showComparerDialog by remember { mutableStateOf(false) }
     val selectedTxIds = remember { mutableStateListOf<Long>() }
+
+    if (showComparerDialog) {
+        val allTransactionsForAudit by viewModel.allTransactions.collectAsState()
+        StatementComparerDialog(
+            allTransactions = allTransactionsForAudit,
+            onRestoreTransactionFlow = { tx ->
+                viewModel.restoreOriginalTransactionFlow(tx)
+            },
+            onRestoreAllDiscrepancies = { txList ->
+                viewModel.restoreAllOriginalFlows(txList)
+            },
+            onDismiss = { showComparerDialog = false }
+        )
+    }
 
     if (showDeleteAllDialog) {
         AlertDialog(
@@ -163,6 +182,138 @@ fun TransactionsScreen(
     }
 
     var showBatchCategoryPicker by remember { mutableStateOf(false) }
+    var showBatchCompanyDialog by remember { mutableStateOf(false) }
+    var batchCompanyName by remember { mutableStateOf("") }
+    var batchOfficialCategory by remember { mutableStateOf("Travel") }
+    var batchRecordAsOfficial by remember { mutableStateOf(true) }
+
+    val existingCompanyNames = remember(companyExpenses) {
+        companyExpenses.map { it.companyName }.filter { it.isNotBlank() }.distinct()
+    }
+
+    if (showBatchCompanyDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatchCompanyDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Business,
+                        contentDescription = null,
+                        tint = LendingIndigo,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Assign Company / Client (${selectedTxIds.size})", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Tag all ${selectedTxIds.size} selected statement records with a Company or Client name:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    OutlinedTextField(
+                        value = batchCompanyName,
+                        onValueChange = { batchCompanyName = it },
+                        label = { Text("Company / Client Name") },
+                        placeholder = { Text("e.g. TCS, Infosys, Client XYZ") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    if (existingCompanyNames.isNotEmpty()) {
+                        Text(
+                            text = "Recent Companies:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            existingCompanyNames.take(6).forEach { comp ->
+                                FilterChip(
+                                    selected = batchCompanyName == comp,
+                                    onClick = { batchCompanyName = comp },
+                                    label = { Text(comp, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = batchOfficialCategory,
+                        onValueChange = { batchOfficialCategory = it },
+                        label = { Text("Expense Category") },
+                        placeholder = { Text("e.g. Travel, Client Meal, Supplies") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Record as Official Expense",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Also logs items in Official Expenses audit",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = batchRecordAsOfficial,
+                            onCheckedChange = { batchRecordAsOfficial = it }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (batchCompanyName.isNotBlank()) {
+                            viewModel.batchAssignCompanyToTransactions(
+                                txIds = selectedTxIds.toList(),
+                                companyName = batchCompanyName.trim(),
+                                officialCategory = batchOfficialCategory.trim().ifBlank { "Official" },
+                                recordAsOfficialExpense = batchRecordAsOfficial
+                            )
+                            selectedTxIds.clear()
+                            showBatchCompanyDialog = false
+                            batchCompanyName = ""
+                        }
+                    },
+                    enabled = batchCompanyName.isNotBlank(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Apply to ${selectedTxIds.size} Records")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchCompanyDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     if (showBatchCategoryPicker) {
         AlertDialog(
@@ -263,7 +414,7 @@ fun TransactionsScreen(
         ) {
             val isSelectionMode = selectedTxIds.isNotEmpty()
 
-        // Header with Delete All or Multi-delete / Multi-categorize options
+        // Header with Delete All or Multi-delete / Multi-categorize / Company options
         if (isSelectionMode) {
             Row(
                 modifier = Modifier
@@ -290,19 +441,34 @@ fun TransactionsScreen(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(
+                        onClick = { showBatchCompanyDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LendingIndigo)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Business,
+                            contentDescription = "Assign Company",
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Company", fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Button(
                         onClick = { showBatchCategoryPicker = true },
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Category,
                             contentDescription = "Categorize Selected",
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Categorize", fontSize = 12.sp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Category", fontSize = 12.sp)
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     IconButton(
                         onClick = {
                             viewModel.deleteTransactions(selectedTxIds.toList())
@@ -334,6 +500,24 @@ fun TransactionsScreen(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
+                        onClick = { showComparerDialog = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CompareArrows,
+                            contentDescription = "Audit / Comparer",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Audit",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    TextButton(
                         onClick = onNavigateToImport
                     ) {
                         Icon(
@@ -350,7 +534,7 @@ fun TransactionsScreen(
                             fontSize = 13.sp
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     TextButton(
                         onClick = { showDeleteAllDialog = true }
                     ) {

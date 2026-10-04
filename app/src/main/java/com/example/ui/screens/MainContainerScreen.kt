@@ -265,134 +265,151 @@ fun MainContainerScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            if (currentSubScreen != SubScreen.NONE) {
-                when (currentSubScreen) {
-                    SubScreen.RULES -> RulesScreen(viewModel = viewModel)
-                    SubScreen.COMPANY_EXPENSES -> OfficialExpensesScreen(
-                        viewModel = viewModel,
-                        onAddExpenseClick = {
-                            addSheetTab = AddTab.COMPANY_EXPENSE
-                            showAddSheet = true
-                        }
-                    )
-                    SubScreen.REPORTS -> ReportsScreen(viewModel = viewModel)
-                    SubScreen.IMPORT_STATEMENT -> ImportStatementScreen(
-                        viewModel = viewModel,
-                        onImportSuccess = {
-                            currentSubScreen = SubScreen.NONE
-                            currentTab = MainTab.TRANSACTIONS
-                        }
-                    )
-                    SubScreen.LENDING -> LendingScreen(
-                        viewModel = viewModel,
-                        onAddLoanClick = {
-                            addSheetTab = AddTab.LEND_MONEY
-                            preselectedLoanForRepay = null
-                            showAddSheet = true
-                        },
-                        onRepayLoanClick = { loan ->
-                            preselectedLoanForRepay = loan
-                            addSheetTab = AddTab.LEND_MONEY
-                            showAddSheet = true
-                        }
-                    )
-                    SubScreen.BORROWING -> BorrowingScreen(
-                        viewModel = viewModel,
-                        onAddBorrowClick = {
-                            addSheetTab = AddTab.BORROW_MONEY
-                            showAddSheet = true
-                        },
-                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
-                    )
-                    SubScreen.PERSONAL_EXPENSES -> PersonalExpensesScreen(
-                        viewModel = viewModel,
-                        onAddExpenseClick = {
-                            addSheetTab = AddTab.EXPENSE
-                            showAddSheet = true
-                        },
-                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
-                    )
-                    SubScreen.INVESTMENTS -> InvestmentsScreen(
-                        viewModel = viewModel,
-                        onAddInvestmentClick = {
-                            addSheetTab = AddTab.INVESTMENT
-                            showAddSheet = true
-                        },
-                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
-                    )
-                    SubScreen.TRANSFERS -> TransfersScreen(
-                        viewModel = viewModel,
-                        onAddTransferClick = {
-                            addSheetTab = AddTab.TRANSFER
-                            showAddSheet = true
-                        },
-                        onTransactionClick = { tx -> selectedTransactionForDetail = tx }
-                    )
-                    SubScreen.EXCEL_SYNC -> ExcelSyncScreen(viewModel = viewModel)
-                    SubScreen.NONE -> {}
-                }
-            } else {
-                AnimatedContent(
-                    targetState = currentTab,
-                    transitionSpec = {
-                        val initialIndex = initialState.ordinal
-                        val targetIndex = targetState.ordinal
-                        if (targetIndex > initialIndex) {
-                            (slideInHorizontally(animationSpec = tween(400)) { width -> width } + fadeIn(animationSpec = tween(400))).togetherWith(
-                                slideOutHorizontally(animationSpec = tween(400)) { width -> -width } + fadeOut(animationSpec = tween(400))
-                            )
-                        } else {
-                            (slideInHorizontally(animationSpec = tween(400)) { width -> -width } + fadeIn(animationSpec = tween(400))).togetherWith(
-                                slideOutHorizontally(animationSpec = tween(400)) { width -> width } + fadeOut(animationSpec = tween(400))
-                            )
-                        }.using(
-                            SizeTransform(clip = false)
+            AnimatedContent(
+                targetState = currentSubScreen,
+                transitionSpec = {
+                    if (targetState != SubScreen.NONE && initialState == SubScreen.NONE) {
+                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { it } + fadeIn(tween(250))).togetherWith(
+                            slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { -it / 4 } + fadeOut(tween(200))
                         )
-                    },
-                    label = "TabTransition"
-                ) { tab ->
-                    when (tab) {
-                        MainTab.DASHBOARD -> DashboardScreen(
+                    } else if (targetState == SubScreen.NONE && initialState != SubScreen.NONE) {
+                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { -it / 4 } + fadeIn(tween(250))).togetherWith(
+                            slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { it } + fadeOut(tween(200))
+                        )
+                    } else {
+                        (slideInHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { it } + fadeIn(tween(250))).togetherWith(
+                            slideOutHorizontally(animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f)) { -it } + fadeOut(tween(200))
+                        )
+                    }.using(SizeTransform(clip = false))
+                },
+                label = "SubScreenAnimatedContent"
+            ) { subScreen ->
+                if (subScreen != SubScreen.NONE) {
+                    when (subScreen) {
+                        SubScreen.RULES -> RulesScreen(viewModel = viewModel)
+                        SubScreen.COMPANY_EXPENSES -> OfficialExpensesScreen(
                             viewModel = viewModel,
-                            onNavigateToTransactions = { currentTab = MainTab.TRANSACTIONS },
-                            onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
-                            onOpenAddSheet = {
-                                addSheetTab = AddTab.EXPENSE
+                            onAddExpenseClick = {
+                                addSheetTab = AddTab.COMPANY_EXPENSE
+                                showAddSheet = true
+                            }
+                        )
+                        SubScreen.REPORTS -> ReportsScreen(viewModel = viewModel)
+                        SubScreen.IMPORT_STATEMENT -> ImportStatementScreen(
+                            viewModel = viewModel,
+                            onImportSuccess = {
+                                currentSubScreen = SubScreen.NONE
+                                currentTab = MainTab.TRANSACTIONS
+                            }
+                        )
+                        SubScreen.LENDING -> LendingScreen(
+                            viewModel = viewModel,
+                            onAddLoanClick = {
+                                addSheetTab = AddTab.LEND_MONEY
                                 preselectedLoanForRepay = null
                                 showAddSheet = true
                             },
-                            onTransactionClick = { tx -> selectedTransactionForDetail = tx },
-                            onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
-                            onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
-                            onNavigateToBorrowing = { currentSubScreen = SubScreen.BORROWING },
-                            onNavigateToPersonalExpenses = { currentSubScreen = SubScreen.PERSONAL_EXPENSES },
-                            onNavigateToInvestments = { currentSubScreen = SubScreen.INVESTMENTS },
-                            onNavigateToTransfers = { currentSubScreen = SubScreen.TRANSFERS }
+                            onRepayLoanClick = { loan ->
+                                preselectedLoanForRepay = loan
+                                addSheetTab = AddTab.LEND_MONEY
+                                showAddSheet = true
+                            }
                         )
-
-                        MainTab.TRANSACTIONS -> TransactionsScreen(
+                        SubScreen.BORROWING -> BorrowingScreen(
                             viewModel = viewModel,
-                            onTransactionClick = { tx -> selectedTransactionForDetail = tx },
-                            onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT }
+                            onAddBorrowClick = {
+                                addSheetTab = AddTab.BORROW_MONEY
+                                showAddSheet = true
+                            },
+                            onTransactionClick = { tx -> selectedTransactionForDetail = tx }
                         )
-
-                        MainTab.SETTINGS -> SettingsScreen(
+                        SubScreen.PERSONAL_EXPENSES -> PersonalExpensesScreen(
                             viewModel = viewModel,
-                            authViewModel = authViewModel,
-                            onNavigateToRules = { currentSubScreen = SubScreen.RULES },
-                            onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
-                            onNavigateToReports = { currentTab = MainTab.REPORTS },
-                            onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
-                            onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
-                            onNavigateToExcelSync = { currentSubScreen = SubScreen.EXCEL_SYNC }
+                            onAddExpenseClick = {
+                                addSheetTab = AddTab.EXPENSE
+                                showAddSheet = true
+                            },
+                            onTransactionClick = { tx -> selectedTransactionForDetail = tx }
                         )
+                        SubScreen.INVESTMENTS -> InvestmentsScreen(
+                            viewModel = viewModel,
+                            onAddInvestmentClick = {
+                                addSheetTab = AddTab.INVESTMENT
+                                showAddSheet = true
+                            },
+                            onTransactionClick = { tx -> selectedTransactionForDetail = tx }
+                        )
+                        SubScreen.TRANSFERS -> TransfersScreen(
+                            viewModel = viewModel,
+                            onAddTransferClick = {
+                                addSheetTab = AddTab.TRANSFER
+                                showAddSheet = true
+                            },
+                            onTransactionClick = { tx -> selectedTransactionForDetail = tx }
+                        )
+                        SubScreen.EXCEL_SYNC -> ExcelSyncScreen(viewModel = viewModel)
+                        SubScreen.NONE -> {}
+                    }
+                } else {
+                    AnimatedContent(
+                        targetState = currentTab,
+                        transitionSpec = {
+                            val initialIndex = initialState.ordinal
+                            val targetIndex = targetState.ordinal
+                            if (targetIndex > initialIndex) {
+                                (slideInHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (width * 0.9f).toInt() } + fadeIn(tween(250))).togetherWith(
+                                    slideOutHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (-width * 0.9f).toInt() } + fadeOut(tween(200))
+                                )
+                            } else {
+                                (slideInHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (-width * 0.9f).toInt() } + fadeIn(tween(250))).togetherWith(
+                                    slideOutHorizontally(animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)) { width -> (width * 0.9f).toInt() } + fadeOut(tween(200))
+                                )
+                            }.using(
+                                SizeTransform(clip = false)
+                            )
+                        },
+                        label = "TabTransition"
+                    ) { tab ->
+                        when (tab) {
+                            MainTab.DASHBOARD -> DashboardScreen(
+                                viewModel = viewModel,
+                                onNavigateToTransactions = { currentTab = MainTab.TRANSACTIONS },
+                                onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
+                                onOpenAddSheet = {
+                                    addSheetTab = AddTab.EXPENSE
+                                    preselectedLoanForRepay = null
+                                    showAddSheet = true
+                                },
+                                onTransactionClick = { tx -> selectedTransactionForDetail = tx },
+                                onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
+                                onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
+                                onNavigateToBorrowing = { currentSubScreen = SubScreen.BORROWING },
+                                onNavigateToPersonalExpenses = { currentSubScreen = SubScreen.PERSONAL_EXPENSES },
+                                onNavigateToInvestments = { currentSubScreen = SubScreen.INVESTMENTS },
+                                onNavigateToTransfers = { currentSubScreen = SubScreen.TRANSFERS }
+                            )
 
-                        MainTab.REPORTS -> ReportsScreen(viewModel = viewModel)
+                            MainTab.TRANSACTIONS -> TransactionsScreen(
+                                viewModel = viewModel,
+                                onTransactionClick = { tx -> selectedTransactionForDetail = tx },
+                                onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT }
+                            )
+
+                            MainTab.SETTINGS -> SettingsScreen(
+                                viewModel = viewModel,
+                                authViewModel = authViewModel,
+                                onNavigateToRules = { currentSubScreen = SubScreen.RULES },
+                                onNavigateToCompanyExpenses = { currentSubScreen = SubScreen.COMPANY_EXPENSES },
+                                onNavigateToReports = { currentTab = MainTab.REPORTS },
+                                onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
+                                onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
+                                onNavigateToExcelSync = { currentSubScreen = SubScreen.EXCEL_SYNC }
+                            )
+
+                            MainTab.REPORTS -> ReportsScreen(viewModel = viewModel)
+                        }
                     }
                 }
-
-
-
             }
 
             // Sheets & Dialogs

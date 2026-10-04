@@ -247,6 +247,82 @@ class LendingCoordinator(
         }
     }
 
+    fun linkTransactionToLoan(txId: Long, loanId: Long?, lendTag: String? = null) {
+        scope.launch {
+            val tx = repository.getTransactionById(txId) ?: return@launch
+            val oldLoanId = tx.linkedLoanId
+
+            if (loanId != null) {
+                val targetLoan = repository.getLoanById(loanId)
+                val resolvedTag = lendTag ?: (targetLoan?.let {
+                    Regex("""#(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(it.notes)?.groupValues?.get(1) ?: "LEND-${it.id}"
+                } ?: "LEND-$loanId")
+
+                val updated = tx.copy(
+                    linkedLoanId = loanId,
+                    advanceId = resolvedTag,
+                    categoryName = if (tx.categoryName.equals("Uncategorized", ignoreCase = true)) "Loan Repayment" else tx.categoryName,
+                    transactionType = TransactionType.INCOME,
+                    updatedAt = System.currentTimeMillis()
+                )
+                repository.updateTransaction(updated)
+
+                if (targetLoan != null) {
+                    val allTxs = database.transactionDao().getAllTransactionsList()
+                    val totalRepaid = allTxs.filter { it.linkedLoanId == loanId || (it.id == txId) }.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+                    val remaining = (targetLoan.amount - totalRepaid).coerceAtLeast(0.0)
+                    val status = when {
+                        remaining <= 0.0 -> LoanStatus.PAID
+                        totalRepaid > 0.0 -> LoanStatus.PARTIALLY_PAID
+                        else -> LoanStatus.ACTIVE
+                    }
+                    repository.updateLoan(targetLoan.copy(amountRepaid = totalRepaid, remainingAmount = remaining, status = status))
+                    showMessage("Income linked to Lend #${resolvedTag.removePrefix("#")} (${targetLoan.personName})")
+                }
+            } else {
+                val updated = tx.copy(
+                    linkedLoanId = null,
+                    advanceId = if (tx.advanceId?.startsWith("LEND", ignoreCase = true) == true) null else tx.advanceId,
+                    updatedAt = System.currentTimeMillis()
+                )
+                repository.updateTransaction(updated)
+                if (oldLoanId != null) {
+                    val oldLoan = repository.getLoanById(oldLoanId)
+                    if (oldLoan != null) {
+                        val allTxs = database.transactionDao().getAllTransactionsList().filter { it.id != txId }
+                        val totalRepaid = allTxs.filter { it.linkedLoanId == oldLoanId }.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+                        val remaining = (oldLoan.amount - totalRepaid).coerceAtLeast(0.0)
+                        val status = when {
+                            remaining <= 0.0 -> LoanStatus.PAID
+                            totalRepaid > 0.0 -> LoanStatus.PARTIALLY_PAID
+                            else -> LoanStatus.ACTIVE
+                        }
+                        repository.updateLoan(oldLoan.copy(amountRepaid = totalRepaid, remainingAmount = remaining, status = status))
+                    }
+                }
+                showMessage("Unlinked from lend record")
+            }
+        }
+    }
+
+    fun linkTransactionToBorrow(txId: Long, borrowId: String?) {
+        scope.launch {
+            val tx = repository.getTransactionById(txId) ?: return@launch
+            val cleanBorrowId = borrowId?.trim()?.takeIf { it.isNotBlank() }?.removePrefix("#")
+            val updated = tx.copy(
+                advanceId = cleanBorrowId?.let { "BORROW-$it".replace("BORROW-BORROW-", "BORROW-") },
+                categoryName = if (cleanBorrowId != null && tx.categoryName.equals("Uncategorized", ignoreCase = true)) "Debt Repayment" else tx.categoryName,
+                updatedAt = System.currentTimeMillis()
+            )
+            repository.updateTransaction(updated)
+            if (cleanBorrowId != null) {
+                showMessage("Expense linked to Borrow #$cleanBorrowId")
+            } else {
+                showMessage("Unlinked from borrow record")
+            }
+        }
+    }
+
     fun deleteLendSet(lendTag: String, loanId: Long? = null, deleteLendTx: Boolean = false) {
         scope.launch {
             val cleanId = lendTag.trim().removePrefix("#")

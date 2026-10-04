@@ -38,8 +38,15 @@ object CategorizationEngine {
             )
         }
 
-        // Active rules sorted by priority descending
-        val activeSortedRules = rules.filter { it.isActive }.sortedByDescending { it.priority }
+        // Active rules filtered by credit/debit compatibility and sorted by priority descending
+        val activeSortedRules = rules.filter { rule ->
+            if (!rule.isActive) return@filter false
+            if (isCredit) {
+                rule.transactionType in listOf(TransactionType.INCOME, TransactionType.REFUND, TransactionType.BORROWING, TransactionType.TRANSFER)
+            } else {
+                rule.transactionType in listOf(TransactionType.EXPENSE, TransactionType.LENDING, TransactionType.INVESTMENT, TransactionType.TRANSFER)
+            }
+        }.sortedByDescending { it.priority }
 
         for (rule in activeSortedRules) {
             val normalizedKeyword = normalize(rule.keyword)

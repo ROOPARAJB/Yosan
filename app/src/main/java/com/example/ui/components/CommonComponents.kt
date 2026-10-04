@@ -208,8 +208,25 @@ fun TransactionItemCard(
 
             // Title, Category & Date
             Column(modifier = Modifier.weight(1f)) {
+                val displayTitle = remember(transaction) {
+                    if (transaction.transactionType == TransactionType.LENDING || transaction.categoryName.equals("Lend", ignoreCase = true) || transaction.categoryName.equals("Loans Given", ignoreCase = true)) {
+                        val explicitId = transaction.advanceId?.takeIf { it.startsWith("LEND", ignoreCase = true) }
+                            ?: transaction.linkedLoanId?.let { "LEND-$it" }
+                            ?: Regex("""#(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(transaction.notes)?.groupValues?.get(1)
+                            ?: Regex("""#(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(transaction.description)?.groupValues?.get(1)
+                        if (!explicitId.isNullOrBlank()) {
+                            val clean = explicitId.uppercase().replace(Regex("[_ ]"), "-")
+                            if (clean.startsWith("#")) clean else "#$clean"
+                        } else {
+                            "#LEND-${transaction.id}"
+                        }
+                    } else {
+                        transaction.description
+                    }
+                }
+
                 Text(
-                    text = transaction.description,
+                    text = displayTitle,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -221,7 +238,7 @@ fun TransactionItemCard(
                     CategoryChip(categoryName = transaction.categoryName)
                     val idTag = transaction.advanceId?.takeIf { it.isNotBlank() }
                         ?: transaction.referenceNumber.takeIf { it.startsWith("LEND", true) || it.startsWith("BORROW", true) || it.startsWith("ADV", true) }
-                    if (!idTag.isNullOrBlank()) {
+                    if (!idTag.isNullOrBlank() && !displayTitle.startsWith("#")) {
                         val (tagBg, tagFg) = when {
                             idTag.startsWith("LEND", true) || transaction.transactionType == TransactionType.LENDING -> LendingIndigo.copy(alpha = 0.15f) to LendingIndigo
                             idTag.startsWith("BORROW", true) || transaction.transactionType == TransactionType.BORROWING -> OutstandingAmber.copy(alpha = 0.15f) to OutstandingAmber

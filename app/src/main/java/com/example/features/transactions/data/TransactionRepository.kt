@@ -54,31 +54,60 @@ class TransactionRepository(private val database: AppDatabase) {
 
     suspend fun recalculateAccountBalance(accountId: Long) {
         val account = accountDao.getAccountById(accountId) ?: return
-        val txs = transactionDao.getTransactionsByAccountList(accountId)
-        val latestBalance = txs.firstOrNull { it.balanceAfterTransaction != null }?.balanceAfterTransaction
-        val computedBalance = if (latestBalance != null) {
-            latestBalance
+        val allAccounts = accountDao.getAllAccountsList()
+        val isSingleOrPrimary = allAccounts.size <= 1 || account.isDefault || account.id == 1L
+
+        val txs = if (isSingleOrPrimary) {
+            transactionDao.getAllTransactionsList().filter {
+                it.accountId == accountId || it.accountId == 0L || it.accountId == 1L
+            }
         } else {
-            val netInflows = txs.sumOf { tx ->
-                when {
-                    tx.creditAmount > 0.0 -> tx.creditAmount
-                    tx.transactionType == com.example.data.local.entity.TransactionType.INCOME ||
-                    tx.transactionType == com.example.data.local.entity.TransactionType.REFUND ||
-                    tx.transactionType == com.example.data.local.entity.TransactionType.BORROWING -> tx.amount
-                    else -> 0.0
-                }
-            }
-            val netOutflows = txs.sumOf { tx ->
-                when {
-                    tx.debitAmount > 0.0 -> tx.debitAmount
-                    tx.transactionType == com.example.data.local.entity.TransactionType.EXPENSE ||
-                    tx.transactionType == com.example.data.local.entity.TransactionType.LENDING ||
-                    tx.transactionType == com.example.data.local.entity.TransactionType.INVESTMENT -> tx.amount
-                    else -> 0.0
-                }
-            }
-            account.openingBalance + netInflows - netOutflows
+            transactionDao.getTransactionsByAccountList(accountId)
         }
-        accountDao.updateBalance(accountId, computedBalance)
+
+        fun resolveCredit(tx: TransactionEntity): Double = when {
+            tx.creditAmount > 0.0 -> tx.creditAmount
+            tx.transactionType in listOf(
+                com.example.data.local.entity.TransactionType.INCOME,
+                com.example.data.local.entity.TransactionType.REFUND,
+                com.example.data.local.entity.TransactionType.BORROWING
+            ) && tx.amount > 0.0 -> tx.amount
+            else -> 0.0
+        }
+
+        fun resolveDebit(tx: TransactionEntity): Double = when {
+            tx.debitAmount > 0.0 -> tx.debitAmount
+            tx.transactionType in listOf(
+                com.example.data.local.entity.TransactionType.EXPENSE,
+                com.example.data.local.entity.TransactionType.LENDING,
+                com.example.data.local.entity.TransactionType.INVESTMENT
+            ) && tx.amount > 0.0 -> tx.amount
+            else -> 0.0
+        }
+
+        val latestTxWithBalance = txs
+            .filter { it.balanceAfterTransaction != null }
+            .maxWithOrNull(compareBy<TransactionEntity> { it.transactionDate }.thenBy { it.id })
+
+        val computedBalance = if (latestTxWithBalance != null && latestTxWithBalance.balanceAfterTransaction != null) {
+            val snapshotBalance = latestTxWithBalance.balanceAfterTransaction!!
+            val subsequentCredits = txs.filter {
+                (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+            }.sumOf { resolveCredit(it) }
+
+            val subsequentDebits = txs.filter {
+                (it.transactionDate > latestTxWithBalance.transactionDate) ||
+                (it.transactionDate == latestTxWithBalance.transactionDate && it.id > latestTxWithBalance.id)
+            }.sumOf { resolveDebit(it) }
+
+            snapshotBalance + subsequentCredits - subsequentDebits
+        } else {
+            val totalCredits = txs.sumOf { resolveCredit(it) }
+            val totalDebits = txs.sumOf { resolveDebit(it) }
+            account.openingBalance + totalCredits - totalDebits
+        }
+
+        accountDao.updateBalance(accountId, com.example.utils.CurrencyFormatter.roundFinancialAmount(computedBalance))
     }
 }

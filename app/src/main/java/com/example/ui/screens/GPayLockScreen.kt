@@ -32,8 +32,9 @@ import com.example.ui.theme.*
 fun GPayLockScreen(
     userName: String = "User",
     errorMessage: String? = null,
-    onTriggerUnlock: () -> Unit,
-    onExitApp: () -> Unit,
+    onFingerprintClick: () -> Unit,
+    onPinPatternClick: (() -> Unit)? = null,
+    onExitApp: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -47,21 +48,7 @@ fun GPayLockScreen(
                 .fillMaxSize()
                 .padding(24.dp)
         ) {
-            // Top App Exit button
-            IconButton(
-                onClick = onExitApp,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 16.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.ExitToApp,
-                    contentDescription = "Exit App",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            // Center Content: GPay Style Lock Visuals
+            // Center Content: Minimal GPay-style Lock Visuals with Fingerprint Icon
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -69,7 +56,7 @@ fun GPayLockScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                // Outer glowing circle with Shield & Lock Icon
+                // Outer glowing circle
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -125,57 +112,51 @@ fun GPayLockScreen(
                     lineHeight = 20.sp
                 )
 
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(40.dp))
 
-                // Primary Unlock Button (Fingerprint / Biometric)
-                Button(
-                    onClick = onTriggerUnlock,
-                    modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .height(54.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                // Interactive Clean Fingerprint Icon Button
+                Surface(
+                    onClick = onFingerprintClick,
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.size(84.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Fingerprint,
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Unlock with Fingerprint",
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp
-                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Fingerprint,
+                            contentDescription = "Unlock with Fingerprint",
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Secondary Device PIN / Pattern Fallback Button
-                OutlinedButton(
-                    onClick = onTriggerUnlock,
-                    modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .height(50.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Password,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Use Phone PIN or Pattern",
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                // Fallback option: Unlock with Phone PIN / Password
+                if (onPinPatternClick != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    TextButton(
+                        onClick = onPinPatternClick,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Password,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Use PIN or Password",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
 
                 // Error Message / Lockout notice if any
@@ -188,7 +169,7 @@ fun GPayLockScreen(
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth(0.85f)
-                                .padding(top = 20.dp),
+                                .padding(top = 24.dp),
                             shape = RoundedCornerShape(12.dp),
                             color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
                         ) {
@@ -202,27 +183,6 @@ fun GPayLockScreen(
                         }
                     }
                 }
-            }
-
-            // Bottom Brand Footnote
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Shield,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Bank-Grade On-Device Security",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
             }
         }
     }

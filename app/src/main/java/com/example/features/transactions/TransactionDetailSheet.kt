@@ -469,10 +469,116 @@ fun TransactionDetailSheet(
                 DetailRow(label = "Credit", value = CurrencyFormatter.formatInr(currentTx.creditAmount))
             }
 
-            // Dynamic ID Assignment or Advance Spending Link
+            // Dynamic ID Assignment, Lend/Borrow Repayment Linking, or Advance Spending Link
             val advanceSummaries by viewModel.advanceSummaries.collectAsState()
+            val loans by viewModel.loans.collectAsState()
+            val availableBorrowIds = remember(allTransactions) {
+                allTransactions.mapNotNull { tx ->
+                    val id = tx.advanceId?.trim()
+                    if (id != null && id.startsWith("BORROW", ignoreCase = true)) id
+                    else if (tx.transactionType == TransactionType.BORROWING && !id.isNullOrBlank()) id
+                    else null
+                }.distinct()
+            }
 
-            if (currentTx.transactionType == TransactionType.EXPENSE) {
+            // Lend Repayment Link (For Inflows / Income)
+            if (currentTx.creditAmount > 0 || currentTx.transactionType == TransactionType.INCOME) {
+                if (loans.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "Link to Lend Repayment (Money Returned)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = LendingIndigo
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = currentTx.linkedLoanId == null && (currentTx.advanceId == null || !currentTx.advanceId!!.startsWith("LEND", ignoreCase = true)),
+                                onClick = {
+                                    if (currentTx.linkedLoanId != null || currentTx.advanceId?.startsWith("LEND", ignoreCase = true) == true) {
+                                        viewModel.linkTransactionToLoan(currentTx.id, null)
+                                    }
+                                },
+                                label = { Text("None") }
+                            )
+                            loans.forEach { loan ->
+                                val tag = Regex("""#(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(loan.notes)?.groupValues?.get(1) ?: "LEND-${loan.id}"
+                                val isSelected = currentTx.linkedLoanId == loan.id || currentTx.advanceId?.equals(tag, ignoreCase = true) == true || currentTx.advanceId?.equals("LEND-${loan.id}", ignoreCase = true) == true
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.linkTransactionToLoan(currentTx.id, if (isSelected) null else loan.id, tag)
+                                    },
+                                    label = { Text("#$tag - ${loan.personName} (₹${loan.remainingAmount.toInt()} left)") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = LendingIndigo.copy(alpha = 0.2f),
+                                        selectedLabelColor = LendingIndigo
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Borrow Repayment Link (For Outflows / Expenses)
+            if (currentTx.debitAmount > 0 || currentTx.transactionType == TransactionType.EXPENSE) {
+                if (availableBorrowIds.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "Link to Borrow Repayment",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = OutstandingAmber
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = currentTx.advanceId.isNullOrBlank() || !currentTx.advanceId!!.startsWith("BORROW", ignoreCase = true),
+                                onClick = {
+                                    if (currentTx.advanceId?.startsWith("BORROW", ignoreCase = true) == true) {
+                                        viewModel.linkTransactionToBorrow(currentTx.id, null)
+                                    }
+                                },
+                                label = { Text("None") }
+                            )
+                            availableBorrowIds.forEach { bId ->
+                                val isSelected = currentTx.advanceId?.equals(bId, ignoreCase = true) == true
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.linkTransactionToBorrow(currentTx.id, if (isSelected) null else bId)
+                                    },
+                                    label = { Text("#${bId.removePrefix("#")}") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = OutstandingAmber.copy(alpha = 0.2f),
+                                        selectedLabelColor = OutstandingAmber
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
                 if (advanceSummaries.isNotEmpty()) {
                     Column(
                         modifier = Modifier
@@ -493,9 +599,9 @@ fun TransactionDetailSheet(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             FilterChip(
-                                selected = currentTx.advanceId.isNullOrBlank(),
+                                selected = currentTx.advanceId.isNullOrBlank() || currentTx.advanceId!!.startsWith("BORROW", ignoreCase = true) || currentTx.advanceId!!.startsWith("LEND", ignoreCase = true),
                                 onClick = {
-                                    if (!currentTx.advanceId.isNullOrBlank()) {
+                                    if (!currentTx.advanceId.isNullOrBlank() && !currentTx.advanceId!!.startsWith("BORROW", ignoreCase = true) && !currentTx.advanceId!!.startsWith("LEND", ignoreCase = true)) {
                                         viewModel.linkTransactionToAdvance(currentTx.id, null)
                                     }
                                 },
@@ -518,7 +624,10 @@ fun TransactionDetailSheet(
                         }
                     }
                 }
-            } else {
+            }
+
+            // Custom Advance / Lend / Borrow / Investment ID manual assigner
+            if (currentTx.transactionType in listOf(TransactionType.LENDING, TransactionType.BORROWING, TransactionType.INVESTMENT, TransactionType.INCOME, TransactionType.TRANSFER)) {
                 var isEditingAdvanceId by remember { mutableStateOf(false) }
                 var editedAdvanceIdText by remember(currentTx.advanceId) { mutableStateOf(currentTx.advanceId ?: "") }
 
@@ -526,7 +635,7 @@ fun TransactionDetailSheet(
                     TransactionType.LENDING -> "Lend ID"
                     TransactionType.BORROWING -> "Borrow ID"
                     TransactionType.INVESTMENT -> "Investment Tag"
-                    else -> "Advance ID"
+                    else -> "Advance / Tracking ID"
                 }
                 val idPlaceholder = when (currentTx.transactionType) {
                     TransactionType.LENDING -> "e.g. LEND-1"

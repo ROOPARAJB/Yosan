@@ -162,35 +162,7 @@ class FinanceRepository(private val database: AppDatabase) {
     // Balance recalculation helper — delegates to TransactionRepository which has the full implementation
     private suspend fun recalculateAccountBalance(accountId: Long) {
         try {
-            val txs = transactionDao.getTransactionsByAccountList(accountId)
-            val account = accountDao.getAccountById(accountId) ?: return
-
-            // Use the latest known balance snapshot if available, otherwise compute from scratch
-            val latestBalance = txs.firstOrNull { it.balanceAfterTransaction != null }?.balanceAfterTransaction
-            val computedBalance = if (latestBalance != null) {
-                latestBalance
-            } else {
-                val netInflows = txs.sumOf { tx ->
-                    when {
-                        tx.creditAmount > 0.0 -> tx.creditAmount
-                        tx.transactionType == com.example.data.local.entity.TransactionType.INCOME ||
-                        tx.transactionType == com.example.data.local.entity.TransactionType.REFUND ||
-                        tx.transactionType == com.example.data.local.entity.TransactionType.BORROWING -> tx.amount
-                        else -> 0.0
-                    }
-                }
-                val netOutflows = txs.sumOf { tx ->
-                    when {
-                        tx.debitAmount > 0.0 -> tx.debitAmount
-                        tx.transactionType == com.example.data.local.entity.TransactionType.EXPENSE ||
-                        tx.transactionType == com.example.data.local.entity.TransactionType.LENDING ||
-                        tx.transactionType == com.example.data.local.entity.TransactionType.INVESTMENT -> tx.amount
-                        else -> 0.0
-                    }
-                }
-                account.openingBalance + netInflows - netOutflows
-            }
-            accountDao.updateBalance(accountId, computedBalance)
+            com.example.features.transactions.data.TransactionRepository(database).recalculateAccountBalance(accountId)
         } catch (_: Exception) {}
     }
 }

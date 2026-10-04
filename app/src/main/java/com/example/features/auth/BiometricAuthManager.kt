@@ -85,6 +85,49 @@ class BiometricAuthManager(private val context: Context) {
         }
     }
 
+    fun authenticateBiometric(
+        activity: FragmentActivity,
+        title: String = "Unlock Yosan",
+        subtitle: String = "Verify your fingerprint or face",
+        onSuccess: () -> Unit,
+        onError: (errorCode: Int, errorMessage: String) -> Unit,
+        onFailed: () -> Unit = {}
+    ) {
+        val executor = ContextCompat.getMainExecutor(activity)
+        val promptCallback = object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onSuccess()
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                onError(errorCode, errString.toString())
+            }
+
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+                onFailed()
+            }
+        }
+
+        val prompt = BiometricPrompt(activity, executor, promptCallback)
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG or Authenticators.BIOMETRIC_WEAK)
+            .setNegativeButtonText("Cancel")
+            .build()
+
+        try {
+            prompt.authenticate(promptInfo)
+        } catch (e: Exception) {
+            // Fallback to general authenticate if biometric only throws
+            authenticate(activity, title, subtitle, onSuccess, onError, onFailed)
+        }
+    }
+
     fun openEnrollmentSettings(activity: Activity) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
