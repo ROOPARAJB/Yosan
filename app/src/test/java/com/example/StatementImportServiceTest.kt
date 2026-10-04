@@ -97,6 +97,15 @@ class StatementImportServiceTest {
             assertNotNull(maniMoney)
             assertEquals(5000.0, maniMoney!!.creditAmount, 0.01)
             assertEquals(TransactionType.INCOME, maniMoney.suggestedType)
+
+            // Verify footer text is never read or appended into transaction descriptions
+            val last = result.validRows.last()
+            assertEquals("2026-08-31", last.date)
+            assertTrue(last.description.contains("snack lays"))
+            assertFalse("Footer must not contain assistance required", last.description.contains("assistance required", ignoreCase = true))
+            assertFalse("Footer must not contain Primary Account Holder", last.description.contains("Primary Account Holder", ignoreCase = true))
+            assertFalse("Footer must not contain bind the constituent", last.description.contains("bind the constituent", ignoreCase = true))
+            assertFalse("Footer must not contain disclaimer", last.description.contains("disclaimer", ignoreCase = true))
     }
 
     @Test

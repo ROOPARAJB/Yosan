@@ -1,8 +1,13 @@
 package com.example
 
+import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Context
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -29,6 +34,7 @@ class MainActivity : FragmentActivity() {
 
         val appPreferences = AppPreferences(applicationContext)
         val biometricAuthManager = BiometricAuthManager(applicationContext)
+        val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
 
         setContent {
             val authViewModel: AuthViewModel = viewModel()
@@ -37,17 +43,28 @@ class MainActivity : FragmentActivity() {
             val userProfile by financeViewModel.userProfile.collectAsState()
             val allTransactions by financeViewModel.allTransactions.collectAsState()
 
+            val isExistingUser = appPreferences.isOnboardingCompleted ||
+                    ((userProfile?.isOnboardingCompleted == true) &&
+                        (allTransactions.isNotEmpty() || (!userProfile?.name.isNullOrBlank() && !userProfile?.name.equals("User", ignoreCase = true))))
+
             val isBiometricEnabled = userProfile?.isBiometricEnabled ?: appPreferences.isBiometricEnabled
 
-            // GPay-Style Security Gatekeeper state
-            var isAppLocked by remember { mutableStateOf(appPreferences.isBiometricEnabled) }
+            // GPay-Style Security Gatekeeper state (Fresh installs are NEVER locked)
+            var isAppLocked by remember { mutableStateOf(appPreferences.isBiometricEnabled && isExistingUser) }
             var lockErrorMessage by remember { mutableStateOf<String?>(null) }
             var lastPauseTimestamp by remember { mutableLongStateOf(0L) }
 
-            val isExistingUser = appPreferences.isOnboardingCompleted ||
-                    (userProfile?.isOnboardingCompleted == true) ||
-                    allTransactions.isNotEmpty() ||
-                    (!userProfile?.name.isNullOrBlank() && !userProfile?.name.equals("User", ignoreCase = true))
+            // Device Screen Lock Native PIN/Pattern Launcher
+            val deviceCredentialLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                if (result.resultCode == Activity.RESULT_OK) {
+                    isAppLocked = false
+                    lockErrorMessage = null
+                } else {
+                    lockErrorMessage = "Screen lock verification was cancelled"
+                }
+            }
 
             // Keep AppPreferences synchronized with Room UserProfile updates
             LaunchedEffect(userProfile) {
@@ -73,14 +90,14 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            // Prompt helper for biometric / PIN authentication
+            // Prompt helper for biometric authentication
             val triggerUnlock = remember {
                 {
                     lockErrorMessage = null
                     biometricAuthManager.authenticate(
                         activity = this@MainActivity,
                         title = "Unlock Yosan",
-                        subtitle = "Verify your fingerprint or phone lock to continue",
+                        subtitle = "Verify your fingerprint or face to continue",
                         onSuccess = {
                             isAppLocked = false
                             lockErrorMessage = null
@@ -92,16 +109,56 @@ class MainActivity : FragmentActivity() {
                             }
                         },
                         onFailed = {
-                            lockErrorMessage = "Biometric not recognized. Try again or use PIN."
+                            lockErrorMessage = "Fingerprint not recognized. Try again or use PIN."
                         }
                     )
+                }
+            }
+
+            // Direct Phone Screen Lock PIN / Pattern Launcher
+            val triggerDeviceLock = remember {
+                {
+                    lockErrorMessage = null
+                    if (keyguardManager.isDeviceSecure) {
+                        val intent = keyguardManager.createConfirmDeviceCredentialIntent(
+                            "Unlock Yosan",
+                            "Enter your phone PIN, pattern, or password to continue"
+                        )
+                        if (intent != null) {
+                            appPreferences.isExternalIntentActive = true
+                            deviceCredentialLauncher.launch(intent)
+                        } else {
+                            lockErrorMessage = "Unable to open phone screen lock"
+                        }
+                    } else {
+                        lockErrorMessage = "No screen lock (PIN/pattern) is set on this phone. Please set an In-App PIN in Yosan Settings."
+                    }
+                }
+            }
+
+            // In-App 4-Digit PIN verifier
+            val handlePinEntered: (String) -> Boolean = remember {
+                { pin ->
+                    if (appPreferences.verifyAppPin(pin)) {
+                        isAppLocked = false
+                        lockErrorMessage = null
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
 
             // Automatically challenge user when app is in locked state
             LaunchedEffect(isAppLocked, isBiometricEnabled, isExistingUser) {
                 if (isAppLocked && isBiometricEnabled && isExistingUser) {
-                    triggerUnlock()
+                    if (!keyguardManager.isDeviceSecure && !biometricAuthManager.isBiometricAvailable() && !appPreferences.hasAppPin) {
+                        // Prevent permanent lockout if phone security was removed in Android settings
+                        isAppLocked = false
+                        financeViewModel.setBiometricLock(false)
+                    } else if (biometricAuthManager.isBiometricAvailable()) {
+                        triggerUnlock()
+                    }
                 }
             }
 
@@ -149,7 +206,10 @@ class MainActivity : FragmentActivity() {
                         GPayLockScreen(
                             userName = userProfile?.name ?: "User",
                             errorMessage = lockErrorMessage,
-                            onTriggerUnlock = triggerUnlock,
+                            hasAppPin = appPreferences.hasAppPin,
+                            onPinEntered = handlePinEntered,
+                            onTriggerBiometric = triggerUnlock,
+                            onTriggerDeviceLock = triggerDeviceLock,
                             onExitApp = { finishAffinity() }
                         )
                     }

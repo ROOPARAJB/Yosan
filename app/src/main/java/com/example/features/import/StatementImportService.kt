@@ -475,21 +475,41 @@ object StatementImportService {
             val dateRegex = Regex("(\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}|\\d{4}[/-]\\d{1,2}[/-]\\d{1,2})")
             val amountRegex = Regex("([0-9]{1,3}(?:,[0-9]{3})*\\.[0-9]{2})")
 
-            val cleanLines = dataLines.filter { !isHeaderLine(it) && !isIgnoredOrTotalLine(it) }
             val currentBlock = mutableListOf<String>()
 
-            for (line in cleanLines) {
+            for (rawLine in dataLines) {
+                val line = rawLine.trim()
+                if (line.isBlank()) continue
+
+                // Check if this line is an ignored header, footer, or total line
+                if (isHeaderLine(line) || isIgnoredOrTotalLine(line)) {
+                    val hasDateInCurrent = currentBlock.any { dateRegex.containsMatchIn(it) }
+                    val hasAmountInCurrent = currentBlock.any { amountRegex.containsMatchIn(it) }
+                    if (hasDateInCurrent && hasAmountInCurrent) {
+                        consolidatedRows.add(currentBlock.joinToString(" "))
+                    }
+                    currentBlock.clear()
+                    continue
+                }
+
                 val datesInLine = dateRegex.findAll(line).toList()
                 val startsWithDate = line.matches(Regex("^\\s*\\d{1,2}[/-](?:[A-Za-z]{3,9}|\\d{1,2})[/-]\\d{2,4}.*", RegexOption.DOT_MATCHES_ALL)) ||
                         line.matches(Regex("^\\s*\\d{4}[/-]\\d{1,2}[/-]\\d{1,2}.*", RegexOption.DOT_MATCHES_ALL))
+                val isTxnPrefix = line.startsWith("UPI/") || line.startsWith("NEFT") ||
+                        line.startsWith("IMPS") || line.startsWith("RTGS") || line.contains("Cr-") || line.contains("OUTUPI")
+
+                // If currentBlock is empty, do NOT start a transaction with a line that has no date and no transaction prefix
+                if (currentBlock.isEmpty() && !startsWithDate && datesInLine.isEmpty() && !isTxnPrefix) {
+                    continue
+                }
+
                 val hasDateInCurrent = currentBlock.any { dateRegex.containsMatchIn(it) }
                 val hasAmountInCurrent = currentBlock.any { amountRegex.containsMatchIn(it) }
 
                 var isNewTxnStart = false
                 if (currentBlock.isNotEmpty()) {
                     if (hasDateInCurrent && hasAmountInCurrent) {
-                        if (startsWithDate || datesInLine.isNotEmpty() || line.startsWith("UPI/") || line.startsWith("NEFT") ||
-                            line.startsWith("IMPS") || line.startsWith("RTGS") || line.contains("Cr-") || line.contains("OUTUPI")) {
+                        if (startsWithDate || datesInLine.isNotEmpty() || isTxnPrefix) {
                             isNewTxnStart = true
                         }
                     }
@@ -502,7 +522,12 @@ object StatementImportService {
                 currentBlock.add(line)
             }
             if (currentBlock.isNotEmpty()) {
-                consolidatedRows.add(currentBlock.joinToString(" "))
+                val hasDateInCurrent = currentBlock.any { dateRegex.containsMatchIn(it) }
+                val hasAmountInCurrent = currentBlock.any { amountRegex.containsMatchIn(it) }
+                if (hasDateInCurrent && hasAmountInCurrent) {
+                    consolidatedRows.add(currentBlock.joinToString(" "))
+                }
+                currentBlock.clear()
             }
         }
 
@@ -619,24 +644,47 @@ object StatementImportService {
         val lowerDesc = description.lowercase().trim()
 
         val ignoredKeywords = listOf(
+            // Balances & Totals
             "opening balance", "closing balance", "running balance", "total withdrawals", "total deposits",
             "total debit", "total credit", "total debits", "total credits", "total amount",
             "total value", "total sum", "grand total", "sub total", "subtotal", "running total",
             "brought forward", "carried forward", "b/f", "c/f", "balance b/f", "balance c/f",
+            "total inflow", "total outflow", "net balance", "uncleared amount", "sweep in", "od limit",
+
+            // Account & Statement Info
             "statement of account", "statement period", "transaction details for", "statement summary",
-            "account status", "account variant", "smart salary", "primary holder", "nominee details",
-            "joint holder", "od limit", "uncleared amount", "sweep in", "mandatory disclaimer",
-            "transaction codes in your account", "page 1 of", "page 2 of", "page 3 of", "page of",
-            "reward points", "to redeem your rewardz", "yes touch", "phonebanking number",
-            "cin -", "branch details", "ifsc code", "micr code", "customer id", "cust id",
-            "registered email", "mobile no", "end of statement", "computer generated",
-            "authorized signatory", "disclaimer", "total inflow", "total outflow", "net balance",
-            "summary for the period", "account statement", "e-statement", "benefits of nomination",
+            "account status", "account variant", "smart salary", "primary holder", "primary account holder",
+            "account holder name", "customer id", "cust id", "customer name", "account number",
+            "account no", "summary for the period", "account statement", "e-statement",
+
+            // Pagination
+            "page 1 of", "page 2 of", "page 3 of", "page of", "page no", "page -",
+
+            // Nominee & Disclaimers
+            "nominee details", "nominee", "benefits of nomination", "have you registered a nominee",
             "financial security", "hassle-free fund transfer", "time saving & cost effective",
-            "please ignore if nominee", "under goods and services tax", "for any assistance required",
-            "please contact a yes bank", "unless the discrepancy",
-            "adikesavalu naidu complex", "greams rd", "thousand light", "door no. 225",
-            "atm withdrawal obd", "mobile funds transfer", "atm funds transfer", "returned rtgs", "rtgs transaction"
+            "please ignore if nominee", "mandatory disclaimer", "disclaimer", "funds not clear",
+            "hold amounts", "under goods and services tax", "goods and services tax", "service tax",
+            "gst rate", "gstin",
+
+            // Discrepancy & Legal
+            "for any assistance required", "assistance required", "please contact a yes bank",
+            "please contact a", "unless the discrepancy", "shall bind the constituent",
+            "bind the constituent", "purposes and intents", "deemed to be correct",
+            "entries in the statement", "report the same within", "visiting the nearest",
+            "toll free number", "toll-free", "customer care", "phonebanking number", "yes touch",
+
+            // Loyalty / Rewards
+            "reward points", "to redeem your rewardz", "to redeem your", "rewardz points",
+
+            // Codes / Legend
+            "transaction codes in your account", "atm withdrawal obd", "mobile funds transfer",
+            "atm funds transfer", "returned rtgs", "rtgs transaction", "cin -", "branch details",
+            "ifsc code", "micr code", "registered email", "mobile no", "end of statement",
+            "computer generated", "authorized signatory",
+
+            // Branch addresses
+            "adikesavalu naidu complex", "greams rd", "thousand light", "door no. 225"
         )
 
         for (kw in ignoredKeywords) {
@@ -663,6 +711,53 @@ object StatementImportService {
         }
 
         return false
+    }
+
+    private fun stripFooterArtifactsFromDescription(desc: String): String {
+        var cleaned = desc
+        val footerMarkers = listOf(
+            "assistance required",
+            "be correct and shall bind",
+            "bind the constituent",
+            "purposes and intents",
+            "primary account holder",
+            "account holder name",
+            "customer id",
+            "cust id",
+            "page 1 of",
+            "page 2 of",
+            "page 3 of",
+            "page of",
+            "page no",
+            "mandatory disclaimer",
+            "reward points",
+            "to redeem your",
+            "benefits of nomination",
+            "have you registered a nominee",
+            "unless the discrepancy",
+            "under goods and services tax",
+            "transaction codes in your account",
+            "computer generated statement",
+            "this is a computer generated",
+            "end of statement",
+            "statement period",
+            "statement summary",
+            "total withdrawals",
+            "total deposits",
+            "total debits",
+            "total credits",
+            "uncleared amount",
+            "sweep in",
+            "closing balance",
+            "opening balance"
+        )
+        for (marker in footerMarkers) {
+            val idx = cleaned.indexOf(marker, ignoreCase = true)
+            if (idx != -1) {
+                cleaned = cleaned.substring(0, idx).trim()
+            }
+        }
+        return cleaned.trimEnd(',', '.', '-', '/', ':', ';', ' ')
     }
 
     private fun parseLine(
@@ -722,7 +817,7 @@ object StatementImportService {
             if (balanceIdx == -1 && tokens.size >= 7) balanceIdx = 6
 
             date = if (dateIdx in tokens.indices) normalizeDate(tokens[dateIdx]) else ""
-            description = if (descIdx in tokens.indices) sanitizeText(tokens[descIdx]) else ""
+            description = if (descIdx in tokens.indices) stripFooterArtifactsFromDescription(sanitizeText(tokens[descIdx])) else ""
             debit = if (debitIdx in tokens.indices) parseAmount(tokens[debitIdx]) else 0.0
             credit = if (creditIdx in tokens.indices) parseAmount(tokens[creditIdx]) else 0.0
             balance = if (balanceIdx in tokens.indices) parseAmountOrNull(tokens[balanceIdx]) else null
@@ -846,7 +941,7 @@ object StatementImportService {
                 cleanDesc = "UPI$cleanDesc"
             }
             cleanDesc = cleanDesc.replace(Regex("^UPI/\\s*/?\\s*"), "UPI/ ")
-            description = cleanDesc.trim()
+            description = stripFooterArtifactsFromDescription(cleanDesc.trim())
         }
 
         if (!isValidNormalizedDate(date)) {

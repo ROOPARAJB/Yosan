@@ -38,8 +38,7 @@ class BiometricAuthManager(private val context: Context) {
     }
 
     fun isBiometricAvailable(): Boolean {
-        val cap = checkCapability()
-        return cap == BiometricCapability.READY || cap == BiometricCapability.NOT_ENROLLED
+        return checkCapability() == BiometricCapability.READY
     }
 
     fun authenticate(

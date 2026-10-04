@@ -54,6 +54,39 @@ class AppPreferences(private val context: Context) {
         get() = prefs.getBoolean(KEY_EXTERNAL_INTENT_ACTIVE, false)
         set(value) = prefs.edit().putBoolean(KEY_EXTERNAL_INTENT_ACTIVE, value).apply()
 
+    var appPinHash: String?
+        get() = prefs.getString(KEY_APP_PIN_HASH, null)
+        private set(value) {
+            if (value != null) {
+                prefs.edit().putString(KEY_APP_PIN_HASH, value).apply()
+            } else {
+                prefs.edit().remove(KEY_APP_PIN_HASH).apply()
+            }
+        }
+
+    val hasAppPin: Boolean
+        get() = !appPinHash.isNullOrBlank()
+
+    fun setAppPin(pin: String) {
+        appPinHash = hashPin(pin)
+    }
+
+    fun verifyAppPin(pin: String): Boolean {
+        val current = appPinHash ?: return false
+        return current == hashPin(pin)
+    }
+
+    fun clearAppPin() {
+        appPinHash = null
+    }
+
+    private fun hashPin(pin: String): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val salt = "yosan_security_salt_v1"
+        val digest = md.digest((salt + pin).toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
     companion object {
         private const val PREFS_NAME = "yosan_app_preferences"
         private const val KEY_ONBOARDING_COMPLETED = "is_onboarding_completed"
@@ -61,5 +94,6 @@ class AppPreferences(private val context: Context) {
         private const val KEY_BIOMETRIC_ENABLED = "is_biometric_enabled"
         private const val KEY_APP_LOCK_TIMEOUT_SECONDS = "app_lock_timeout_seconds"
         private const val KEY_EXTERNAL_INTENT_ACTIVE = "external_intent_active"
+        private const val KEY_APP_PIN_HASH = "app_pin_hash"
     }
 }

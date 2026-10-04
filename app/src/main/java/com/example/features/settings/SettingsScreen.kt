@@ -49,6 +49,7 @@ import com.example.features.dashboard.DashboardCardItem
 import com.example.features.dashboard.DashboardCardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.example.ui.components.PrivacyAmountText
 import com.example.data.local.entity.UserProfileEntity
 import com.example.data.local.entity.UndoHistoryEntity
@@ -118,6 +119,7 @@ fun SettingsScreen(
     var showEditNameDialog by remember { mutableStateOf(false) }
     var tempName by remember { mutableStateOf("") }
     var showEnrollmentDialog by remember { mutableStateOf(false) }
+    var showSetPinDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -516,6 +518,43 @@ fun SettingsScreen(
                                     onClick = { viewModel.setAppLockTimeout(sec) },
                                     label = { Text(label) }
                                 )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // 4-Digit In-App PIN configuration
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "4-Digit App PIN",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = if (appPrefs.hasAppPin) "Custom PIN is active" else "Backup PIN for quick in-app unlock",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (appPrefs.hasAppPin) {
+                                    TextButton(onClick = {
+                                        appPrefs.clearAppPin()
+                                        viewModel.showMessage("App PIN removed")
+                                    }) {
+                                        Text("Remove", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                                OutlinedButton(onClick = { showSetPinDialog = true }) {
+                                    Text(if (appPrefs.hasAppPin) "Change" else "Set PIN")
+                                }
                             }
                         }
                     }
@@ -932,6 +971,94 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showEnrollmentDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showSetPinDialog) {
+        val appPrefs = remember { AppPreferences(context) }
+        var pinInput by remember { mutableStateOf("") }
+        var confirmPinInput by remember { mutableStateOf("") }
+        var pinError by remember { mutableStateOf<String?>(null) }
+
+        AlertDialog(
+            onDismissRequest = { showSetPinDialog = false },
+            title = {
+                Text(
+                    text = if (appPrefs.hasAppPin) "Change 4-Digit PIN" else "Set 4-Digit App PIN",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Create a 4-digit PIN to unlock Yosan even when biometric sensors are unavailable.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = pinInput,
+                        onValueChange = {
+                            if (it.length <= 4 && it.all { c -> c.isDigit() }) {
+                                pinInput = it
+                                pinError = null
+                            }
+                        },
+                        label = { Text("4-digit PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = confirmPinInput,
+                        onValueChange = {
+                            if (it.length <= 4 && it.all { c -> c.isDigit() }) {
+                                confirmPinInput = it
+                                pinError = null
+                            }
+                        },
+                        label = { Text("Confirm PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        isError = pinError != null,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    pinError?.let { err ->
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = err,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (pinInput.length != 4) {
+                            pinError = "PIN must be exactly 4 digits"
+                        } else if (pinInput != confirmPinInput) {
+                            pinError = "PINs do not match"
+                        } else {
+                            appPrefs.setAppPin(pinInput)
+                            showSetPinDialog = false
+                            viewModel.showMessage("4-Digit PIN saved successfully")
+                        }
+                    }
+                ) {
+                    Text("Save PIN")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSetPinDialog = false }) {
                     Text("Cancel")
                 }
             }

@@ -69,6 +69,8 @@ fun OnboardingScreen(
     var isCustomBank by remember { mutableStateOf(false) }
     var accountTypeSelected by remember { mutableStateOf("Savings") }
 
+    var isAppLockEnabled by remember { mutableStateOf(false) }
+
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -408,6 +410,32 @@ fun OnboardingScreen(
                                         }
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // App Lock Security Option
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "App Lock (Fingerprint & PIN)",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = "Require fingerprint or phone PIN to access Yosan",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isAppLockEnabled,
+                                        onCheckedChange = { isAppLockEnabled = it }
+                                    )
+                                }
                             }
 
                             4 -> {
@@ -495,6 +523,7 @@ fun OnboardingScreen(
                                 }
                                 else -> {
                                     financeViewModel.completeOnboarding(isDarkMode, isPrivacyBlurEnabled, blurTimeoutSeconds)
+                                    financeViewModel.setBiometricLock(isAppLockEnabled)
                                     financeViewModel.updateUserProfile(userName.trim(), currencySymbol)
                                     authViewModel.completeOnboarding()
                                     onComplete()
