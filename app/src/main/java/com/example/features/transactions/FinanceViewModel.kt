@@ -184,6 +184,32 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun setBiometricLock(enabled: Boolean) {
+        viewModelScope.launch {
+            com.example.utils.AppPreferences(getApplication()).isBiometricEnabled = enabled
+            repository.updateBiometricPreference(enabled)
+            showMessage(if (enabled) "App Lock enabled" else "App Lock disabled")
+        }
+    }
+
+    fun setAppLockTimeout(seconds: Int) {
+        viewModelScope.launch {
+            com.example.utils.AppPreferences(getApplication()).appLockTimeoutSeconds = seconds
+            val label = when (seconds) {
+                0 -> "Immediately"
+                30 -> "After 30 seconds"
+                60 -> "After 1 minute"
+                300 -> "After 5 minutes"
+                else -> "After $seconds seconds"
+            }
+            showMessage("Auto-lock set to $label")
+        }
+    }
+
+    fun setExternalIntentActive(active: Boolean) {
+        com.example.utils.AppPreferences(getApplication()).isExternalIntentActive = active
+    }
+
     fun updateDashboardCardsConfig(config: String) {
         viewModelScope.launch {
             try {

@@ -1,5 +1,9 @@
 package com.example.features.settings
 
+import androidx.fragment.app.FragmentActivity
+import com.example.features.auth.BiometricAuthManager
+import com.example.features.auth.BiometricCapability
+import com.example.utils.AppPreferences
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -113,6 +117,7 @@ fun SettingsScreen(
     var statusNotificationMsg by remember { mutableStateOf<String?>(null) }
     var showEditNameDialog by remember { mutableStateOf(false) }
     var tempName by remember { mutableStateOf("") }
+    var showEnrollmentDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -396,6 +401,128 @@ fun SettingsScreen(
             }
         }
 
+        // 4.2 Security: Biometric & App Lock (GPay Style)
+        item {
+            val appPrefs = remember { AppPreferences(context) }
+            val biometricAuthManager = remember { BiometricAuthManager(context) }
+            val isBioEnabled = userProfile?.isBiometricEnabled ?: appPrefs.isBiometricEnabled
+            val currentTimeout = appPrefs.appLockTimeoutSeconds
+            val activity = context as? FragmentActivity
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = CircleShape,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Fingerprint,
+                                        contentDescription = "App Lock",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Biometric & Screen Lock",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Require fingerprint, face, or phone PIN to open Yosan",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isBioEnabled,
+                            onCheckedChange = { targetState ->
+                                val cap = biometricAuthManager.checkCapability()
+                                when {
+                                    cap == BiometricCapability.NO_HARDWARE -> {
+                                        viewModel.showMessage("Biometric hardware is not available on this device")
+                                    }
+                                    cap == BiometricCapability.NOT_ENROLLED && targetState -> {
+                                        showEnrollmentDialog = true
+                                    }
+                                    activity != null -> {
+                                        biometricAuthManager.authenticate(
+                                            activity = activity,
+                                            title = if (targetState) "Enable App Lock" else "Disable App Lock",
+                                            subtitle = "Verify your identity to change app security",
+                                            onSuccess = {
+                                                viewModel.setBiometricLock(targetState)
+                                            },
+                                            onError = { errorCode, errMsg ->
+                                                if (errorCode != androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED &&
+                                                    errorCode != androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                                                    viewModel.showMessage(errMsg)
+                                                }
+                                            }
+                                        )
+                                    }
+                                    else -> {
+                                        viewModel.setBiometricLock(targetState)
+                                    }
+                                }
+                            }
+                        )
+                    }
+
+                    if (isBioEnabled) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Auto-lock timeout:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                0 to "Immediately",
+                                30 to "30s",
+                                60 to "1m",
+                                300 to "5m"
+                            ).forEach { (sec, label) ->
+                                FilterChip(
+                                    selected = currentTimeout == sec,
+                                    onClick = { viewModel.setAppLockTimeout(sec) },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
 
 
         // 5. Navigation: Account Group
@@ -469,6 +596,7 @@ fun SettingsScreen(
                         icon = Icons.Default.Restore,
                         iconColor = LendingIndigo,
                         onClick = {
+                            viewModel.setExternalIntentActive(true)
                             restoreLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
                         }
                     )
@@ -667,6 +795,7 @@ fun SettingsScreen(
                     Surface(
                         onClick = {
                             showBackupOptionsDialog = false
+                            viewModel.setExternalIntentActive(true)
                             createDocumentLauncher.launch(defaultBackupFileName)
                         },
                         shape = RoundedCornerShape(12.dp),
@@ -767,6 +896,42 @@ fun SettingsScreen(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showBackupOptionsDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showEnrollmentDialog) {
+        val biometricAuthManager = remember { BiometricAuthManager(context) }
+        val activity = context as? FragmentActivity
+        AlertDialog(
+            onDismissRequest = { showEnrollmentDialog = false },
+            title = {
+                Text(
+                    text = "No Screen Lock Enrolled",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Text(
+                    text = "To enable App Lock, your device needs a registered fingerprint or screen lock (PIN, pattern, or password). Would you like to open Android Security Settings now?",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showEnrollmentDialog = false
+                        activity?.let { biometricAuthManager.openEnrollmentSettings(it) }
+                    }
+                ) {
+                    Text("Open Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEnrollmentDialog = false }) {
                     Text("Cancel")
                 }
             }

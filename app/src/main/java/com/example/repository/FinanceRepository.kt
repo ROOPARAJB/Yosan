@@ -29,6 +29,7 @@ class FinanceRepository(private val database: AppDatabase) {
     val userProfile: Flow<UserProfileEntity?> = profileDao.getUserProfile()
     suspend fun updateProfile(profile: UserProfileEntity) = profileDao.insertOrUpdateProfile(profile)
     suspend fun updateThemePreference(isDark: Boolean) = profileDao.updateThemePreference(isDark)
+    suspend fun updateBiometricPreference(enabled: Boolean) = profileDao.updateBiometricPreference(enabled)
     suspend fun updateDashboardCardsConfig(config: String) = profileDao.updateDashboardCardsConfig(config)
 
     // Accounts

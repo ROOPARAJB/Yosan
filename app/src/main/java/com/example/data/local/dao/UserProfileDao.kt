@@ -26,5 +26,8 @@ interface UserProfileDao {
 
     @Query("UPDATE user_profile SET dashboardCardsConfig = :config WHERE id = 1")
     suspend fun updateDashboardCardsConfig(config: String)
+
+    @Query("UPDATE user_profile SET isBiometricEnabled = :enabled WHERE id = 1")
+    suspend fun updateBiometricPreference(enabled: Boolean)
 }
 
