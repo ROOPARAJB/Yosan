@@ -48,19 +48,9 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "Decoding release keystore from secrets..."
-            echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
-          else
-            echo "Generating fallback release signing keystore..."
-            keytool -genkeypair -v \
-              -keystore my-upload-key.jks \
-              -alias upload \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -storepass yosanpassword123 \
-              -keypass yosanpassword123 \
-              -dname "CN=Yosan Release, OU=Yosan Mobile, O=Yosan, L=Global, S=Global, C=US"
+            echo "$KEYSTORE_BASE64" | base64 --decode > app/release-key.jks
           fi
+          echo "Using consistent release keystore from repository."
 
       - name: Run Backend Tests
         run: |

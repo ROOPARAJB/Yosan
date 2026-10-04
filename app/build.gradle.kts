@@ -17,21 +17,25 @@ android {
     applicationId = "com.aistudio.financemanager.vpkrz"
     minSdk = 24
     targetSdk = 35
-    versionCode = 2
-    versionName = "1.1.0"
+    versionCode = 3
+    versionName = "1.1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH")?.takeIf { it.isNotBlank() } ?: "${rootDir}/my-upload-key.jks"
-      val keystoreFile = file(keystorePath)
-      if (keystoreFile.exists()) {
+      val keystoreFile = sequenceOf(
+        file("${rootDir}/app/release-key.jks"),
+        file("${rootDir}/release-key.jks"),
+        file("${rootDir}/my-upload-key.jks")
+      ).firstOrNull { it.exists() }
+
+      if (keystoreFile != null) {
         storeFile = keystoreFile
-        storePassword = System.getenv("STORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "yosanpassword123"
-        keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "yosanpassword123"
+        storePassword = "yosanpassword123"
+        keyAlias = if (keystoreFile.name.contains("release-key")) "yosan" else "upload"
+        keyPassword = "yosanpassword123"
         enableV1Signing = true
         enableV2Signing = true
       }
