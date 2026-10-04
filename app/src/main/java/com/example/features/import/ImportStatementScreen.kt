@@ -214,7 +214,10 @@ fun ImportStatementScreen(
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
-                        onClick = { filePickerLauncher.launch(SUPPORTED_STATEMENT_MIMES) },
+                        onClick = {
+                            viewModel.setExternalIntentActive(true)
+                            filePickerLauncher.launch(SUPPORTED_STATEMENT_MIMES)
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.fillMaxWidth()
                     ) {

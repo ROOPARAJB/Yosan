@@ -310,6 +310,7 @@ fun ExcelSyncScreen(
                         // Primary: Sync with Excel (Opens document picker to pull newest cloud file from Drive/OneDrive and syncs instantly)
                         Button(
                             onClick = {
+                                viewModel.setExternalIntentActive(true)
                                 openFileLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"))
                             },
                             enabled = !isSyncing,
@@ -328,7 +329,10 @@ fun ExcelSyncScreen(
 
                         // Create New Backup
                         OutlinedButton(
-                            onClick = { createFileLauncher.launch("transactions_backup.xlsx") },
+                            onClick = {
+                                viewModel.setExternalIntentActive(true)
+                                createFileLauncher.launch("transactions_backup.xlsx")
+                            },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp)
                         ) {

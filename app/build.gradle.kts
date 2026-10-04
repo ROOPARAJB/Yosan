@@ -124,6 +124,7 @@ dependencies {
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
   implementation(libs.security.crypto)
+  implementation(libs.androidx.biometric)
   implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
   implementation(libs.firebase.appcheck.recaptcha)
