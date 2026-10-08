@@ -839,6 +839,27 @@ class TransactionCoordinator(
         }
     }
 
+    fun restoreBackupFromJsonString(jsonString: String, onDone: (Boolean) -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val result = BackupService.restoreBackupJson(jsonString, database)
+                if (result.success) {
+                    recalculateAllAccountBalances()
+                    onTransactionMutated()
+                }
+                withContext(Dispatchers.Main) {
+                    showMessage(result.message)
+                    onDone(result.success)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    showMessage("Error restoring backup: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }
+
     fun restoreOriginalTransactionFlow(tx: TransactionEntity) {
         scope.launch {
             val isCredit = tx.creditAmount > 0

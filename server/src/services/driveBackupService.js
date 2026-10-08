@@ -53,15 +53,32 @@ function getDriveClientForUser(userId) {
   };
 }
 
-async function connectDrive(userId, authCode, googleAccountSub) {
+async function connectDrive(userId, authCode, googleAccountSub, driveEmail) {
+  const userRepository = require('../repositories/userRepository');
+  const jwt = require('jsonwebtoken');
+  const user = userRepository.getUserById(userId);
+  if (!user) {
+    throw new Error('USER_NOT_FOUND: User not found');
+  }
+
   const now = Date.now();
   let refreshToken = '';
+  let resolvedDriveEmail = (driveEmail || '').trim().toLowerCase();
 
   if (authCode) {
     try {
       const oauth2Client = getOAuth2Client();
       const { tokens } = await oauth2Client.getToken(authCode);
       refreshToken = tokens.refresh_token || tokens.access_token || '';
+
+      if (tokens.id_token) {
+        try {
+          const decoded = jwt.decode(tokens.id_token);
+          if (decoded && decoded.email) {
+            resolvedDriveEmail = decoded.email.trim().toLowerCase();
+          }
+        } catch (_) {}
+      }
     } catch (e) {
       refreshToken = authCode;
     }
@@ -71,11 +88,22 @@ async function connectDrive(userId, authCode, googleAccountSub) {
     throw new Error('DRIVE_OAUTH_TOKEN_MISSING: Could not obtain a valid Drive refresh token');
   }
 
+  // Email Validation Check:
+  const userEmail = (user.email || '').trim().toLowerCase();
+  if (userEmail && resolvedDriveEmail && userEmail !== resolvedDriveEmail) {
+    throw new Error(`EMAIL_MISMATCH: Google Drive account (${resolvedDriveEmail}) does not match your registered email (${userEmail}).`);
+  }
+
+  const finalDriveEmail = resolvedDriveEmail || userEmail;
   const encrypted = encryptToken(refreshToken);
 
-  driveRepository.insertDriveConnection(userId, googleAccountSub || 'sub', '', encrypted, now);
+  driveRepository.insertDriveConnection(userId, googleAccountSub || 'sub', '', encrypted, finalDriveEmail, now);
 
-  return { success: true, message: 'Google Drive connected successfully' };
+  return {
+    success: true,
+    message: 'Google Drive connected successfully',
+    driveEmail: finalDriveEmail
+  };
 }
 
 async function disconnectDrive(userId) {
@@ -86,11 +114,12 @@ async function disconnectDrive(userId) {
 function getDriveStatus(userId) {
   const conn = driveRepository.getDriveConnection(userId);
   if (!conn) {
-    return { isConnected: false };
+    return { isConnected: false, driveEmail: null };
   }
   return {
     isConnected: true,
     googleAccountSub: conn.google_account_sub,
+    driveEmail: conn.drive_email || null,
     driveFolderId: conn.drive_folder_id,
     lastBackupAt: conn.last_backup_at
   };
@@ -350,6 +379,46 @@ function restoreBackupData(userId, data) {
   return { success: true, message: 'Data restored successfully' };
 }
 
+async function getLatestBackup(userId) {
+  const accounts = db.prepare('SELECT COUNT(*) as count FROM accounts WHERE user_id = ?').get(userId);
+  const transactions = db.prepare('SELECT COUNT(*) as count FROM transactions WHERE user_id = ?').get(userId);
+  const conn = driveRepository.getDriveConnection(userId);
+
+  if ((accounts && accounts.count > 0) || (transactions && transactions.count > 0) || (conn && conn.last_backup_at)) {
+    const payload = generateBackupPayload(userId);
+    return {
+      hasBackup: true,
+      backupDate: conn?.last_backup_at ? new Date(conn.last_backup_at).toISOString() : new Date().toISOString(),
+      accountsCount: accounts?.count || 0,
+      transactionsCount: transactions?.count || 0,
+      backupJson: JSON.stringify(payload)
+    };
+  }
+
+  if (conn && conn.drive_folder_id) {
+    try {
+      const files = await listBackups(userId);
+      if (files && files.length > 0) {
+        const latestFile = files[0];
+        const { drive } = getDriveClientForUser(userId);
+        const res = await drive.files.get({ fileId: latestFile.id, alt: 'media' });
+        const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+        return {
+          hasBackup: true,
+          backupDate: latestFile.createdTime || new Date().toISOString(),
+          accountsCount: (data.accounts || []).length,
+          transactionsCount: (data.transactions || []).length,
+          backupJson: JSON.stringify(data)
+        };
+      }
+    } catch (_) {}
+  }
+
+  return {
+    hasBackup: false
+  };
+}
+
 module.exports = {
   connectDrive,
   disconnectDrive,
@@ -357,5 +426,6 @@ module.exports = {
   generateBackupPayload,
   uploadBackup,
   listBackups,
-  restoreBackupData
+  restoreBackupData,
+  getLatestBackup
 };

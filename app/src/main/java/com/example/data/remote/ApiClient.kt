@@ -27,7 +27,7 @@ object ApiClient {
         return if (isEmulator) {
             "http://10.0.2.2:3000/"
         } else {
-            "http://10.236.71.225:3000/"
+            "http://192.168.1.10:3000/"
         }
     }
 

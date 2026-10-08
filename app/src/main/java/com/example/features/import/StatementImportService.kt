@@ -58,11 +58,7 @@ object StatementImportService {
         val isXlsx = lowerName.endsWith(".xlsx") || (bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte())
         val isXls = lowerName.endsWith(".xls") || (bytes.size >= 4 && bytes[0] == 0xD0.toByte() && bytes[1] == 0xCF.toByte() && bytes[2] == 0x11.toByte() && bytes[3] == 0xE0.toByte())
 
-        val textContent = when {
-            isXlsx || isXls -> extractTextFromXlsxBytes(bytes)
-            isPdf -> extractTextFromPdfBytes(context, bytes)
-            else -> String(bytes, Charsets.UTF_8)
-        }
+        val textContent = extractTextFromStatementBytes(context, bytes, fileName)
         val resolvedName = when {
             isPdf && !lowerName.endsWith(".pdf") -> "$fileName.pdf"
             isXlsx && !lowerName.endsWith(".xlsx") -> "$fileName.xlsx"
@@ -70,6 +66,19 @@ object StatementImportService {
             else -> fileName
         }
         return parseStatementText(textContent, rules, existingTransactions, resolvedName)
+    }
+
+    fun extractTextFromStatementBytes(context: Context? = null, bytes: ByteArray, fileName: String): String {
+        val lowerName = fileName.lowercase()
+        val isPdf = lowerName.endsWith(".pdf") || (bytes.size >= 4 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte())
+        val isXlsx = lowerName.endsWith(".xlsx") || (bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() && bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte())
+        val isXls = lowerName.endsWith(".xls") || (bytes.size >= 4 && bytes[0] == 0xD0.toByte() && bytes[1] == 0xCF.toByte() && bytes[2] == 0x11.toByte() && bytes[3] == 0xE0.toByte())
+
+        return when {
+            isXlsx || isXls -> extractTextFromXlsxBytes(bytes)
+            isPdf -> extractTextFromPdfBytes(context, bytes)
+            else -> String(bytes, Charsets.UTF_8)
+        }
     }
 
     private fun extractTextFromXlsxBytes(bytes: ByteArray): String {

@@ -185,13 +185,13 @@ fun TransactionItemCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Category / Type Icon Avatar
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(42.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(amountColor.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
@@ -206,8 +206,11 @@ fun TransactionItemCard(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Title, Category & Date
-            Column(modifier = Modifier.weight(1f)) {
+            // Main Content: 2-row layout with perfect horizontal and vertical alignment
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center
+            ) {
                 val displayTitle = remember(transaction) {
                     if (transaction.transactionType == TransactionType.LENDING || transaction.categoryName.equals("Lend", ignoreCase = true) || transaction.categoryName.equals("Loans Given", ignoreCase = true)) {
                         val explicitId = transaction.advanceId?.takeIf { it.startsWith("LEND", ignoreCase = true) }
@@ -225,87 +228,112 @@ fun TransactionItemCard(
                     }
                 }
 
-                Text(
-                    text = displayTitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CategoryChip(categoryName = transaction.categoryName)
-                    val idTag = transaction.advanceId?.takeIf { it.isNotBlank() }
-                        ?: transaction.referenceNumber.takeIf { it.startsWith("LEND", true) || it.startsWith("BORROW", true) || it.startsWith("ADV", true) }
-                    if (!idTag.isNullOrBlank() && !displayTitle.startsWith("#")) {
-                        val (tagBg, tagFg) = when {
-                            idTag.startsWith("LEND", true) || transaction.transactionType == TransactionType.LENDING -> LendingIndigo.copy(alpha = 0.15f) to LendingIndigo
-                            idTag.startsWith("BORROW", true) || transaction.transactionType == TransactionType.BORROWING -> OutstandingAmber.copy(alpha = 0.15f) to OutstandingAmber
-                            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) to MaterialTheme.colorScheme.primary
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Surface(
-                            color = tagBg,
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(
-                                text = if (idTag.startsWith("#")) idTag else "#$idTag",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tagFg,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
+                // Line 1: Title on left, Amount on right
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = DateUtils.formatForDisplay(transaction.transactionDate),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp
+                        text = displayTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-                }
-            }
 
-            Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
-            // Amount & Running Balance
-            Column(horizontalAlignment = Alignment.End) {
-                val prefix = if (isPositive) "+" else if (transaction.transactionType == TransactionType.TRANSFER) "" else "-"
-                PrivacyAmountText(
-                    amount = transaction.amount,
-                    prefix = prefix,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = amountColor,
-                    isRevealed = isRevealed,
-                    isPrivacyEnabled = isPrivacyEnabled,
-                    onTap = { onToggleReveal?.invoke() }
-                )
-                if (transaction.balanceAfterTransaction != null) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                    val prefix = if (isPositive) "+" else if (transaction.transactionType == TransactionType.TRANSFER) "" else "-"
                     PrivacyAmountText(
-                        amount = transaction.balanceAfterTransaction,
-                        prefix = "Bal: ",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
+                        amount = transaction.amount,
+                        prefix = prefix,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = amountColor,
                         isRevealed = isRevealed,
                         isPrivacyEnabled = isPrivacyEnabled,
                         onTap = { onToggleReveal?.invoke() }
                     )
                 }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Line 2: Category Chip + ID + Date on left, Running Balance on right
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f, fill = false),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CategoryChip(
+                            categoryName = transaction.categoryName,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        val idTag = transaction.advanceId?.takeIf { it.isNotBlank() }
+                            ?: transaction.referenceNumber.takeIf { it.startsWith("LEND", true) || it.startsWith("BORROW", true) || it.startsWith("ADV", true) }
+                        if (!idTag.isNullOrBlank() && !displayTitle.startsWith("#")) {
+                            val (tagBg, tagFg) = when {
+                                idTag.startsWith("LEND", true) || transaction.transactionType == TransactionType.LENDING -> LendingIndigo.copy(alpha = 0.15f) to LendingIndigo
+                                idTag.startsWith("BORROW", true) || transaction.transactionType == TransactionType.BORROWING -> OutstandingAmber.copy(alpha = 0.15f) to OutstandingAmber
+                                else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) to MaterialTheme.colorScheme.primary
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Surface(
+                                color = tagBg,
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = if (idTag.startsWith("#")) idTag else "#$idTag",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = tagFg,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = DateUtils.formatForDisplay(transaction.transactionDate),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            maxLines = 1
+                        )
+                    }
+
+                    if (transaction.balanceAfterTransaction != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        PrivacyAmountText(
+                            amount = transaction.balanceAfterTransaction,
+                            prefix = "Bal: ",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            isRevealed = isRevealed,
+                            isPrivacyEnabled = isPrivacyEnabled,
+                            onTap = { onToggleReveal?.invoke() }
+                        )
+                    }
+                }
             }
 
             if (onDelete != null) {
-                Spacer(modifier = Modifier.width(8.dp))
-                IconButton(onClick = onDelete) {
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(32.dp)
+                ) {
                     Icon(
                         imageVector = Icons.Default.DeleteOutline,
                         contentDescription = "Delete Transaction",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -343,7 +371,8 @@ fun CategoryChip(
             color = if (colorHex != null) chipColor else MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             fontSize = 10.sp,
-            maxLines = 1
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

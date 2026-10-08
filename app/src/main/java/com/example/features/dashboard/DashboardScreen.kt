@@ -52,6 +52,7 @@ fun DashboardScreen(
     onNavigateToPersonalExpenses: () -> Unit = {},
     onNavigateToInvestments: () -> Unit = {},
     onNavigateToTransfers: () -> Unit = {},
+    onOpenAiChat: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -112,7 +113,6 @@ fun DashboardScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column {
@@ -131,6 +131,7 @@ fun DashboardScreen(
                 }
             }
         }
+
 
         // If data is still loading from local DB, don't flash the import card
         if (!isDataLoaded) {

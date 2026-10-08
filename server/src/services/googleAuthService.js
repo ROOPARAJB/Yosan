@@ -166,5 +166,6 @@ function seedDefaultCategories(userId, now) {
 module.exports = {
   verifyGoogleToken,
   handleGoogleAuth,
-  generateTokens
+  generateTokens,
+  seedDefaultCategories
 };

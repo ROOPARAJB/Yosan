@@ -170,10 +170,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun updateUserProfile(name: String, currencySymbol: String) {
+    fun updateUserProfile(name: String, currencySymbol: String, email: String? = null) {
         viewModelScope.launch {
-            val current = userProfile.value ?: UserProfileEntity(id = 1, name = name, email = "", currencySymbol = currencySymbol)
-            repository.updateProfile(current.copy(name = name, currencySymbol = currencySymbol))
+            val current = userProfile.value ?: UserProfileEntity(id = 1, name = name, email = email ?: "", currencySymbol = currencySymbol)
+            repository.updateProfile(current.copy(name = name, currencySymbol = currencySymbol, email = email ?: current.email))
         }
     }
 
@@ -541,6 +541,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun saveBackupToStorageUri(context: Context, uri: Uri, onDone: (Boolean) -> Unit) = transactionCoordinator.saveBackupToStorageUri(context, uri, onDone)
     fun saveBackupToDownloads(context: Context, onDone: (Boolean) -> Unit) = transactionCoordinator.saveBackupToDownloads(context, onDone)
     fun restoreBackup(context: Context, uri: Uri, onDone: (Boolean) -> Unit) = transactionCoordinator.restoreBackup(context, uri, onDone)
+    fun restoreBackupFromJson(jsonString: String, onDone: (Boolean) -> Unit) = transactionCoordinator.restoreBackupFromJsonString(jsonString, onDone)
     fun restoreOriginalTransactionFlow(tx: TransactionEntity) = transactionCoordinator.restoreOriginalTransactionFlow(tx)
     fun restoreAllOriginalFlows(txList: List<TransactionEntity>) = transactionCoordinator.restoreAllOriginalFlows(txList)
 
@@ -636,4 +637,96 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun importChangesFromExcel(context: Context, uri: Uri) = excelSyncCoordinator.importChangesFromExcel(context, uri)
     fun performTwoWaySync(context: Context, uri: Uri) = excelSyncCoordinator.performTwoWaySync(context, uri)
     fun resolveConflict(conflict: SyncConflict, keepApp: Boolean, context: Context, uri: Uri?) = excelSyncCoordinator.resolveConflict(conflict, keepApp, context, uri)
+
+    // Formatted Feedback System & Offline Queue
+    fun syncPendingFeedbacks() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val unsynced = database.pendingFeedbackDao().getUnsyncedFeedbacks()
+                if (unsynced.isEmpty()) return@launch
+
+                val api = com.example.data.remote.ApiClient.getAuthApi(getApplication())
+                for (fb in unsynced) {
+                    val req = com.example.data.remote.FeedbackRequest(
+                        category = fb.category,
+                        rating = fb.rating,
+                        subject = fb.subject,
+                        description = fb.description,
+                        appVersion = fb.appVersion,
+                        deviceModel = fb.deviceModel,
+                        androidVersion = fb.androidVersion,
+                        syncId = fb.syncId
+                    )
+                    val res = api.submitFeedback(req)
+                    if (res.isSuccessful && res.body()?.success == true) {
+                        database.pendingFeedbackDao().markAsSynced(fb.syncId)
+                    }
+                }
+            } catch (e: Exception) {
+                // Silently keep queued until next connection attempt
+            }
+        }
+    }
+
+    fun submitFeedback(
+        category: String,
+        rating: Int,
+        subject: String,
+        description: String,
+        includeMetadata: Boolean,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val syncId = java.util.UUID.randomUUID().toString()
+            val appVersion = "v${com.example.BuildConfig.VERSION_NAME}"
+            val deviceModel = if (includeMetadata) "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}" else ""
+            val androidVersion = if (includeMetadata) "Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})" else ""
+
+            val pending = PendingFeedbackEntity(
+                syncId = syncId,
+                category = category,
+                rating = rating,
+                subject = subject,
+                description = description,
+                appVersion = appVersion,
+                deviceModel = deviceModel,
+                androidVersion = androidVersion,
+                createdAt = System.currentTimeMillis(),
+                isSynced = false
+            )
+
+            try {
+                val api = com.example.data.remote.ApiClient.getAuthApi(getApplication())
+                val req = com.example.data.remote.FeedbackRequest(
+                    category = category,
+                    rating = rating,
+                    subject = subject,
+                    description = description,
+                    appVersion = appVersion,
+                    deviceModel = deviceModel,
+                    androidVersion = androidVersion,
+                    syncId = syncId
+                )
+                val response = api.submitFeedback(req)
+
+                if (response.isSuccessful && response.body()?.success == true) {
+                    database.pendingFeedbackDao().insertFeedback(pending.copy(isSynced = true))
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        onSuccess(response.body()?.message ?: "Thank you! Your feedback has been received.")
+                    }
+                } else {
+                    database.pendingFeedbackDao().insertFeedback(pending)
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        onSuccess("Feedback saved locally. It will automatically submit once internet is available.")
+                    }
+                }
+            } catch (e: Exception) {
+                database.pendingFeedbackDao().insertFeedback(pending)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onSuccess("Saved offline. Your feedback will automatically sync when connected.")
+                }
+            }
+        }
+    }
 }

@@ -6,6 +6,9 @@ const config = require('./config');
 const authRoutes = require('./routes/authRoutes');
 const financeRoutes = require('./routes/financeRoutes');
 const driveRoutes = require('./routes/driveRoutes');
+const chatRoutes = require('./routes/chatRoutes');
+const feedbackRoutes = require('./routes/feedbackRoutes');
+const statementRoutes = require('./routes/statementRoutes');
 
 const app = express();
 
@@ -35,6 +38,9 @@ app.get('/api/health', (req, res) => {
 // Mount API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/drive', driveRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/api/statement', statementRoutes);
 app.use('/api', financeRoutes);
 
 // Error Handling (Section 34 - No stack traces exposed to client)

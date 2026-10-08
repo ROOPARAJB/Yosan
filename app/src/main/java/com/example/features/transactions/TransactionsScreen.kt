@@ -423,23 +423,34 @@ fun TransactionsScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { selectedTxIds.clear() }) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    IconButton(
+                        onClick = { selectedTxIds.clear() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Clear Selection",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "${selectedTxIds.size} Selected",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Button(
                         onClick = { showBatchCompanyDialog = true },
                         shape = RoundedCornerShape(10.dp),
@@ -454,7 +465,6 @@ fun TransactionsScreen(
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Company", fontSize = 12.sp)
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
                     Button(
                         onClick = { showBatchCategoryPicker = true },
                         shape = RoundedCornerShape(10.dp),
@@ -468,18 +478,18 @@ fun TransactionsScreen(
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Category", fontSize = 12.sp)
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
                     IconButton(
                         onClick = {
                             viewModel.deleteTransactions(selectedTxIds.toList())
                             selectedTxIds.clear()
-                        }
+                        },
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteOutline,
                             contentDescription = "Delete Selected",
                             tint = ExpenseRed,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
@@ -496,11 +506,18 @@ fun TransactionsScreen(
                     text = "Statement Records",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(
-                        onClick = { showComparerDialog = true }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    IconButton(
+                        onClick = { showComparerDialog = true },
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.CompareArrows,
@@ -508,48 +525,33 @@ fun TransactionsScreen(
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Audit",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
                     }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    TextButton(
-                        onClick = onNavigateToImport
+                    FilledTonalButton(
+                        onClick = onNavigateToImport,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.FileUpload,
-                            contentDescription = "Import",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = "Import",
-                            color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
                     }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    TextButton(
-                        onClick = { showDeleteAllDialog = true }
+                    IconButton(
+                        onClick = { showDeleteAllDialog = true },
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.DeleteOutline,
                             contentDescription = "Delete All",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Delete All",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
                         )
                     }
                 }
@@ -715,9 +717,16 @@ fun TransactionsScreen(
                 Text(
                     text = if (selectedType != null) "${transactions.size} ${selectedType?.name?.lowercase()} transactions" else "${transactions.size} transactions",
                     style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f, fill = false),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Row {
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
                     val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
                     if (selectedType == null || selectedType == TransactionType.INCOME) {
@@ -731,9 +740,6 @@ fun TransactionsScreen(
                             isPrivacyEnabled = privacyEnabled,
                             onTap = { viewModel.revealAmountsTemporarily() }
                         )
-                        if (selectedType == null) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
                     }
                     if (selectedType == null || selectedType == TransactionType.EXPENSE) {
                         PrivacyAmountText(
@@ -742,6 +748,19 @@ fun TransactionsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             color = ExpenseRed,
+                            isRevealed = isRevealed,
+                            isPrivacyEnabled = privacyEnabled,
+                            onTap = { viewModel.revealAmountsTemporarily() }
+                        )
+                    }
+                    if (selectedType != null && selectedType != TransactionType.INCOME && selectedType != TransactionType.EXPENSE) {
+                        val filteredTotal = remember(transactions) { transactions.sumOf { it.amount } }
+                        PrivacyAmountText(
+                            amount = filteredTotal,
+                            prefix = "Total: ",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
                             isRevealed = isRevealed,
                             isPrivacyEnabled = privacyEnabled,
                             onTap = { viewModel.revealAmountsTemporarily() }

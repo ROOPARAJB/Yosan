@@ -24,9 +24,10 @@ import kotlinx.coroutines.launch
         UserProfileEntity::class,
         DeletedTransactionEntity::class,
         SyncMetadataEntity::class,
-        UndoHistoryEntity::class
+        UndoHistoryEntity::class,
+        PendingFeedbackEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -40,6 +41,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun userProfileDao(): UserProfileDao
     abstract fun syncDao(): SyncDao
     abstract fun undoDao(): UndoDao
+    abstract fun pendingFeedbackDao(): PendingFeedbackDao
 
     companion object {
         @Volatile
@@ -83,6 +85,25 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `pending_feedbacks` (
+                        `syncId` TEXT NOT NULL PRIMARY KEY,
+                        `category` TEXT NOT NULL,
+                        `rating` INTEGER NOT NULL,
+                        `subject` TEXT NOT NULL,
+                        `description` TEXT NOT NULL,
+                        `appVersion` TEXT NOT NULL,
+                        `deviceModel` TEXT NOT NULL,
+                        `androidVersion` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `isSynced` INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -90,7 +111,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "finance_manager_db"
                 )
-                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .addCallback(AppDatabaseCallback(scope))
                     .build()
                 INSTANCE = instance

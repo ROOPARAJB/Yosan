@@ -21,6 +21,12 @@ class GoogleAuthManager(private val context: Context) {
     private val credentialManager = CredentialManager.create(context)
 
     suspend fun getGoogleIdToken(webClientId: String = getWebClientId()): GoogleAuthResult {
+        if (webClientId.contains("example.apps.googleusercontent.com") || webClientId.isBlank()) {
+            return GoogleAuthResult.Error(
+                "Google Sign-In requires your Google Cloud Web Client ID in .env. You can use Email OTP or Offline Profile right now.",
+                "CONFIG_REQUIRED"
+            )
+        }
         return try {
             val googleIdOption = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)

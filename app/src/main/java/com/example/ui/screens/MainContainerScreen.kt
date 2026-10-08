@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -11,6 +12,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -42,6 +44,7 @@ import com.example.features.lending.BorrowingScreen
 import com.example.features.transactions.PersonalExpensesScreen
 import com.example.features.transactions.InvestmentsScreen
 import com.example.features.transactions.TransfersScreen
+import com.example.features.ai.FinancialChatSheet
 import kotlinx.coroutines.launch
 
 enum class MainTab(
@@ -71,6 +74,7 @@ fun MainContainerScreen(
 
     // Dialog & Sheet States
     var showAddSheet by remember { mutableStateOf(false) }
+    var showAiChatSheet by remember { mutableStateOf(false) }
     var addSheetTab by remember { mutableStateOf(AddTab.EXPENSE) }
     var preselectedLoanForRepay by remember { mutableStateOf<LoanEntity?>(null) }
     var selectedTransactionForDetail by remember { mutableStateOf<TransactionEntity?>(null) }
@@ -149,16 +153,44 @@ fun MainContainerScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             if (currentSubScreen == SubScreen.NONE && (currentTab == MainTab.DASHBOARD || currentTab == MainTab.TRANSACTIONS)) {
-                FloatingActionButton(
-                    onClick = {
-                        addSheetTab = AddTab.EXPENSE
-                        preselectedLoanForRepay = null
-                        showAddSheet = true
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Transaction")
+                    // Chatbot Floating Action Button (placed above the + icon)
+                    SmallFloatingActionButton(
+                        onClick = { showAiChatSheet = true },
+                        shape = CircleShape,
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        elevation = FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 4.dp,
+                            pressedElevation = 2.dp
+                        ),
+                        modifier = Modifier
+                            .size(46.dp)
+                            .testTag("chatbot_fab")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "AI Finance Chatbot",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // Main Add (+) Floating Action Button
+                    FloatingActionButton(
+                        onClick = {
+                            addSheetTab = AddTab.EXPENSE
+                            preselectedLoanForRepay = null
+                            showAddSheet = true
+                        },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.testTag("add_transaction_fab")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Transaction")
+                    }
                 }
             }
         },
@@ -386,7 +418,8 @@ fun MainContainerScreen(
                                 onNavigateToBorrowing = { currentSubScreen = SubScreen.BORROWING },
                                 onNavigateToPersonalExpenses = { currentSubScreen = SubScreen.PERSONAL_EXPENSES },
                                 onNavigateToInvestments = { currentSubScreen = SubScreen.INVESTMENTS },
-                                onNavigateToTransfers = { currentSubScreen = SubScreen.TRANSFERS }
+                                onNavigateToTransfers = { currentSubScreen = SubScreen.TRANSFERS },
+                                onOpenAiChat = { showAiChatSheet = true }
                             )
 
                             MainTab.TRANSACTIONS -> TransactionsScreen(
@@ -413,6 +446,13 @@ fun MainContainerScreen(
             }
 
             // Sheets & Dialogs
+            if (showAiChatSheet) {
+                FinancialChatSheet(
+                    viewModel = viewModel,
+                    onDismiss = { showAiChatSheet = false }
+                )
+            }
+
             if (showAddSheet) {
                 AddTransactionSheet(
                     viewModel = viewModel,

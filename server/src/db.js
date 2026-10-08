@@ -171,7 +171,49 @@ function initSchema() {
       created_at INTEGER NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS email_verifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL,
+      otp_hash TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      user_id INTEGER,
+      attempts INTEGER DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      verified INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_email_verif_lookup ON email_verifications (email, purpose, verified);
+
+    CREATE TABLE IF NOT EXISTS feedbacks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      category TEXT NOT NULL,
+      rating INTEGER NOT NULL,
+      subject TEXT NOT NULL,
+      description TEXT NOT NULL,
+      app_version TEXT DEFAULT 'v1.1.0',
+      device_model TEXT DEFAULT '',
+      android_version TEXT DEFAULT '',
+      sync_id TEXT UNIQUE,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_feedbacks_user ON feedbacks (user_id);
+    CREATE INDEX IF NOT EXISTS idx_feedbacks_sync_id ON feedbacks (sync_id);
   `);
+
+  // Safe migrations for existing database files
+  try {
+    const driveCols = db.pragma('table_info(google_drive_connections)').map(c => c.name);
+    if (!driveCols.includes('drive_email')) {
+      db.exec("ALTER TABLE google_drive_connections ADD COLUMN drive_email TEXT DEFAULT ''");
+    }
+  } catch (err) {
+    console.error('Migration check failed (non-critical):', err.message);
+  }
 }
 
 initSchema();

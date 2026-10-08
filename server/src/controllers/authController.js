@@ -2,10 +2,165 @@ const googleAuthService = require('../services/googleAuthService');
 const driveBackupService = require('../services/driveBackupService');
 const userRepository = require('../repositories/userRepository');
 const driveRepository = require('../repositories/driveRepository');
+const otpService = require('../services/otpService');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 
 class AuthController {
+  async sendOtp(req, res) {
+    try {
+      const { email, purpose } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: 'MISSING_EMAIL', message: 'Email address is required' });
+      }
+      const result = await otpService.generateAndSendOtp(email, purpose || 'LOGIN');
+      return res.status(200).json(result);
+    } catch (err) {
+      const isExpected = err.message.startsWith('COOLDOWN_ACTIVE') || err.message.startsWith('INVALID_EMAIL');
+      const status = isExpected ? 400 : 500;
+      return res.status(status).json({
+        error: isExpected ? err.message.split(':')[0] : 'SEND_OTP_FAILED',
+        message: err.message
+      });
+    }
+  }
+
+  async verifyOtp(req, res) {
+    try {
+      const { email, otp, purpose, name } = req.body;
+      if (!email || !otp) {
+        return res.status(400).json({ error: 'MISSING_CREDENTIALS', message: 'Both email and otp are required' });
+      }
+
+      otpService.verifyOtp(email, otp, purpose || 'LOGIN');
+
+      const now = Date.now();
+      let user = userRepository.getUserByEmail(email);
+      let isNewUser = false;
+
+      if (user) {
+        userRepository.updateLastLogin(user.id, now);
+        user = userRepository.getUserById(user.id);
+      } else {
+        isNewUser = true;
+        const result = userRepository.createUserWithEmail(email, name, now);
+        const userId = result.lastInsertRowid;
+        user = userRepository.getUserById(userId);
+
+        userRepository.createUserProfile(userId, now);
+        googleAuthService.seedDefaultCategories(userId, now);
+      }
+
+      const tokens = googleAuthService.generateTokens(user);
+      const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
+      userRepository.insertRefreshToken(tokens.refreshToken, user.id, expiresAt);
+
+      const profile = userRepository.getUserProfile(user.id);
+      const driveConn = driveRepository.getDriveConnection(user.id);
+
+      return res.status(200).json({
+        isNewUser,
+        user: {
+          id: user.id,
+          googleSub: user.google_sub,
+          email: user.email,
+          name: user.name,
+          profilePictureUrl: user.profile_picture_url,
+          emailVerified: Boolean(user.email_verified),
+          lastLoginAt: user.last_login_at,
+          currencySymbol: profile?.currency_symbol || '₹',
+          timezone: profile?.timezone || 'Asia/Kolkata',
+          theme: profile?.theme || 'SYSTEM',
+          isDriveConnected: Boolean(driveConn),
+          lastBackupAt: driveConn?.last_backup_at || null
+        },
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken
+      });
+    } catch (err) {
+      const isExpected = err.message.startsWith('INVALID_OTP') ||
+                         err.message.startsWith('OTP_EXPIRED') ||
+                         err.message.startsWith('OTP_NOT_FOUND') ||
+                         err.message.startsWith('MAX_ATTEMPTS');
+      const status = isExpected ? 400 : 500;
+      return res.status(status).json({
+        error: isExpected ? err.message.split(':')[0] : 'VERIFY_OTP_FAILED',
+        message: err.message
+      });
+    }
+  }
+
+  async requestEmailChange(req, res) {
+    try {
+      const { newEmail } = req.body;
+      if (!newEmail) {
+        return res.status(400).json({ error: 'MISSING_NEW_EMAIL', message: 'newEmail parameter is required' });
+      }
+
+      const cleanNewEmail = newEmail.trim().toLowerCase();
+      const currentUser = userRepository.getUserById(req.user.id);
+
+      if (currentUser.email && currentUser.email.toLowerCase() === cleanNewEmail) {
+        return res.status(400).json({ error: 'SAME_EMAIL', message: 'New email cannot be identical to current email' });
+      }
+
+      const existing = userRepository.getUserByEmail(cleanNewEmail);
+      if (existing && existing.id !== req.user.id) {
+        return res.status(409).json({ error: 'EMAIL_ALREADY_IN_USE', message: 'This email is already associated with another account' });
+      }
+
+      const result = await otpService.generateAndSendOtp(cleanNewEmail, 'CHANGE_EMAIL', req.user.id);
+      return res.status(200).json(result);
+    } catch (err) {
+      const isExpected = err.message.startsWith('COOLDOWN_ACTIVE') || err.message.startsWith('INVALID_EMAIL');
+      const status = isExpected ? 400 : 500;
+      return res.status(status).json({
+        error: isExpected ? err.message.split(':')[0] : 'REQUEST_EMAIL_CHANGE_FAILED',
+        message: err.message
+      });
+    }
+  }
+
+  async verifyEmailChange(req, res) {
+    try {
+      const { newEmail, otp } = req.body;
+      if (!newEmail || !otp) {
+        return res.status(400).json({ error: 'MISSING_CREDENTIALS', message: 'Both newEmail and otp are required' });
+      }
+
+      const cleanNewEmail = newEmail.trim().toLowerCase();
+
+      // Verify OTP strictly for CHANGE_EMAIL purpose and matching userId
+      otpService.verifyOtp(cleanNewEmail, otp, 'CHANGE_EMAIL', req.user.id);
+
+      const existing = userRepository.getUserByEmail(cleanNewEmail);
+      if (existing && existing.id !== req.user.id) {
+        return res.status(409).json({ error: 'EMAIL_ALREADY_IN_USE', message: 'This email is already associated with another account' });
+      }
+
+      const now = Date.now();
+      userRepository.updateUserEmail(req.user.id, cleanNewEmail, now);
+      const updatedUser = userRepository.getUserById(req.user.id);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Email successfully verified and updated',
+        email: updatedUser.email
+      });
+    } catch (err) {
+      const isExpected = err.message.startsWith('INVALID_OTP') ||
+                         err.message.startsWith('OTP_EXPIRED') ||
+                         err.message.startsWith('OTP_NOT_FOUND') ||
+                         err.message.startsWith('MAX_ATTEMPTS') ||
+                         err.message.startsWith('UNAUTHORIZED');
+      const status = isExpected ? 400 : 500;
+      return res.status(status).json({
+        error: isExpected ? err.message.split(':')[0] : 'VERIFY_EMAIL_CHANGE_FAILED',
+        message: err.message
+      });
+    }
+  }
+
   async loginGoogle(req, res) {
     try {
       const { idToken } = req.body;

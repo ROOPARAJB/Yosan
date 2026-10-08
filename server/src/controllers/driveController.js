@@ -2,16 +2,21 @@ const driveBackupService = require('../services/driveBackupService');
 
 class DriveController {
   async connectDrive(req, res) {
-    const { authCode, refreshToken, googleSub } = req.body;
+    const { authCode, refreshToken, googleSub, driveEmail } = req.body;
     try {
       const result = await driveBackupService.connectDrive(
         req.user.id,
         authCode || refreshToken,
-        googleSub || req.user.googleSub
+        googleSub || req.user.googleSub,
+        driveEmail
       );
       res.json(result);
     } catch (err) {
-      res.status(400).json({ error: 'DRIVE_CONNECT_FAILED', message: err.message });
+      const isMismatch = err.message.startsWith('EMAIL_MISMATCH');
+      res.status(400).json({
+        error: isMismatch ? 'EMAIL_MISMATCH' : 'DRIVE_CONNECT_FAILED',
+        message: err.message
+      });
     }
   }
 
@@ -65,6 +70,15 @@ class DriveController {
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: 'RESTORE_FAILED', message: err.message });
+    }
+  }
+
+  async getLatestBackup(req, res) {
+    try {
+      const result = await driveBackupService.getLatestBackup(req.user.id);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: 'GET_LATEST_BACKUP_FAILED', message: err.message });
     }
   }
 }

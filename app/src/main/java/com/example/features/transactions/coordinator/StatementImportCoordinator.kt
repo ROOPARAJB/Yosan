@@ -9,7 +9,10 @@ import com.example.data.local.entity.CategoryType
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
 import com.example.features.import.ImportPreviewResult
+import com.example.features.import.ParsedImportRow
 import com.example.features.import.StatementImportService
+import com.example.features.rules.CategorizationEngine
+import com.example.data.remote.StatementAiTransactionDto
 import com.example.features.transactions.data.TransactionRepository
 import com.example.repository.FinanceRepository
 import kotlinx.coroutines.CoroutineScope
@@ -77,7 +80,71 @@ class StatementImportCoordinator(
                         else -> "$fileName.csv"
                     }
                 }
-                val preview = StatementImportService.parseStatementBytes(context, bytes, resolvedFileName, currentRules, existingTxs)
+                val rawText = StatementImportService.extractTextFromStatementBytes(context, bytes, resolvedFileName)
+                var preview: ImportPreviewResult? = null
+
+                // Attempt AI-assisted statement parsing
+                if (rawText.isNotBlank()) {
+                    try {
+                        val api = com.example.data.remote.ApiClient.getAuthApi(context)
+                        val aiResponse = api.parseStatementAi(
+                            com.example.data.remote.StatementAiParseRequest(
+                                textContent = rawText.take(50000),
+                                fileName = resolvedFileName
+                            )
+                        )
+                        if (aiResponse.isSuccessful && aiResponse.body()?.success == true && !aiResponse.body()?.transactions.isNullOrEmpty()) {
+                            val aiTxs: List<StatementAiTransactionDto> = aiResponse.body()!!.transactions
+                            val parsedRows: List<ParsedImportRow> = aiTxs.map { aiTx ->
+                                val isDuplicate = existingTxs.any { ex ->
+                                    ex.transactionDate == aiTx.transactionDate &&
+                                    kotlin.math.abs(ex.amount - aiTx.amount) < 0.01 &&
+                                    ((ex.referenceNumber.isNotBlank() && ex.referenceNumber == aiTx.referenceNumber) ||
+                                     ex.description.contains(aiTx.description, ignoreCase = true) ||
+                                     aiTx.description.contains(ex.description, ignoreCase = true))
+                                }
+                                val txType = if (aiTx.transactionType.equals("INCOME", ignoreCase = true)) TransactionType.INCOME else TransactionType.EXPENSE
+                                val catResult = CategorizationEngine.categorize(aiTx.description, currentRules, txType == TransactionType.INCOME)
+                                val finalCategory = if (!catResult.categoryName.equals("Uncategorized", ignoreCase = true)) {
+                                    catResult.categoryName
+                                } else {
+                                    aiTx.suggestedCategory.ifBlank { "General" }
+                                }
+
+                                ParsedImportRow(
+                                    rawLine = "${aiTx.transactionDate} ${aiTx.description} ${aiTx.amount}",
+                                    date = aiTx.transactionDate,
+                                    description = aiTx.description,
+                                    debitAmount = aiTx.debitAmount,
+                                    creditAmount = aiTx.creditAmount,
+                                    amount = aiTx.amount,
+                                    balance = aiTx.balanceAfterTransaction,
+                                    referenceNumber = aiTx.referenceNumber,
+                                    suggestedCategory = finalCategory,
+                                    suggestedCategoryId = catResult.categoryId,
+                                    suggestedType = txType,
+                                    confidence = 0.95f,
+                                    isDuplicate = isDuplicate
+                                )
+                            }
+                            preview = ImportPreviewResult(
+                                totalRows = parsedRows.size,
+                                validRows = parsedRows,
+                                duplicateCount = parsedRows.count { it.isDuplicate },
+                                detectedColumns = listOf("Date", "Description", "Debit", "Credit", "Balance", "AI Category"),
+                                fileName = "$resolvedFileName (AI Enhanced)"
+                            )
+                        }
+                    } catch (_: Exception) {
+                        // Offline or network error -> fallback seamlessly to local parser
+                    }
+                }
+
+                // Seamless fallback to local on-device rule parser
+                if (preview == null || preview.validRows.isEmpty()) {
+                    preview = StatementImportService.parseStatementBytes(context, bytes, resolvedFileName, currentRules, existingTxs)
+                }
+
                 if (preview.validRows.isEmpty()) {
                     showMessage("No valid transaction rows found in '$resolvedFileName'. Please ensure it's a supported bank statement.")
                 }
