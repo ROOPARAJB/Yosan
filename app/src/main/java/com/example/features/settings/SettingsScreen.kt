@@ -20,6 +20,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -116,6 +117,7 @@ fun SettingsScreen(
     var showResetWizard by remember { mutableStateOf(false) }
     var resetWizardStep by remember { mutableStateOf(1) }
     var resetConfirmText by remember { mutableStateOf("") }
+    var showLogoutDialog by remember { mutableStateOf(false) }
 
     var statusNotificationMsg by remember { mutableStateOf<String?>(null) }
     var showEditNameDialog by remember { mutableStateOf(false) }
@@ -784,6 +786,20 @@ fun SettingsScreen(
                             showResetWizard = true
                         }
                     )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    )
+                    MoreMenuItem(
+                        title = "Log Out",
+                        subtitle = "End your active session and return to welcome screen",
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        iconColor = MaterialTheme.colorScheme.error,
+                        onClick = {
+                            showLogoutDialog = true
+                        }
+                    )
                 }
             }
         }
@@ -1098,6 +1114,51 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showResetWizard = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Confirmation Dialog for Log Out
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Logout,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Log Out of Yosan?",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to log out? Your cloud and Google Drive session will end and you will be returned to the Welcome screen.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        authViewModel?.logout()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Log Out", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }
