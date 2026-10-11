@@ -112,7 +112,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "finance_manager_db"
                 )
                     .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigration(true)
                     .addCallback(AppDatabaseCallback(context.applicationContext, scope))
                     .build()
                 INSTANCE = instance

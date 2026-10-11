@@ -34,14 +34,16 @@ import com.example.utils.DateUtils
 fun LendingScreen(
     viewModel: FinanceViewModel,
     onAddLoanClick: () -> Unit,
-    onRepayLoanClick: (LoanEntity) -> Unit,
+    onRepayLoanClick: (LoanEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val loans by viewModel.loans.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
     val summary by viewModel.dashboardSummary.collectAsState()
+    val accounts by viewModel.accounts.collectAsState()
 
     var statusFilter by remember { mutableStateOf<LoanStatus?>(null) }
+    var repayingLoan by remember { mutableStateOf<LoanEntity?>(null) }
 
     val filteredLoans = remember(loans, statusFilter) {
         if (statusFilter == null) loans else loans.filter { it.status == statusFilter }
@@ -180,7 +182,10 @@ fun LendingScreen(
                     loan = loan,
                     lendId = lendTag,
                     repayments = repayments,
-                    onAddRepayClick = { onRepayLoanClick(loan) },
+                    onAddRepayClick = {
+                        repayingLoan = loan
+                        onRepayLoanClick(loan)
+                    },
                     onDeleteLoan = { viewModel.deleteLendSet(lendTag, loan.id, deleteLendTx = true) },
                     onUnlinkRepayment = { txId ->
                         viewModel.linkTransactionToLoan(txId, null)
@@ -190,6 +195,85 @@ fun LendingScreen(
                 )
             }
         }
+    }
+
+    repayingLoan?.let { loan ->
+        val lendTag = Regex("""#?(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(loan.notes)?.groupValues?.get(1) ?: "LEND-${loan.id}"
+        var repayAmountText by remember { mutableStateOf(if (loan.remainingAmount > 0) loan.remainingAmount.toString() else "") }
+        var repayDateText by remember { mutableStateOf(DateUtils.getCurrentDate()) }
+        var repayMethod by remember { mutableStateOf("UPI") }
+        var repayNotesText by remember { mutableStateOf("") }
+        var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 1L) }
+
+        AlertDialog(
+            onDismissRequest = { repayingLoan = null },
+            title = { Text("Record Repayment for ${loan.personName}", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Recording repayment from ${loan.personName}. Outstanding: ${CurrencyFormatter.formatInr(loan.remainingAmount)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = repayAmountText,
+                        onValueChange = { repayAmountText = it },
+                        label = { Text("Repayment Amount (₹)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = repayDateText,
+                        onValueChange = { repayDateText = it },
+                        label = { Text("Date (YYYY-MM-DD)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = repayMethod,
+                        onValueChange = { repayMethod = it },
+                        label = { Text("Payment Method (UPI, Cash, etc.)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = repayNotesText,
+                        onValueChange = { repayNotesText = it },
+                        label = { Text("Notes (Optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val amt = repayAmountText.toDoubleOrNull() ?: 0.0
+                        if (amt <= 0.0) {
+                            viewModel.showMessage("Please enter a valid repayment amount")
+                            return@Button
+                        }
+                        val formattedNotes = if (repayNotesText.isNotBlank()) "#$lendTag Repayment: $repayNotesText" else "#$lendTag Repayment"
+                        viewModel.recordRepayment(
+                            loanId = loan.id,
+                            amount = amt,
+                            date = repayDateText.ifBlank { DateUtils.getCurrentDate() },
+                            method = repayMethod.ifBlank { "UPI" },
+                            notes = formattedNotes,
+                            accountId = selectedAccountId
+                        )
+                        repayingLoan = null
+                    }
+                ) {
+                    Text("Save Repayment")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { repayingLoan = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

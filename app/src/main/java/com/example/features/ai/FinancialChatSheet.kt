@@ -101,7 +101,9 @@ fun FinancialChatSheet(
 
         scope.launch {
             // Scroll to newest message
-            listState.animateScrollToItem(messages.size - 1)
+            if (messages.isNotEmpty()) {
+                listState.animateScrollToItem(messages.size - 1)
+            }
 
             try {
                 val api = ApiClient.getAuthApi(context)
@@ -197,7 +199,9 @@ fun FinancialChatSheet(
                 messages = messages + UiChatMessage(role = "model", text = localReply)
             } finally {
                 isLoading = false
-                listState.animateScrollToItem(messages.size - 1)
+                if (messages.isNotEmpty()) {
+                    listState.animateScrollToItem(messages.size - 1)
+                }
             }
         }
     }

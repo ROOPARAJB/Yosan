@@ -13,8 +13,9 @@ android {
   namespace = "com.example"
   compileSdk = 36
 
-  val vCode = (System.getenv("APP_VERSION_CODE") ?: project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 2
-  val vName = System.getenv("APP_VERSION_NAME") ?: (project.findProperty("versionName") as? String) ?: "1.1.0"
+  val vCode = (System.getenv("APP_VERSION_CODE") ?: project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 3
+  val vName = System.getenv("APP_VERSION_NAME") ?: (project.findProperty("versionName") as? String) ?: "1.1.2"
+  val backendUrl = (System.getenv("BACKEND_URL") ?: project.findProperty("backendUrl") as? String) ?: ""
 
   defaultConfig {
     applicationId = "yosan.finance"
@@ -23,6 +24,7 @@ android {
     versionCode = vCode
     versionName = vName
 
+    buildConfigField("String", "DEFAULT_BACKEND_URL", "\"$backendUrl\"")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 

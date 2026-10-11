@@ -758,8 +758,6 @@ fun AddTransactionSheet(
                         }
                     }
                 }
-
-                else -> {}
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -912,7 +910,6 @@ fun AddTransactionSheet(
                                 notes = notes
                             )
                         }
-                        else -> {}
                     }
                     onDismiss()
                 },
@@ -930,7 +927,6 @@ fun AddTransactionSheet(
                         AddTab.INVESTMENT -> OutstandingAmber
                         AddTab.COMPANY_EXPENSE -> CompanySky
                         AddTab.TRANSFER -> TransferSlate
-                        else -> MaterialTheme.colorScheme.primary
                     }
                 )
             ) {

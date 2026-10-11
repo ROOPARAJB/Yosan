@@ -144,6 +144,9 @@ fun SettingsScreen(
     var feedbackIncludeMetadata by remember { mutableStateOf(true) }
     var isFeedbackSubmitting by remember { mutableStateOf(false) }
     var feedbackErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showServerConfigDialog by remember { mutableStateOf(false) }
+    var editedServerUrl by remember { mutableStateOf("") }
+    var currentServerUrl by remember { mutableStateOf(com.example.data.remote.ApiClient.getBaseUrl(context)) }
 
     val driveStatus by authViewModel?.driveStatus?.collectAsState() ?: remember { mutableStateOf(null) }
     val otpCooldown by authViewModel?.otpCooldown?.collectAsState() ?: remember { mutableStateOf(0) }
@@ -747,6 +750,20 @@ fun SettingsScreen(
                             feedbackDescription = ""
                             feedbackErrorMessage = null
                             showFeedbackDialog = true
+                        }
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+                    MoreMenuItem(
+                        title = "Backend Server URL",
+                        subtitle = "Current: $currentServerUrl",
+                        icon = Icons.Default.Storage,
+                        iconColor = MaterialTheme.colorScheme.primary,
+                        onClick = {
+                            editedServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
+                            showServerConfigDialog = true
                         }
                     )
                 }
@@ -2437,6 +2454,51 @@ fun SettingsScreen(
                     enabled = !isFeedbackSubmitting
                 ) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showServerConfigDialog) {
+        AlertDialog(
+            onDismissRequest = { showServerConfigDialog = false },
+            title = { Text("Backend Server URL", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        "Set the online server URL (e.g. https://yosan-backend.onrender.com/) or local address. Used for OTP login, Google sync, and feedback.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = editedServerUrl,
+                        onValueChange = { editedServerUrl = it },
+                        label = { Text("Server URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        com.example.data.remote.ApiClient.setCustomBaseUrl(context, editedServerUrl.ifBlank { null })
+                        currentServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
+                        showServerConfigDialog = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        com.example.data.remote.ApiClient.setCustomBaseUrl(context, null)
+                        currentServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
+                        showServerConfigDialog = false
+                    }
+                ) {
+                    Text("Reset Default")
                 }
             }
         )

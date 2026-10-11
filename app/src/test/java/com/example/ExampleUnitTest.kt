@@ -74,5 +74,31 @@ class ExampleUnitTest {
         assertTrue(preview.totalRows >= 3)
         assertTrue(preview.validRows.isNotEmpty())
     }
+
+    @Test
+    fun testUpdateManagerSemanticVersioning() {
+        // v1.1.1 vs v1.1.0
+        assertTrue(com.example.features.updater.UpdateManager.isRemoteVersionNewer("v1.1.1", "v1.1.0"))
+        assertFalse(com.example.features.updater.UpdateManager.isRemoteVersionNewer("v1.1.0", "v1.1.1"))
+
+        // v1.1.2 vs v1.1.1
+        assertTrue(com.example.features.updater.UpdateManager.isRemoteVersionNewer("1.1.2", "1.1.1"))
+        assertFalse(com.example.features.updater.UpdateManager.isRemoteVersionNewer("1.1.2", "1.1.2"))
+
+        // Run number tags e.g. v1.1.19 vs v1.1.2
+        assertTrue(com.example.features.updater.UpdateManager.isRemoteVersionNewer("v1.1.19", "1.1.2"))
+        assertFalse(com.example.features.updater.UpdateManager.isRemoteVersionNewer("v1.1.2", "1.1.19"))
+
+        // Higher major/minor versions
+        assertTrue(com.example.features.updater.UpdateManager.isRemoteVersionNewer("2.0.0", "1.1.99"))
+        assertTrue(com.example.features.updater.UpdateManager.isRemoteVersionNewer("1.2.0", "1.1.99"))
+
+        // Selection of maximum among a list of release tags
+        val tags = listOf("v1.0.0", "v1.1.0", "v1.1.1", "v1.0.2")
+        val maxTag = tags.maxWithOrNull { a, b ->
+            com.example.features.updater.UpdateManager.compareVersions(a, b)
+        }
+        assertEquals("v1.1.1", maxTag)
+    }
 }
 

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -59,104 +60,230 @@ class UpdateManager(
     suspend fun checkForUpdates(): Result<UpdateInfo?> = withContext(Dispatchers.IO) {
         _uiState.value = UpdateUiState.Checking
         try {
-            var tagName = ""
-            var releaseTitle = ""
-            var releaseNotes = ""
-            var apkDownloadUrl = ""
-            var apkFileName = "Yosan-Update.apk"
-            var apkSize = 0L
+            var candidateRelease: UpdateInfo? = null
+            var apiSuccess = false
 
-            val apiUrl = "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
-            val apiRequest = Request.Builder()
-                .url(apiUrl)
+            // Strategy 1: Fetch list of recent releases from GitHub API
+            // Querying /releases returns all recent releases so we select the one with the highest semantic version,
+            // avoiding GitHub /releases/latest's strict publication-timestamp bias.
+            val listApiUrl = "https://api.github.com/repos/$repoOwner/$repoName/releases?per_page=20"
+            val listRequest = Request.Builder()
+                .url(listApiUrl)
                 .header("Accept", "application/vnd.github.v3+json")
                 .header("User-Agent", "Yosan-Android-App")
                 .build()
 
-            var apiSuccess = false
             try {
-                client.newCall(apiRequest).execute().use { response ->
+                client.newCall(listRequest).execute().use { response ->
                     if (response.isSuccessful) {
                         val bodyStr = response.body?.string() ?: ""
-                        val json = JSONObject(bodyStr)
-                        tagName = json.optString("tag_name", "").trim()
-                        releaseTitle = json.optString("name", tagName)
-                        releaseNotes = json.optString("body", "")
-                        val assets = json.optJSONArray("assets")
+                        val jsonArray = JSONArray(bodyStr)
+                        val releasesList = mutableListOf<UpdateInfo>()
 
-                        if (assets != null) {
-                            for (i in 0 until assets.length()) {
-                                val asset = assets.getJSONObject(i)
-                                val name = asset.optString("name", "")
-                                if (name.endsWith(".apk", ignoreCase = true)) {
-                                    apkFileName = name
-                                    apkDownloadUrl = asset.optString("browser_download_url", "")
-                                    apkSize = asset.optLong("size", 0L)
-                                    break
+                        for (i in 0 until jsonArray.length()) {
+                            val releaseObj = jsonArray.getJSONObject(i)
+                            if (releaseObj.optBoolean("draft", false)) continue
+
+                            val tag = releaseObj.optString("tag_name", "").trim()
+                            if (tag.isBlank()) continue
+
+                            val title = releaseObj.optString("name", tag)
+                            val notes = releaseObj.optString("body", "")
+                            var apkUrl = ""
+                            var apkName = "Yosan-Update.apk"
+                            var apkSize = 0L
+
+                            val assets = releaseObj.optJSONArray("assets")
+                            if (assets != null) {
+                                for (j in 0 until assets.length()) {
+                                    val asset = assets.getJSONObject(j)
+                                    val name = asset.optString("name", "")
+                                    if (name.endsWith(".apk", ignoreCase = true)) {
+                                        apkName = name
+                                        apkUrl = asset.optString("browser_download_url", "")
+                                        apkSize = asset.optLong("size", 0L)
+                                        break
+                                    }
                                 }
                             }
+                            if (apkUrl.isBlank()) {
+                                apkUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/Yosan-Update.apk"
+                            }
+
+                            releasesList.add(
+                                UpdateInfo(
+                                    versionName = tag,
+                                    releaseTitle = title,
+                                    releaseNotes = notes,
+                                    downloadUrl = apkUrl,
+                                    fileName = apkName,
+                                    fileSize = apkSize,
+                                    isNewer = false
+                                )
+                            )
                         }
-                        if (apkDownloadUrl.isBlank() && tagName.isNotBlank()) {
-                            apkDownloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tagName/Yosan-Update.apk"
+
+                        if (releasesList.isNotEmpty()) {
+                            candidateRelease = releasesList.maxWithOrNull { a, b ->
+                                compareVersions(a.versionName, b.versionName)
+                            }
+                            apiSuccess = candidateRelease != null
                         }
-                        apiSuccess = true
                     }
                 }
             } catch (_: Exception) {}
 
-            // Fallback to direct GitHub web redirect if API was rate-limited (HTTP 403) or failed
-            if (!apiSuccess || tagName.isBlank()) {
-                val webUrl = "https://github.com/$repoOwner/$repoName/releases/latest"
+            // Strategy 2: If /releases list failed, query /releases/latest as secondary API attempt
+            if (!apiSuccess || candidateRelease == null) {
+                val latestApiUrl = "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
+                val latestRequest = Request.Builder()
+                    .url(latestApiUrl)
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .header("User-Agent", "Yosan-Android-App")
+                    .build()
+
+                try {
+                    client.newCall(latestRequest).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val bodyStr = response.body?.string() ?: ""
+                            val json = JSONObject(bodyStr)
+                            val tag = json.optString("tag_name", "").trim()
+                            if (tag.isNotBlank()) {
+                                val title = json.optString("name", tag)
+                                val notes = json.optString("body", "")
+                                var apkUrl = ""
+                                var apkName = "Yosan-Update.apk"
+                                var apkSize = 0L
+
+                                val assets = json.optJSONArray("assets")
+                                if (assets != null) {
+                                    for (i in 0 until assets.length()) {
+                                        val asset = assets.getJSONObject(i)
+                                        val name = asset.optString("name", "")
+                                        if (name.endsWith(".apk", ignoreCase = true)) {
+                                            apkName = name
+                                            apkUrl = asset.optString("browser_download_url", "")
+                                            apkSize = asset.optLong("size", 0L)
+                                            break
+                                        }
+                                    }
+                                }
+                                if (apkUrl.isBlank()) {
+                                    apkUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/Yosan-Update.apk"
+                                }
+
+                                candidateRelease = UpdateInfo(
+                                    versionName = tag,
+                                    releaseTitle = title,
+                                    releaseNotes = notes,
+                                    downloadUrl = apkUrl,
+                                    fileName = apkName,
+                                    fileSize = apkSize,
+                                    isNewer = false
+                                )
+                                apiSuccess = true
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // Strategy 3: HTML fallback - scrape releases page if API was rate-limited (HTTP 403)
+            if (!apiSuccess || candidateRelease == null) {
+                val releasesWebUrl = "https://github.com/$repoOwner/$repoName/releases"
                 val webRequest = Request.Builder()
-                    .url(webUrl)
+                    .url(releasesWebUrl)
                     .header("User-Agent", "Mozilla/5.0 (Android; Mobile)")
                     .build()
 
-                client.newCall(webRequest).execute().use { webResponse ->
-                    val finalUrl = webResponse.request.url.toString()
-                    val pathSegments = webResponse.request.url.pathSegments
-                    val tagIndex = pathSegments.indexOf("tag")
-                    if (tagIndex != -1 && tagIndex + 1 < pathSegments.size) {
-                        tagName = pathSegments[tagIndex + 1]
-                    } else if (finalUrl.contains("/tag/")) {
-                        tagName = finalUrl.substringAfterLast("/tag/")
-                    }
+                try {
+                    client.newCall(webRequest).execute().use { webResponse ->
+                        if (webResponse.isSuccessful) {
+                            val html = webResponse.body?.string() ?: ""
+                            val tagRegex = Regex("""/releases/tag/([vV]?[0-9]+(?:\.[0-9]+)+)""")
+                            val foundTags = tagRegex.findAll(html)
+                                .map { it.groupValues[1] }
+                                .distinct()
+                                .toList()
 
-                    if (tagName.isNotBlank()) {
-                        releaseTitle = "Release $tagName"
-                        apkDownloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tagName/Yosan-Update.apk"
-                        apkFileName = "Yosan-Update.apk"
-                        if (releaseNotes.isBlank()) {
-                            releaseNotes = "New updates and stability improvements for $tagName."
+                            val highestTag = foundTags.maxWithOrNull { a, b ->
+                                compareVersions(a, b)
+                            }
+
+                            if (highestTag != null && highestTag.isNotBlank()) {
+                                candidateRelease = UpdateInfo(
+                                    versionName = highestTag,
+                                    releaseTitle = "Release $highestTag",
+                                    releaseNotes = "New updates and stability improvements for $highestTag.",
+                                    downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$highestTag/Yosan-Update.apk",
+                                    fileName = "Yosan-Update.apk",
+                                    fileSize = 0L,
+                                    isNewer = false
+                                )
+                                apiSuccess = true
+                            }
                         }
-                        apiSuccess = true
                     }
-                }
+                } catch (_: Exception) {}
             }
 
-            if (!apiSuccess || tagName.isBlank()) {
+            // Strategy 4: Web redirect fallback to /releases/latest
+            if (!apiSuccess || candidateRelease == null) {
+                val latestWebUrl = "https://github.com/$repoOwner/$repoName/releases/latest"
+                val latestWebRequest = Request.Builder()
+                    .url(latestWebUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+                    .build()
+
+                try {
+                    client.newCall(latestWebRequest).execute().use { webResponse ->
+                        val finalUrl = webResponse.request.url.toString()
+                        val pathSegments = webResponse.request.url.pathSegments
+                        val tagIndex = pathSegments.indexOf("tag")
+                        var tag = ""
+                        if (tagIndex != -1 && tagIndex + 1 < pathSegments.size) {
+                            tag = pathSegments[tagIndex + 1]
+                        } else if (finalUrl.contains("/tag/")) {
+                            tag = finalUrl.substringAfterLast("/tag/")
+                        }
+
+                        if (tag.isNotBlank()) {
+                            candidateRelease = UpdateInfo(
+                                versionName = tag,
+                                releaseTitle = "Release $tag",
+                                releaseNotes = "New updates and stability improvements for $tag.",
+                                downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tag/Yosan-Update.apk",
+                                fileName = "Yosan-Update.apk",
+                                fileSize = 0L,
+                                isNewer = false
+                            )
+                            apiSuccess = true
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            val targetRelease = candidateRelease
+            if (!apiSuccess || targetRelease == null) {
                 val state = UpdateUiState.UpToDate(BuildConfig.VERSION_NAME)
                 _uiState.value = state
                 return@withContext Result.success(null)
             }
 
-            val cleanRemoteVersion = tagName.removePrefix("v").removePrefix("V").trim()
+            val cleanRemoteVersion = targetRelease.versionName.removePrefix("v").removePrefix("V").trim()
             val cleanCurrentVersion = BuildConfig.VERSION_NAME.removePrefix("v").removePrefix("V").trim()
 
             val isNewer = isRemoteVersionNewer(cleanRemoteVersion, cleanCurrentVersion)
 
-            if (isNewer && apkDownloadUrl.isNotBlank()) {
-                val updateInfo = UpdateInfo(
-                    versionName = tagName,
-                    releaseTitle = releaseTitle,
-                    releaseNotes = releaseNotes.ifBlank { "What's New in $tagName:\n• Security & lock screen enhancements\n• PDF report multi-page updates\n• Statement tagging & bug fixes" },
-                    downloadUrl = apkDownloadUrl,
-                    fileName = apkFileName,
-                    fileSize = apkSize,
-                    isNewer = true
+            if (isNewer && targetRelease.downloadUrl.isNotBlank()) {
+                val finalInfo = targetRelease.copy(
+                    isNewer = true,
+                    releaseNotes = targetRelease.releaseNotes.ifBlank {
+                        "What's New in ${targetRelease.versionName}:\n• Automated update and release pipeline\n• Security & UI stability improvements\n• Bug fixes and performance enhancements"
+                    }
                 )
-                _uiState.value = UpdateUiState.UpdateAvailable(updateInfo)
-                Result.success(updateInfo)
+                _uiState.value = UpdateUiState.UpdateAvailable(finalInfo)
+                Result.success(finalInfo)
             } else {
                 _uiState.value = UpdateUiState.UpToDate(BuildConfig.VERSION_NAME)
                 Result.success(null)
@@ -190,7 +317,8 @@ class UpdateManager(
                 }
 
                 val responseBody = response.body ?: throw Exception("Empty response body")
-                val totalLength = if (updateInfo.fileSize > 0) updateInfo.fileSize else responseBody.contentLength()
+                val responseContentLength = responseBody.contentLength()
+                val totalLength = if (responseContentLength > 0) responseContentLength else updateInfo.fileSize
                 var bytesDownloaded = 0L
 
                 responseBody.byteStream().use { inputStream ->
@@ -204,7 +332,7 @@ class UpdateManager(
                             bytesDownloaded += bytesRead
 
                             val now = System.currentTimeMillis()
-                            if (now - lastProgressUpdate > 100 || bytesDownloaded == totalLength) {
+                            if (now - lastProgressUpdate > 100 || (totalLength > 0 && bytesDownloaded == totalLength)) {
                                 lastProgressUpdate = now
                                 val progress = if (totalLength > 0) {
                                     (bytesDownloaded.toFloat() / totalLength).coerceIn(0f, 1f)
@@ -214,6 +342,12 @@ class UpdateManager(
                         }
                         outputStream.flush()
                     }
+                }
+                if (bytesDownloaded == 0L) {
+                    apkFile.delete()
+                    val msg = "Download failed: received 0 bytes."
+                    _uiState.value = UpdateUiState.Error(msg)
+                    return@withContext Result.failure(Exception(msg))
                 }
                 if (totalLength > 0 && bytesDownloaded < totalLength) {
                     apkFile.delete()
@@ -276,18 +410,27 @@ class UpdateManager(
         }
     }
 
-    private fun isRemoteVersionNewer(remote: String, local: String): Boolean {
-        if (remote.isBlank() || local.isBlank()) return false
-        val remoteParts = remote.split(".").mapNotNull { it.filter { c -> c.isDigit() }.toIntOrNull() }
-        val localParts = local.split(".").mapNotNull { it.filter { c -> c.isDigit() }.toIntOrNull() }
-
-        val maxLen = maxOf(remoteParts.size, localParts.size)
-        for (i in 0 until maxLen) {
-            val r = remoteParts.getOrElse(i) { 0 }
-            val l = localParts.getOrElse(i) { 0 }
-            if (r > l) return true
-            if (r < l) return false
+    companion object {
+        fun parseVersionParts(version: String): List<Int> {
+            return version.removePrefix("v").removePrefix("V").trim()
+                .split(".")
+                .mapNotNull { part -> part.filter { it.isDigit() }.toIntOrNull() }
         }
-        return false
+
+        fun compareVersions(v1: String, v2: String): Int {
+            val p1 = parseVersionParts(v1)
+            val p2 = parseVersionParts(v2)
+            val maxLen = maxOf(p1.size, p2.size)
+            for (i in 0 until maxLen) {
+                val n1 = p1.getOrElse(i) { 0 }
+                val n2 = p2.getOrElse(i) { 0 }
+                if (n1 != n2) return n1.compareTo(n2)
+            }
+            return 0
+        }
+
+        fun isRemoteVersionNewer(remote: String, local: String): Boolean {
+            return compareVersions(remote, local) > 0
+        }
     }
 }

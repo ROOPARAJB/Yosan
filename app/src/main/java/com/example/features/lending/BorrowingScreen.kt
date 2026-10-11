@@ -282,7 +282,7 @@ fun BorrowingScreen(
                     onInflowClick = { summary.inflowTransaction?.let(onTransactionClick) },
                     onRepaymentClick = onTransactionClick,
                     onUnlinkRepayment = { txId ->
-                        viewModel.linkTransactionToAdvance(txId, null)
+                        viewModel.linkTransactionToBorrow(txId, null)
                     },
                     onDeleteBorrowSet = { borrowId ->
                         viewModel.deleteBorrowSet(borrowId, deleteInflowTx = true)
@@ -340,6 +340,7 @@ fun BorrowingScreen(
                             viewModel.showMessage("Please enter a valid repayment amount")
                             return@Button
                         }
+                        val cleanId = summary.borrowId.removePrefix("#")
                         viewModel.addManualTransaction(
                             date = repayDateText.ifBlank { DateUtils.getCurrentDate() },
                             description = "Repayment to ${summary.lenderName}",
@@ -348,8 +349,8 @@ fun BorrowingScreen(
                             categoryId = null,
                             categoryName = "Borrow Repayment",
                             accountId = selectedAccountId,
-                            notes = "#${summary.borrowId} Repayment${if (repayNotesText.isNotBlank()) ": $repayNotesText" else ""}",
-                            advanceId = summary.borrowId
+                            notes = "#$cleanId Repayment${if (repayNotesText.isNotBlank()) ": $repayNotesText" else ""}",
+                            advanceId = cleanId
                         )
                         repayingSummary = null
                     }

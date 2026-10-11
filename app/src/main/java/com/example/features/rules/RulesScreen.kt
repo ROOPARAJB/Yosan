@@ -602,10 +602,19 @@ fun RulesScreen(
                                 val mType = editingRule?.matchType ?: MatchType.CONTAINS
                                 if (keyword.isNotBlank()) {
                                     if (editingRule != null) {
+                                        val resolvedType = when (cat.type) {
+                                            CategoryType.INCOME -> TransactionType.INCOME
+                                            CategoryType.INVESTMENT -> TransactionType.INVESTMENT
+                                            CategoryType.LENDING -> TransactionType.LENDING
+                                            CategoryType.BORROWING -> TransactionType.BORROWING
+                                            CategoryType.OTHER -> TransactionType.TRANSFER
+                                            else -> TransactionType.EXPENSE
+                                        }
                                         val updatedRule = editingRule!!.copy(
                                             keyword = keyword.trim(),
                                             categoryId = cat.id,
                                             categoryName = cat.name,
+                                            transactionType = resolvedType,
                                             priority = prio,
                                             matchType = mType
                                         )

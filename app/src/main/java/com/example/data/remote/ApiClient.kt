@@ -37,10 +37,16 @@ object ApiClient {
                 || (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
                 || "google_sdk" == Build.PRODUCT)
 
-        return if (isEmulator) {
-            "http://10.0.2.2:3000/"
-        } else {
-            "http://192.168.1.10:3000/"
+        val defaultOnlineUrl = try {
+            com.example.BuildConfig.DEFAULT_BACKEND_URL.trim()
+        } catch (_: Exception) {
+            ""
+        }
+
+        return when {
+            defaultOnlineUrl.isNotBlank() -> if (defaultOnlineUrl.endsWith("/")) defaultOnlineUrl else "$defaultOnlineUrl/"
+            isEmulator -> "http://10.0.2.2:3000/"
+            else -> "http://192.168.1.10:3000/"
         }
     }
 

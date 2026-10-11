@@ -114,6 +114,7 @@ class MainActivity : FragmentActivity() {
                 {
                     lockErrorMessage = null
                     if (keyguardManager.isDeviceSecure) {
+                        @Suppress("DEPRECATION")
                         val intent = keyguardManager.createConfirmDeviceCredentialIntent(
                             "Unlock Yosan",
                             "Enter your phone PIN, pattern, or password"

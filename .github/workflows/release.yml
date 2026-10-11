@@ -35,6 +35,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch All Git Tags
+        run: git fetch --tags --force
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -81,6 +84,7 @@ jobs:
             [ -z "$TITLE" ] && TITLE="Release $TAG"
             NOTES="${{ github.event.inputs.release_notes }}"
             [ -z "$NOTES" ] && NOTES="Manual release $TAG."
+            echo "$NOTES" > release_notes.md
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG=${GITHUB_REF#refs/tags/}
             VNAME=$(echo "$TAG" | sed -e 's/^[vV]//')
@@ -88,7 +92,7 @@ jobs:
             TAG_MSG=$(git tag -l --format='%(contents)' "$TAG")
             [ -z "$TAG_MSG" ] && TAG_MSG=$(git log -1 --pretty=%B)
             TITLE="Release $TAG"
-            NOTES="${TAG_MSG:-Automated release for $TAG}"
+            echo "${TAG_MSG:-Automated release for $TAG}" > release_notes.md
           else
             TAG="v1.1.${{ github.run_number }}"
             VNAME="1.1.${{ github.run_number }}"
@@ -96,26 +100,26 @@ jobs:
             COMMIT_TITLE=$(git log -1 --pretty=%s)
             COMMIT_BODY=$(git log -1 --pretty=%B)
             TITLE="Update v1.1.${{ github.run_number }}: $COMMIT_TITLE"
-            NOTES="### 🚀 What's New in v1.1.${{ github.run_number }}
-
-$COMMIT_BODY
-
----
-*Automated build from commit [${GITHUB_SHA::7}](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}) on main branch.*"
+            {
+              echo "### 🚀 What's New in v1.1.${{ github.run_number }}"
+              echo ""
+              echo "$COMMIT_BODY"
+              echo ""
+              echo "---"
+              echo "*Automated build from commit [${GITHUB_SHA:0:7}](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}) on main branch.*"
+            } > release_notes.md
           fi
 
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version_name=$VNAME" >> $GITHUB_OUTPUT
-          echo "version_code=$VCODE" >> $GITHUB_OUTPUT
-          echo "title=$TITLE" >> $GITHUB_OUTPUT
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VNAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VCODE" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
       - name: Build Release APK
         env:
           APP_VERSION_NAME: ${{ steps.release_info.outputs.version_name }}
           APP_VERSION_CODE: ${{ steps.release_info.outputs.version_code }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Locate Generated APK
@@ -128,14 +132,15 @@ $COMMIT_BODY
           fi
           echo "Found APK at $APK_PATH"
           cp "$APK_PATH" Yosan-Update.apk
-          echo "apk_path=Yosan-Update.apk" >> $GITHUB_OUTPUT
+          echo "apk_path=Yosan-Update.apk" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release and Upload APK
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_info.outputs.tag }}
           name: ${{ steps.release_info.outputs.title }}
-          body: ${{ steps.release_info.outputs.notes }}
+          body_path: release_notes.md
+          make_latest: true
           draft: false
           prerelease: false
           files: Yosan-Update.apk

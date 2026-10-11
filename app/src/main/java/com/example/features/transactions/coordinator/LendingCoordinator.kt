@@ -182,6 +182,9 @@ class LendingCoordinator(
         scope.launch {
             repository.recordLoanRepayment(loanId, amount, date, method, notes)
             val loan = repository.getLoanById(loanId)
+            val lendTag = loan?.let {
+                Regex("""#(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(it.notes)?.groupValues?.get(1) ?: "LEND-${it.id}"
+            } ?: "LEND-$loanId"
             repository.insertTransaction(
                 TransactionEntity(
                     accountId = accountId,
@@ -193,6 +196,7 @@ class LendingCoordinator(
                     transactionType = TransactionType.INCOME,
                     categoryName = "Loan Repayment",
                     linkedLoanId = loanId,
+                    advanceId = lendTag,
                     notes = notes
                 )
             )
@@ -280,8 +284,11 @@ class LendingCoordinator(
                     showMessage("Income linked to Lend #${resolvedTag.removePrefix("#")} (${targetLoan.personName})")
                 }
             } else {
+                val idPattern = Regex("""#?(?:LEND)[_\s-]*\d+""", RegexOption.IGNORE_CASE)
+                val cleanNotes = tx.notes.replace(idPattern, "").trim()
                 val updated = tx.copy(
                     linkedLoanId = null,
+                    notes = cleanNotes,
                     advanceId = if (tx.advanceId?.startsWith("LEND", ignoreCase = true) == true) null else tx.advanceId,
                     updatedAt = System.currentTimeMillis()
                 )
@@ -309,8 +316,11 @@ class LendingCoordinator(
         scope.launch {
             val tx = repository.getTransactionById(txId) ?: return@launch
             val cleanBorrowId = borrowId?.trim()?.takeIf { it.isNotBlank() }?.removePrefix("#")
+            val idPattern = Regex("""#?(?:BORROW)[_\s-]*\d+""", RegexOption.IGNORE_CASE)
+            val cleanNotes = if (cleanBorrowId == null) tx.notes.replace(idPattern, "").trim() else tx.notes
             val updated = tx.copy(
                 advanceId = cleanBorrowId?.let { "BORROW-$it".replace("BORROW-BORROW-", "BORROW-") },
+                notes = cleanNotes,
                 categoryName = if (cleanBorrowId != null && tx.categoryName.equals("Uncategorized", ignoreCase = true)) "Debt Repayment" else tx.categoryName,
                 updatedAt = System.currentTimeMillis()
             )

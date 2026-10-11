@@ -199,7 +199,7 @@ data class FeedbackRequest(
     @field:Json(name = "rating") val rating: Int,
     @field:Json(name = "subject") val subject: String,
     @field:Json(name = "description") val description: String,
-    @field:Json(name = "appVersion") val appVersion: String = "v1.1.0",
+    @field:Json(name = "appVersion") val appVersion: String = "v1.1.2",
     @field:Json(name = "deviceModel") val deviceModel: String = "",
     @field:Json(name = "androidVersion") val androidVersion: String = "",
     @field:Json(name = "syncId") val syncId: String? = null
