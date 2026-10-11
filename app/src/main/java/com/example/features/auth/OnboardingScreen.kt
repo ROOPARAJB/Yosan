@@ -33,6 +33,7 @@ import com.example.ui.theme.LendingIndigo
 import com.example.features.auth.AuthViewModel
 import com.example.features.transactions.FinanceViewModel
 import com.example.data.remote.LatestBackupResponse
+import com.example.data.remote.ApiClient
 import kotlinx.coroutines.launch
 
 val POPULAR_INDIAN_BANKS = listOf(
@@ -90,6 +91,10 @@ fun OnboardingScreen(
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+
+    var showServerConfigDialog by remember { mutableStateOf(false) }
+    var currentServerUrl by remember { mutableStateOf(ApiClient.getBaseUrl(context)) }
+    var editedServerUrl by remember(showServerConfigDialog) { mutableStateOf(currentServerUrl) }
 
     val restoreLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
@@ -304,11 +309,34 @@ fun OnboardingScreen(
                                     shape = RoundedCornerShape(16.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(14.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Email Verification (OTP)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text("Email Verification (OTP)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                            }
+                                            IconButton(
+                                                onClick = { showServerConfigDialog = true },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Settings,
+                                                    contentDescription = "Server Settings",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                         }
+                                        Text(
+                                            text = "Server: $currentServerUrl",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            fontSize = 10.sp
+                                        )
                                         Spacer(modifier = Modifier.height(10.dp))
 
                                         OutlinedTextField(
@@ -369,7 +397,7 @@ fun OnboardingScreen(
                                                     }
                                                 },
                                                 label = { Text("6-Digit Code") },
-                                                placeholder = { Text("123456") },
+                                                placeholder = { Text("Enter 6-digit code") },
                                                 modifier = Modifier.fillMaxWidth(),
                                                 singleLine = true,
                                                 keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
@@ -422,6 +450,15 @@ fun OnboardingScreen(
                                         otpErrorMessage?.let {
                                             Spacer(modifier = Modifier.height(6.dp))
                                             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                            if (it.contains("Unable to reach", ignoreCase = true)) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                TextButton(
+                                                    onClick = { showServerConfigDialog = true },
+                                                    contentPadding = PaddingValues(0.dp)
+                                                ) {
+                                                    Text("Tap here to check / edit Server URL", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -959,6 +996,51 @@ fun OnboardingScreen(
                     enabled = !isRestoringFromBackup
                 ) {
                     Text("Skip & Start Fresh")
+                }
+            }
+        )
+    }
+
+    if (showServerConfigDialog) {
+        AlertDialog(
+            onDismissRequest = { showServerConfigDialog = false },
+            title = { Text("Backend Server Settings") },
+            text = {
+                Column {
+                    Text(
+                        "Set the IP and port where your Yosan backend is running. For Android Emulator use http://10.0.2.2:3000/, for a physical device on Wi-Fi use your PC's IP address (e.g. http://192.168.1.10:3000/).",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = editedServerUrl,
+                        onValueChange = { editedServerUrl = it },
+                        label = { Text("Server URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        ApiClient.setCustomBaseUrl(context, editedServerUrl.ifBlank { null })
+                        currentServerUrl = ApiClient.getBaseUrl(context)
+                        showServerConfigDialog = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        ApiClient.setCustomBaseUrl(context, null)
+                        currentServerUrl = ApiClient.getBaseUrl(context)
+                        showServerConfigDialog = false
+                    }
+                ) {
+                    Text("Reset Default")
                 }
             }
         )

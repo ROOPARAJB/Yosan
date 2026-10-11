@@ -90,7 +90,7 @@ object UndoJsonHelper {
                     } catch (_: Exception) {
                         TransactionType.EXPENSE
                     },
-                    balanceAfterTransaction = if (obj.has("balanceAfterTransaction")) obj.optDouble("balanceAfterTransaction") else null,
+                    balanceAfterTransaction = if (obj.has("balanceAfterTransaction") && !obj.isNull("balanceAfterTransaction")) obj.optDouble("balanceAfterTransaction") else null,
                     categoryId = if (obj.has("categoryId") && !obj.isNull("categoryId")) obj.optLong("categoryId") else null,
                     categoryName = obj.optString("categoryName", "Uncategorized"),
                     source = obj.optString("source", "MANUAL"),

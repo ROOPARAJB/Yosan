@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.example.features.transactions.FinanceViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -47,6 +48,7 @@ fun ReportsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val summary by viewModel.dashboardSummary.collectAsState()
     val categoryBreakdown by viewModel.categoryBreakdown.collectAsState()
     val categoryIncomeBreakdown by viewModel.categoryIncomeBreakdown.collectAsState()
@@ -98,7 +100,9 @@ fun ReportsScreen(
                         }
                     }
                 }
+                val oldBitmaps = pdfPreviewBitmaps
                 pdfPreviewBitmaps = bitmaps
+                oldBitmaps.forEach { if (!it.isRecycled) it.recycle() }
                 if (currentPageIndex >= bitmaps.size) {
                     currentPageIndex = 0
                 }
@@ -108,65 +112,73 @@ fun ReportsScreen(
     }
 
     fun sharePdfReport() {
-        try {
-            val file = generatedFile ?: ExportService.generatePdfReport(
-                context = context,
-                summary = summary,
-                categoryExpenseBreakdown = categoryBreakdown,
-                categoryIncomeBreakdown = categoryIncomeBreakdown,
-                monthlyTrends = monthlyTrends,
-                loans = loans,
-                allTransactions = allTransactions,
-                companyExpenses = companyExpenses,
-                userName = userProfile?.name
-            )
-            val authority = "${context.packageName}.fileprovider"
-            val uri = FileProvider.getUriForFile(context, authority, file)
-            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/pdf"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        scope.launch {
+            try {
+                val file = generatedFile ?: withContext(Dispatchers.IO) {
+                    ExportService.generatePdfReport(
+                        context = context,
+                        summary = summary,
+                        categoryExpenseBreakdown = categoryBreakdown,
+                        categoryIncomeBreakdown = categoryIncomeBreakdown,
+                        monthlyTrends = monthlyTrends,
+                        loans = loans,
+                        allTransactions = allTransactions,
+                        companyExpenses = companyExpenses,
+                        userName = userProfile?.name
+                    )
+                }
+                val authority = "${context.packageName}.fileprovider"
+                val uri = FileProvider.getUriForFile(context, authority, file)
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/pdf"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = Intent.createChooser(sendIntent, "Share PDF Report").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("ReportsScreen", "Could not share PDF", e)
+                }
+                viewModel.showMessage("Could not share PDF: ${e.localizedMessage ?: "Please install a PDF sharing app"}")
             }
-            val chooser = Intent.createChooser(sendIntent, "Share PDF Report").apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(chooser)
-        } catch (e: Exception) {
-            if (com.example.BuildConfig.DEBUG) {
-                android.util.Log.e("ReportsScreen", "Could not share PDF", e)
-            }
-            viewModel.showMessage("Could not share PDF: ${e.localizedMessage ?: "Please install a PDF sharing app"}")
         }
     }
 
     fun openPdfReport() {
-        try {
-            val file = generatedFile ?: ExportService.generatePdfReport(
-                context = context,
-                summary = summary,
-                categoryExpenseBreakdown = categoryBreakdown,
-                categoryIncomeBreakdown = categoryIncomeBreakdown,
-                monthlyTrends = monthlyTrends,
-                loans = loans,
-                allTransactions = allTransactions,
-                companyExpenses = companyExpenses,
-                userName = userProfile?.name
-            )
-            val authority = "${context.packageName}.fileprovider"
-            val uri = FileProvider.getUriForFile(context, authority, file)
-            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/pdf")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        scope.launch {
+            try {
+                val file = generatedFile ?: withContext(Dispatchers.IO) {
+                    ExportService.generatePdfReport(
+                        context = context,
+                        summary = summary,
+                        categoryExpenseBreakdown = categoryBreakdown,
+                        categoryIncomeBreakdown = categoryIncomeBreakdown,
+                        monthlyTrends = monthlyTrends,
+                        loans = loans,
+                        allTransactions = allTransactions,
+                        companyExpenses = companyExpenses,
+                        userName = userProfile?.name
+                    )
+                }
+                val authority = "${context.packageName}.fileprovider"
+                val uri = FileProvider.getUriForFile(context, authority, file)
+                val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/pdf")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = Intent.createChooser(viewIntent, "Open PDF Report").apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(chooser)
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    android.util.Log.e("ReportsScreen", "Could not open PDF", e)
+                }
+                viewModel.showMessage("Could not open PDF: ${e.localizedMessage ?: "Please install a PDF viewer app"}")
             }
-            val chooser = Intent.createChooser(viewIntent, "Open PDF Report").apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(chooser)
-        } catch (e: Exception) {
-            if (com.example.BuildConfig.DEBUG) {
-                android.util.Log.e("ReportsScreen", "Could not open PDF", e)
-            }
-            viewModel.showMessage("Could not open PDF: ${e.localizedMessage ?: "Please install a PDF viewer app"}")
         }
     }
 

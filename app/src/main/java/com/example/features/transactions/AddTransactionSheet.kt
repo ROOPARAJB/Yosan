@@ -66,6 +66,17 @@ fun AddTransactionSheet(
     var lendId by remember { mutableStateOf("") }
     var borrowId by remember { mutableStateOf("") }
 
+    LaunchedEffect(accounts) {
+        if (accounts.isNotEmpty()) {
+            if (accounts.none { it.id == selectedAccountId }) {
+                selectedAccountId = accounts.first().id
+            }
+            if (accounts.none { it.id == targetAccountId }) {
+                targetAccountId = accounts.getOrNull(1)?.id ?: accounts.first().id
+            }
+        }
+    }
+
     // Auto-assign unique IDs when tabs or categories switch
     LaunchedEffect(selectedTab, selectedCategory) {
         if (selectedTab == AddTab.LEND_MONEY && lendId.isBlank()) {

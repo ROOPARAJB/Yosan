@@ -112,7 +112,8 @@ abstract class AppDatabase : RoomDatabase() {
                     "finance_manager_db"
                 )
                     .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
-                    .addCallback(AppDatabaseCallback(scope))
+                    .fallbackToDestructiveMigration()
+                    .addCallback(AppDatabaseCallback(context.applicationContext, scope))
                     .build()
                 INSTANCE = instance
                 instance
@@ -120,14 +121,14 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private class AppDatabaseCallback(
+            private val context: Context,
             private val scope: CoroutineScope
         ) : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
-                INSTANCE?.let { database ->
-                    scope.launch(Dispatchers.IO) {
-                        DatabaseInitializer.seedInitialData(database)
-                    }
+                scope.launch(Dispatchers.IO) {
+                    val database = getDatabase(context, scope)
+                    DatabaseInitializer.seedInitialData(database)
                 }
             }
         }

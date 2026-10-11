@@ -55,11 +55,12 @@ class TransactionRepository(private val database: AppDatabase) {
     suspend fun recalculateAccountBalance(accountId: Long) {
         val account = accountDao.getAccountById(accountId) ?: return
         val allAccounts = accountDao.getAllAccountsList()
-        val isSingleOrPrimary = allAccounts.size <= 1 || account.isDefault || account.id == 1L
+        val primaryAccount = allAccounts.firstOrNull { it.isDefault } ?: allAccounts.firstOrNull()
+        val isSingleOrPrimary = allAccounts.size <= 1 || (primaryAccount != null && account.id == primaryAccount.id)
 
         val txs = if (isSingleOrPrimary) {
             transactionDao.getAllTransactionsList().filter {
-                it.accountId == accountId || it.accountId == 0L || it.accountId == 1L
+                it.accountId == accountId || it.accountId == 0L || (account.id == 1L && it.accountId == 1L)
             }
         } else {
             transactionDao.getTransactionsByAccountList(accountId)

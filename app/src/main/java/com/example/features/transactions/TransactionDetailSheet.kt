@@ -676,7 +676,7 @@ fun TransactionDetailSheet(
                                 val autoGen = when (currentTx.transactionType) {
                                     TransactionType.LENDING -> viewModel.generateNextLendId()
                                     TransactionType.BORROWING -> viewModel.generateNextBorrowId()
-                                    TransactionType.INVESTMENT -> "INV-${(1..99).firstOrNull { num -> viewModel.allTransactions.value.none { it.advanceId == "INV-$num" } } ?: 1}"
+                                    TransactionType.INVESTMENT -> "INV-${(1..99).firstOrNull { num -> allTransactions.none { it.advanceId == "INV-$num" } } ?: 1}"
                                     else -> viewModel.generateNextAdvanceId()
                                 }
                                 editedAdvanceIdText = autoGen
@@ -732,7 +732,7 @@ fun TransactionDetailSheet(
                                         val autoId = when (currentTx.transactionType) {
                                             TransactionType.LENDING -> viewModel.generateNextLendId()
                                             TransactionType.BORROWING -> viewModel.generateNextBorrowId()
-                                            TransactionType.INVESTMENT -> "INV-${(1..99).firstOrNull { num -> viewModel.allTransactions.value.none { it.advanceId == "INV-$num" } } ?: 1}"
+                                            TransactionType.INVESTMENT -> "INV-${(1..99).firstOrNull { num -> allTransactions.none { it.advanceId == "INV-$num" } } ?: 1}"
                                             else -> viewModel.generateNextAdvanceId()
                                         }
                                         viewModel.updateTransactionAdvanceId(currentTx.id, autoId)

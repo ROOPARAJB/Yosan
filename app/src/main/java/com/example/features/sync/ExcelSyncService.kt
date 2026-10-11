@@ -102,6 +102,7 @@ object ExcelSyncService {
     private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH)
     private val TIME_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH)
 
+    @Synchronized
     fun formatTimestamp(ts: Long): String {
         return try {
             TIME_FORMAT.format(Date(ts))
@@ -110,6 +111,7 @@ object ExcelSyncService {
         }
     }
 
+    @Synchronized
     fun parseTimestamp(str: String): Long {
         val trimmed = str.trim()
         val num = trimmed.toLongOrNull()
@@ -125,6 +127,7 @@ object ExcelSyncService {
         }
     }
 
+    @Synchronized
     fun normalizeDate(input: String): String {
         val trimmed = input.trim()
         if (trimmed.isEmpty()) return DATE_FORMAT.format(Date())

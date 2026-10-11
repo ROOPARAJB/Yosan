@@ -171,7 +171,7 @@ fun LendingScreen(
             }
         } else {
             items(filteredLoans, key = { it.id }) { loan ->
-                val lendTag = Regex("""#(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(loan.notes)?.groupValues?.get(1) ?: "LEND-${loan.id}"
+                val lendTag = Regex("""#?(LEND[-_ ]*\d+)""", RegexOption.IGNORE_CASE).find(loan.notes)?.groupValues?.get(1) ?: "LEND-${loan.id}"
                 val repayments = allTransactions.filter { tx ->
                     tx.linkedLoanId == loan.id || (tx.creditAmount > 0 && (tx.notes.contains(lendTag, ignoreCase = true) || tx.description.contains(lendTag, ignoreCase = true)))
                 }
@@ -183,6 +183,7 @@ fun LendingScreen(
                     onAddRepayClick = { onRepayLoanClick(loan) },
                     onDeleteLoan = { viewModel.deleteLendSet(lendTag, loan.id, deleteLendTx = true) },
                     onUnlinkRepayment = { txId ->
+                        viewModel.linkTransactionToLoan(txId, null)
                         viewModel.linkTransactionToAdvance(txId, null)
                     },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)

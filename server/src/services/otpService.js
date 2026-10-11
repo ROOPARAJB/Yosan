@@ -62,7 +62,7 @@ class OtpService {
       message: `Verification code sent to ${cleanEmail}`,
       cooldownSeconds: 60,
       expiresInSeconds: 600,
-      ...(config.NODE_ENV !== 'production' ? { devOtp: otp } : {})
+      ...(config.NODE_ENV === 'test' ? { devOtp: otp } : {})
     };
   }
 

@@ -113,8 +113,8 @@ fun BorrowingScreen(
         }
 
         // Standalone records without explicit #BORROW-X
-        standalone.forEachIndexed { index, tx ->
-            val syntheticId = "BORROW-${index + 1}"
+        standalone.forEach { tx ->
+            val syntheticId = "BORROW-${tx.id}"
             val totalBorrowed = if (tx.creditAmount > 0) tx.creditAmount else tx.amount
             val isSettled = tx.notes.contains("#SETTLED", ignoreCase = true)
 
@@ -135,6 +135,9 @@ fun BorrowingScreen(
 
         summaries.sortedByDescending { it.inflowTransaction?.transactionDate ?: "" }
     }
+
+    val accounts by viewModel.accounts.collectAsState()
+    var repayingSummary by remember { mutableStateOf<BorrowSummary?>(null) }
 
     val totalBorrowed = remember(borrowSummaries) {
         borrowSummaries.sumOf { it.totalBorrowed }
@@ -275,7 +278,7 @@ fun BorrowingScreen(
             items(filteredSummaries, key = { it.borrowId }) { summary ->
                 BorrowSetCard(
                     summary = summary,
-                    onAddSettlementClick = onAddBorrowClick,
+                    onAddSettlementClick = { repayingSummary = summary },
                     onInflowClick = { summary.inflowTransaction?.let(onTransactionClick) },
                     onRepaymentClick = onTransactionClick,
                     onUnlinkRepayment = { txId ->
@@ -288,6 +291,78 @@ fun BorrowingScreen(
                 )
             }
         }
+    }
+
+    repayingSummary?.let { summary ->
+        var repayAmountText by remember { mutableStateOf(if (summary.remainingDebt > 0) summary.remainingDebt.toString() else "") }
+        var repayDateText by remember { mutableStateOf(DateUtils.getCurrentDate()) }
+        var repayNotesText by remember { mutableStateOf("") }
+        var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 1L) }
+
+        AlertDialog(
+            onDismissRequest = { repayingSummary = null },
+            title = { Text("Add Repayment #${summary.borrowId.removePrefix("#")}", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Recording repayment to ${summary.lenderName}. Remaining debt: ${CurrencyFormatter.formatInr(summary.remainingDebt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = repayAmountText,
+                        onValueChange = { repayAmountText = it },
+                        label = { Text("Repayment Amount (₹)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = repayDateText,
+                        onValueChange = { repayDateText = it },
+                        label = { Text("Date (YYYY-MM-DD)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = repayNotesText,
+                        onValueChange = { repayNotesText = it },
+                        label = { Text("Notes (Optional)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val amt = repayAmountText.toDoubleOrNull() ?: 0.0
+                        if (amt <= 0.0) {
+                            viewModel.showMessage("Please enter a valid repayment amount")
+                            return@Button
+                        }
+                        viewModel.addManualTransaction(
+                            date = repayDateText.ifBlank { DateUtils.getCurrentDate() },
+                            description = "Repayment to ${summary.lenderName}",
+                            amount = amt,
+                            type = TransactionType.EXPENSE,
+                            categoryId = null,
+                            categoryName = "Borrow Repayment",
+                            accountId = selectedAccountId,
+                            notes = "#${summary.borrowId} Repayment${if (repayNotesText.isNotBlank()) ": $repayNotesText" else ""}",
+                            advanceId = summary.borrowId
+                        )
+                        repayingSummary = null
+                    }
+                ) {
+                    Text("Save Repayment")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { repayingSummary = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -540,7 +615,7 @@ fun BorrowSetCard(
                                     text = "-${CurrencyFormatter.formatInr(if (tx.debitAmount > 0) tx.debitAmount else tx.amount)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = IncomeGreen
+                                    color = ExpenseRed
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 IconButton(

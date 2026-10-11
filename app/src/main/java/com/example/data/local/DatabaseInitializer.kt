@@ -16,6 +16,7 @@ object DatabaseInitializer {
         // Purge all old demo data from existing database tables
         transactionDao.deleteAllTransactions()
         loanDao.deleteAllLoans()
+        database.loanRepaymentDao().deleteAllRepayments()
         companyExpenseDao.deleteAllCompanyExpenses()
         accountDao.deleteAllAccounts()
         categoryDao.deleteAllCategories()

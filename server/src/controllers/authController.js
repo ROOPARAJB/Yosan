@@ -98,18 +98,19 @@ class AuthController {
       }
 
       const cleanNewEmail = newEmail.trim().toLowerCase();
-      const currentUser = userRepository.getUserById(req.user.id);
+      const currentUserId = req.user ? req.user.id : null;
+      const currentUser = currentUserId ? userRepository.getUserById(currentUserId) : null;
 
-      if (currentUser.email && currentUser.email.toLowerCase() === cleanNewEmail) {
+      if (currentUser && currentUser.email && currentUser.email.toLowerCase() === cleanNewEmail) {
         return res.status(400).json({ error: 'SAME_EMAIL', message: 'New email cannot be identical to current email' });
       }
 
       const existing = userRepository.getUserByEmail(cleanNewEmail);
-      if (existing && existing.id !== req.user.id) {
+      if (existing && currentUserId && existing.id !== currentUserId) {
         return res.status(409).json({ error: 'EMAIL_ALREADY_IN_USE', message: 'This email is already associated with another account' });
       }
 
-      const result = await otpService.generateAndSendOtp(cleanNewEmail, 'CHANGE_EMAIL', req.user.id);
+      const result = await otpService.generateAndSendOtp(cleanNewEmail, 'CHANGE_EMAIL', currentUserId);
       return res.status(200).json(result);
     } catch (err) {
       const isExpected = err.message.startsWith('COOLDOWN_ACTIVE') || err.message.startsWith('INVALID_EMAIL');
@@ -129,23 +130,38 @@ class AuthController {
       }
 
       const cleanNewEmail = newEmail.trim().toLowerCase();
+      const currentUserId = req.user ? req.user.id : null;
 
-      // Verify OTP strictly for CHANGE_EMAIL purpose and matching userId
-      otpService.verifyOtp(cleanNewEmail, otp, 'CHANGE_EMAIL', req.user.id);
+      // Verify OTP strictly for CHANGE_EMAIL purpose
+      otpService.verifyOtp(cleanNewEmail, otp, 'CHANGE_EMAIL', currentUserId);
 
       const existing = userRepository.getUserByEmail(cleanNewEmail);
-      if (existing && existing.id !== req.user.id) {
+      if (existing && currentUserId && existing.id !== currentUserId) {
         return res.status(409).json({ error: 'EMAIL_ALREADY_IN_USE', message: 'This email is already associated with another account' });
       }
 
       const now = Date.now();
-      userRepository.updateUserEmail(req.user.id, cleanNewEmail, now);
-      const updatedUser = userRepository.getUserById(req.user.id);
+      let updatedUser;
+      if (currentUserId) {
+        userRepository.updateUserEmail(currentUserId, cleanNewEmail, now);
+        updatedUser = userRepository.getUserById(currentUserId);
+      } else {
+        let user = userRepository.getUserByEmail(cleanNewEmail);
+        if (!user) {
+          const result = userRepository.createUserWithEmail(cleanNewEmail, '', now);
+          user = userRepository.getUserById(result.lastInsertRowid);
+          userRepository.createUserProfile(user.id, now);
+        }
+        updatedUser = user;
+      }
 
+      const tokens = googleAuthService.generateTokens(updatedUser);
       return res.status(200).json({
         success: true,
         message: 'Email successfully verified and updated',
-        email: updatedUser.email
+        email: updatedUser.email,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken
       });
     } catch (err) {
       const isExpected = err.message.startsWith('INVALID_OTP') ||

@@ -611,6 +611,7 @@ fun RulesScreen(
                                         )
                                         viewModel.updateRule(updatedRule)
                                         editingRule = null
+                                        showAddRuleDialog = false
                                     } else {
                                         viewModel.addRule(keyword.trim(), cat, prio, mType)
                                         showAddRuleDialog = false
@@ -673,6 +674,30 @@ fun RulesScreen(
                             )
                         }
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Category Color", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    androidx.compose.foundation.layout.FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        colorsList.forEach { colorHex ->
+                            val c = try { Color(android.graphics.Color.parseColor(colorHex)) } catch (_: Exception) { Color.Gray }
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(c)
+                                    .border(
+                                        width = if (selectedColorHex.equals(colorHex, ignoreCase = true)) 3.dp else 1.dp,
+                                        color = if (selectedColorHex.equals(colorHex, ignoreCase = true)) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                        shape = CircleShape
+                                    )
+                                    .clickable { selectedColorHex = colorHex }
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(24.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -688,18 +713,19 @@ fun RulesScreen(
                             onClick = {
                                 if (catName.isNotBlank()) {
                                     val usedColors = categories.map { it.colorHex.uppercase() }.toSet()
-                                    val autoColor = editingCategory?.colorHex ?: colorsList.firstOrNull { it.uppercase() !in usedColors } ?: colorsList[categories.size % colorsList.size]
+                                    val finalColor = if (selectedColorHex.isNotBlank()) selectedColorHex
+                                    else editingCategory?.colorHex ?: colorsList.firstOrNull { it.uppercase() !in usedColors } ?: colorsList[categories.size % colorsList.size]
                                     if (editingCategory != null) {
                                         val updatedCat = editingCategory!!.copy(
                                             name = catName.trim(),
                                             type = catType,
-                                            colorHex = autoColor,
+                                            colorHex = finalColor,
                                             updatedAt = System.currentTimeMillis()
                                         )
                                         viewModel.updateCategory(updatedCat)
                                         editingCategory = null
                                     } else {
-                                        viewModel.addCategory(catName.trim(), catType, autoColor)
+                                        viewModel.addCategory(catName.trim(), catType, finalColor)
                                     }
                                     showAddCatDialog = false
                                     catName = ""

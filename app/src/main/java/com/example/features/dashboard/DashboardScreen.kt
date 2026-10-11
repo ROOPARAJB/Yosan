@@ -59,10 +59,16 @@ fun DashboardScreen(
     val scope = rememberCoroutineScope()
     val updateManager = remember { UpdateManager(context) }
     val updateState by updateManager.uiState.collectAsState()
-    var showUpdateDialog by remember { mutableStateOf(true) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         updateManager.checkForUpdates()
+    }
+
+    LaunchedEffect(updateState) {
+        if (updateState is UpdateUiState.UpdateAvailable) {
+            showUpdateDialog = true
+        }
     }
 
     val summary by viewModel.dashboardSummary.collectAsState()

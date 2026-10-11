@@ -259,8 +259,8 @@ object ExportService {
     ): File {
         val borrows = computeBorrowSummaries(allTransactions)
         val pdfDocument = PdfDocument()
-
-        // Common Paints
+        try {
+            // Common Paints
         val titlePaint = Paint().apply {
             color = Color.BLACK
             textSize = 15f
@@ -637,14 +637,18 @@ object ExportService {
         }
 
         val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
-        val cleanName = (userName ?: "User").trim().replace("\\s+".toRegex(), "_").replace("[^a-zA-Z0-9_]".toRegex(), "")
+        val cleanName = (userName ?: "User").trim().replace("\\s+".toRegex(), "_").replace("[^a-zA-Z0-9_]".toRegex(), "").ifBlank { "User" }
         val fileName = "${cleanName}_Financial_Report_$timeStamp.pdf"
         val reportsDir = File(context.cacheDir, "reports").apply { if (!exists()) mkdirs() }
         val file = File(reportsDir, fileName)
         FileOutputStream(file).use { out ->
             pdfDocument.writeTo(out)
         }
-        pdfDocument.close()
         return file
+    } finally {
+        try {
+            pdfDocument.close()
+        } catch (_: Exception) {}
     }
+}
 }

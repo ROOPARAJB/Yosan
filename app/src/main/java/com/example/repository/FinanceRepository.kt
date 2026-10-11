@@ -82,12 +82,18 @@ class FinanceRepository(private val database: AppDatabase) {
     }
 
     suspend fun updateTransaction(transaction: TransactionEntity) {
+        val oldTx = transactionDao.getTransactionById(transaction.id)
         transactionDao.updateTransaction(transaction)
         recalculateAccountBalance(transaction.accountId)
+        if (oldTx != null && oldTx.accountId != transaction.accountId) {
+            recalculateAccountBalance(oldTx.accountId)
+        }
     }
 
     suspend fun updateTransactionCategory(id: Long, categoryId: Long?, categoryName: String, transactionType: TransactionType) {
         transactionDao.updateTransactionCategory(id, categoryId, categoryName, transactionType)
+        val tx = transactionDao.getTransactionById(id)
+        tx?.let { recalculateAccountBalance(it.accountId) }
     }
 
     suspend fun deleteTransaction(id: Long) {
@@ -159,10 +165,12 @@ class FinanceRepository(private val database: AppDatabase) {
         return CategorizationEngine.categorize(description, activeRules, isCredit)
     }
 
+    private val transactionRepo by lazy { com.example.features.transactions.data.TransactionRepository(database) }
+
     // Balance recalculation helper — delegates to TransactionRepository which has the full implementation
     private suspend fun recalculateAccountBalance(accountId: Long) {
         try {
-            com.example.features.transactions.data.TransactionRepository(database).recalculateAccountBalance(accountId)
+            transactionRepo.recalculateAccountBalance(accountId)
         } catch (_: Exception) {}
     }
 }

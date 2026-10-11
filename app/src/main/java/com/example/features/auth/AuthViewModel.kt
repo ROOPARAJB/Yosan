@@ -75,6 +75,16 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val savedProfile = authRepository.getProfileOnce()
 
+                if (savedProfile != null && !savedProfile.email.isNullOrBlank()) {
+                    tokenManager.saveUserSession(
+                        userId = tokenManager.getUserId().takeIf { it > 0 } ?: 1L,
+                        googleSub = savedProfile.googleSub ?: tokenManager.getGoogleSub() ?: "",
+                        email = savedProfile.email,
+                        name = savedProfile.name ?: "User",
+                        profilePicture = savedProfile.profilePictureUrl ?: ""
+                    )
+                }
+
                 when {
                     savedProfile != null &&
                     (savedProfile.isOnboardingCompleted || (!savedProfile.name.isNullOrBlank() && !savedProfile.name.equals("User", ignoreCase = true))) -> {
@@ -134,7 +144,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                 updatedAt = System.currentTimeMillis()
                             )
                             authRepository.updateProfile(updatedProfile)
-                            // Save profile identifiers locally (no tokens needed)
+                            // Save profile identifiers locally
                             tokenManager.saveUserSession(
                                 userId = 1L,
                                 googleSub = claims.sub,
@@ -142,6 +152,24 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                                 name = claims.name,
                                 profilePicture = claims.picture
                             )
+                            // Exchange with backend to obtain session tokens for cloud sync & drive
+                            try {
+                                val api = ApiClient.getAuthApi(getApplication())
+                                val backendAuth = api.authenticateGoogle(GoogleAuthRequest(idToken = result.idToken))
+                                if (backendAuth.isSuccessful && backendAuth.body() != null) {
+                                    val authRes = backendAuth.body()!!
+                                    tokenManager.saveTokens(authRes.accessToken, authRes.refreshToken)
+                                    tokenManager.saveUserSession(
+                                        userId = authRes.user.id,
+                                        googleSub = authRes.user.googleSub,
+                                        email = authRes.user.email,
+                                        name = authRes.user.name,
+                                        profilePicture = authRes.user.profilePictureUrl ?: ""
+                                    )
+                                }
+                            } catch (_: Exception) {
+                                // Gracefully continue locally if server is offline
+                            }
                             _user.value = buildLocalUser(updatedProfile)
                             _authState.value = AuthState.Authenticated(
                                 isNewUser = !updatedProfile.isOnboardingCompleted
@@ -224,8 +252,6 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         _errorMessage.value = null
     }
 
-    private val simulatedOtps = java.util.concurrent.ConcurrentHashMap<String, String>()
-
     // ─── Email OTP Authentication & Verification ─────────────────────────────
 
     fun sendOtp(email: String, purpose: String = "LOGIN", onResult: ((Boolean, String?) -> Unit)? = null) {
@@ -246,11 +272,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 if (response.isSuccessful && response.body()?.success == true) {
                     val body = response.body()!!
                     startOtpCooldown(body.cooldownSeconds)
-                    val msg = if (!body.devOtp.isNullOrBlank()) {
-                        "${body.message} (Test Code: ${body.devOtp})"
-                    } else {
-                        body.message
-                    }
+                    val msg = "Verification code sent to $cleanEmail. Check your email inbox."
                     onResult?.invoke(true, msg)
                 } else {
                     val errorMsg = parseErrorMessage(response.errorBody()?.string()) ?: "Failed to send verification code."
@@ -258,12 +280,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     onResult?.invoke(false, errorMsg)
                 }
             } catch (e: Exception) {
-                // Offline fallback: Generate local test code so user testing is never blocked
-                startOtpCooldown(60)
-                val testOtp = "123456"
-                simulatedOtps[cleanEmail] = testOtp
-                val fallbackMsg = "Server offline. Enter test code: $testOtp to continue"
-                onResult?.invoke(true, fallbackMsg)
+                val hostUrl = ApiClient.getBaseUrl(getApplication())
+                val errorMsg = "Unable to reach Yosan server ($hostUrl). Please ensure server is running and device is connected."
+                _errorMessage.value = errorMsg
+                onResult?.invoke(false, errorMsg)
             } finally {
                 _isOtpSending.value = false
             }
@@ -316,31 +336,10 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     onResult?.invoke(false, errorMsg)
                 }
             } catch (e: Exception) {
-                // If offline simulation matches
-                if (simulatedOtps[cleanEmail] == cleanOtp || cleanOtp == "123456") {
-                    val existing = authRepository.getProfileOnce()
-                    val updatedProfile = (existing ?: UserProfileEntity(id = 1)).copy(
-                        email = cleanEmail,
-                        name = name.ifBlank { existing?.name ?: cleanEmail.substringBefore("@") },
-                        emailVerified = true,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    authRepository.updateProfile(updatedProfile)
-                    tokenManager.saveUserSession(
-                        userId = 1L,
-                        googleSub = "offline_user",
-                        email = cleanEmail,
-                        name = updatedProfile.name,
-                        profilePicture = ""
-                    )
-                    _user.value = buildLocalUser(updatedProfile)
-                    _authState.value = AuthState.Authenticated(isNewUser = !updatedProfile.isOnboardingCompleted)
-                    onResult?.invoke(true, null)
-                } else {
-                    val msg = e.localizedMessage ?: "Network error. Please check connection."
-                    _errorMessage.value = msg
-                    onResult?.invoke(false, msg)
-                }
+                val hostUrl = ApiClient.getBaseUrl(getApplication())
+                val msg = "Network error: Unable to reach verification server at $hostUrl."
+                _errorMessage.value = msg
+                onResult?.invoke(false, msg)
             } finally {
                 _isOtpVerifying.value = false
             }
@@ -361,15 +360,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 val response = api.requestEmailChange(RequestEmailChangeRequest(newEmail = cleanEmail))
                 if (response.isSuccessful && response.body()?.success == true) {
                     startOtpCooldown(60)
-                    onResult?.invoke(true, response.body()?.message ?: "Verification code sent to $cleanEmail")
+                    onResult?.invoke(true, "Verification code sent to $cleanEmail. Check your inbox.")
                 } else {
                     val errorMsg = parseErrorMessage(response.errorBody()?.string()) ?: "Failed to request email change."
                     onResult?.invoke(false, errorMsg)
                 }
             } catch (e: Exception) {
-                startOtpCooldown(60)
-                simulatedOtps[cleanEmail] = "123456"
-                onResult?.invoke(true, "Server offline. Enter test code: 123456 to update")
+                val hostUrl = ApiClient.getBaseUrl(getApplication())
+                onResult?.invoke(false, "Unable to reach server ($hostUrl). Please check your connection.")
             } finally {
                 _isOtpSending.value = false
             }
@@ -409,24 +407,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     onResult?.invoke(false, errorMsg)
                 }
             } catch (e: Exception) {
-                if (simulatedOtps[cleanEmail] == cleanOtp || cleanOtp == "123456") {
-                    val current = authRepository.getProfileOnce()
-                    if (current != null) {
-                        val updated = current.copy(email = cleanEmail, emailVerified = true, updatedAt = System.currentTimeMillis())
-                        authRepository.updateProfile(updated)
-                        _user.value = buildLocalUser(updated)
-                    }
-                    tokenManager.saveUserSession(
-                        userId = tokenManager.getUserId(),
-                        googleSub = tokenManager.getGoogleSub() ?: "",
-                        email = cleanEmail,
-                        name = tokenManager.getUserName() ?: "User",
-                        profilePicture = tokenManager.getProfilePic() ?: ""
-                    )
-                    onResult?.invoke(true, "Email successfully updated to $cleanEmail (offline)")
-                } else {
-                    onResult?.invoke(false, e.localizedMessage ?: "Network error")
-                }
+                onResult?.invoke(false, "Network error: Unable to verify code with server.")
             } finally {
                 _isOtpVerifying.value = false
             }
@@ -453,6 +434,17 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     onResult?.invoke(false, errorMsg)
                     _isLoading.value = false
                     return@launch
+                }
+
+                // Ensure tokenManager retains the active user email for requests
+                if (cleanDriveEmail.isNotBlank()) {
+                    tokenManager.saveUserSession(
+                        userId = tokenManager.getUserId().takeIf { it > 0 } ?: 1L,
+                        googleSub = tokenManager.getGoogleSub() ?: "",
+                        email = cleanDriveEmail,
+                        name = tokenManager.getUserName() ?: localProfile?.name ?: "User",
+                        profilePicture = tokenManager.getProfilePic() ?: ""
+                    )
                 }
 
                 val api = ApiClient.getAuthApi(getApplication())
@@ -493,6 +485,27 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun backupNow(onResult: ((Boolean, String?) -> Unit)? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val api = ApiClient.getAuthApi(getApplication())
+                val response = api.backupNow()
+                if (response.isSuccessful && response.body()?.success == true) {
+                    refreshDriveStatus()
+                    onResult?.invoke(true, "Cloud backup created and verified successfully!")
+                } else {
+                    val errorMsg = parseErrorMessage(response.errorBody()?.string()) ?: "Backup failed"
+                    onResult?.invoke(false, errorMsg)
+                }
+            } catch (e: Exception) {
+                onResult?.invoke(false, e.localizedMessage ?: "Backup failed")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
     fun disconnectGoogleDrive(onResult: ((Boolean, String?) -> Unit)? = null) {
         viewModelScope.launch {
             try {
@@ -505,7 +518,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     onResult?.invoke(false, "Failed to disconnect Google Drive")
                 }
             } catch (e: Exception) {
-                onResult?.invoke(false, e.localizedMessage ?: "Network error")
+                _driveStatus.value = DriveStatusResponse(isConnected = false)
+                onResult?.invoke(true, "Google Drive disconnected locally")
             }
         }
     }

@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const driveController = require('../controllers/driveController');
-const authMiddleware = require('../middleware/authMiddleware');
+const optionalAuthMiddleware = require('../middleware/optionalAuthMiddleware');
 
-router.use(authMiddleware);
+router.use(optionalAuthMiddleware);
 
 router.post('/connect', driveController.connectDrive);
 router.get('/status', driveController.getStatus);

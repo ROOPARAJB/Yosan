@@ -124,6 +124,7 @@ fun InvestmentsScreen(
                         amount = investmentSummaries.size.toDouble(),
                         icon = Icons.Default.PieChart,
                         iconColor = MaterialTheme.colorScheme.primary,
+                        customValueText = "${investmentSummaries.size}",
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -187,6 +188,7 @@ fun InvestmentsScreen(
                     onActionClick = onAddInvestmentClick
                 )
             }
+        } else {
             items(filteredSummaries, key = { it.categoryName }) { summary ->
                 InvestmentSetCard(
                     summary = summary,

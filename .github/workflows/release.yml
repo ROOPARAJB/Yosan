@@ -2,22 +2,25 @@ name: Build & Publish Release APK
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag (e.g. v1.0.0)'
-        required: true
-        default: 'v1.0.0'
+        description: 'Release Tag (e.g. v1.1.0)'
+        required: false
       release_title:
         description: 'Release Title'
-        required: true
-        default: 'Release v1.0.0'
+        required: false
       release_notes:
         description: 'Release Notes / Changelog'
         required: false
-        default: 'Official v1.0.0 release with complete bug fixes and APK signing updates.'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -39,6 +42,11 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -50,7 +58,7 @@ jobs:
             echo "Decoding release keystore from secrets..."
             echo "$KEYSTORE_BASE64" | base64 --decode > app/release-key.jks
           fi
-          echo "Using consistent release keystore from repository."
+          echo "Using consistent signing keystore."
 
       - name: Run Backend Tests
         run: |
@@ -62,7 +70,52 @@ jobs:
       - name: Run Android Unit Tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
+      - name: Determine Version, Tag and Release Notes
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+            VNAME=$(echo "$TAG" | sed -e 's/^[vV]//')
+            VCODE=${{ github.run_number }}
+            TITLE="${{ github.event.inputs.release_title }}"
+            [ -z "$TITLE" ] && TITLE="Release $TAG"
+            NOTES="${{ github.event.inputs.release_notes }}"
+            [ -z "$NOTES" ] && NOTES="Manual release $TAG."
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+            VNAME=$(echo "$TAG" | sed -e 's/^[vV]//')
+            VCODE=${{ github.run_number }}
+            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG")
+            [ -z "$TAG_MSG" ] && TAG_MSG=$(git log -1 --pretty=%B)
+            TITLE="Release $TAG"
+            NOTES="${TAG_MSG:-Automated release for $TAG}"
+          else
+            TAG="v1.1.${{ github.run_number }}"
+            VNAME="1.1.${{ github.run_number }}"
+            VCODE=${{ github.run_number }}
+            COMMIT_TITLE=$(git log -1 --pretty=%s)
+            COMMIT_BODY=$(git log -1 --pretty=%B)
+            TITLE="Update v1.1.${{ github.run_number }}: $COMMIT_TITLE"
+            NOTES="### 🚀 What's New in v1.1.${{ github.run_number }}
+
+$COMMIT_BODY
+
+---
+*Automated build from commit [${GITHUB_SHA::7}](https://github.com/${{ github.repository }}/commit/${GITHUB_SHA}) on main branch.*"
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version_name=$VNAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VCODE" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Build Release APK
+        env:
+          APP_VERSION_NAME: ${{ steps.release_info.outputs.version_name }}
+          APP_VERSION_CODE: ${{ steps.release_info.outputs.version_code }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Locate Generated APK
@@ -76,28 +129,6 @@ jobs:
           echo "Found APK at $APK_PATH"
           cp "$APK_PATH" Yosan-Update.apk
           echo "apk_path=Yosan-Update.apk" >> $GITHUB_OUTPUT
-
-      - name: Determine Tag and Title
-        id: release_info
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
-            echo "title=${{ github.event.inputs.release_title }}" >> $GITHUB_OUTPUT
-            echo "notes<<EOF" >> $GITHUB_OUTPUT
-            echo "${{ github.event.inputs.release_notes }}" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME")
-            if [ -z "$TAG_MSG" ]; then
-              TAG_MSG=$(git log -1 --pretty=%B)
-            fi
-            echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
-            echo "title=Release $TAG_NAME" >> $GITHUB_OUTPUT
-            echo "notes<<EOF" >> $GITHUB_OUTPUT
-            echo "${TAG_MSG:-Automated release for $TAG_NAME}" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
 
       - name: Create GitHub Release and Upload APK
         uses: softprops/action-gh-release@v2

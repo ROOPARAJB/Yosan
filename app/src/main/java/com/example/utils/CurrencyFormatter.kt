@@ -47,8 +47,10 @@ object DateUtils {
     private val shortDisplayFormat = SimpleDateFormat("dd MMM", Locale.ENGLISH)
     private val monthFormat = SimpleDateFormat("MMMM yyyy", Locale.ENGLISH)
 
+    @Synchronized
     fun getCurrentDate(): String = isoFormat.format(Date())
 
+    @Synchronized
     fun formatForDisplay(isoDate: String): String {
         return try {
             val date = isoFormat.parse(isoDate) ?: return isoDate
@@ -58,6 +60,7 @@ object DateUtils {
         }
     }
 
+    @Synchronized
     fun formatShortDisplay(isoDate: String): String {
         return try {
             val date = isoFormat.parse(isoDate) ?: return isoDate
@@ -67,6 +70,7 @@ object DateUtils {
         }
     }
 
+    @Synchronized
     fun formatMonthHeader(isoDate: String): String {
         return try {
             val date = isoFormat.parse(isoDate) ?: return isoDate

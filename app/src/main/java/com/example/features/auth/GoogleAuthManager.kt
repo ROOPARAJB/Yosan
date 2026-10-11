@@ -7,6 +7,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.example.BuildConfig
 
@@ -20,8 +21,13 @@ class GoogleAuthManager(private val context: Context) {
 
     private val credentialManager = CredentialManager.create(context)
 
+    fun isConfigured(): Boolean {
+        val clientId = getWebClientId()
+        return !clientId.contains("example.apps.googleusercontent.com") && clientId.isNotBlank()
+    }
+
     suspend fun getGoogleIdToken(webClientId: String = getWebClientId()): GoogleAuthResult {
-        if (webClientId.contains("example.apps.googleusercontent.com") || webClientId.isBlank()) {
+        if (!isConfigured()) {
             return GoogleAuthResult.Error(
                 "Google Sign-In requires your Google Cloud Web Client ID in .env. You can use Email OTP or Offline Profile right now.",
                 "CONFIG_REQUIRED"
@@ -34,19 +40,28 @@ class GoogleAuthManager(private val context: Context) {
                 .setAutoSelectEnabled(false)
                 .build()
 
+            val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(webClientId)
+                .build()
+
             val request = GetCredentialRequest.Builder()
                 .addCredentialOption(googleIdOption)
+                .addCredentialOption(signInWithGoogleOption)
                 .build()
 
             val response = credentialManager.getCredential(context, request)
             val credential = response.credential
 
-            if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+            if (credential is CustomCredential && 
+                (credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL ||
+                 credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL)
+            ) {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 GoogleAuthResult.Success(googleIdTokenCredential.idToken)
             } else {
                 GoogleAuthResult.Error("Unsupported credential type returned from Google", "INVALID_GOOGLE_TOKEN")
             }
+        } catch (e: androidx.credentials.exceptions.NoCredentialException) {
+            GoogleAuthResult.Error("No Google account found or sign-in not available. Please verify Google Cloud SHA-1 setup or use Email OTP.", "NO_CREDENTIALS")
         } catch (e: GetCredentialCancellationException) {
             GoogleAuthResult.Cancelled
         } catch (e: GetCredentialException) {
@@ -66,6 +81,6 @@ class GoogleAuthManager(private val context: Context) {
     }
 
     companion object {
-        const val DEFAULT_CLIENT_ID = "1090000000000-example.apps.googleusercontent.com"
+        const val DEFAULT_CLIENT_ID = "649210682299-f2hg4qgui6l6621km5371r87gcp5tmih.apps.googleusercontent.com"
     }
 }

@@ -53,6 +53,8 @@ fun TransactionsScreen(
     val accounts by viewModel.accounts.collectAsState()
     val companyExpenses by viewModel.companyExpenses.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
 
     // Group transactions by Date
     val groupedTransactions = remember(transactions) {
@@ -74,9 +76,8 @@ fun TransactionsScreen(
     val selectedTxIds = remember { mutableStateListOf<Long>() }
 
     if (showComparerDialog) {
-        val allTransactionsForAudit by viewModel.allTransactions.collectAsState()
         StatementComparerDialog(
-            allTransactions = allTransactionsForAudit,
+            allTransactions = allTransactions,
             onRestoreTransactionFlow = { tx ->
                 viewModel.restoreOriginalTransactionFlow(tx)
             },
@@ -727,7 +728,6 @@ fun TransactionsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
                     val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
                     if (selectedType == null || selectedType == TransactionType.INCOME) {
                         PrivacyAmountText(
@@ -770,11 +770,9 @@ fun TransactionsScreen(
             }
         }
 
-        val allTx by viewModel.allTransactions.collectAsState()
-
         // 4. Statement Transactions List
         if (transactions.isEmpty()) {
-            if (allTx.isEmpty()) {
+            if (allTransactions.isEmpty()) {
                 EmptyState(
                     icon = Icons.Outlined.ReceiptLong,
                     title = "No Statements Recorded",
@@ -808,7 +806,6 @@ fun TransactionsScreen(
                 )
             }
         } else {
-            val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
             val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
             LazyColumn(
                 modifier = Modifier

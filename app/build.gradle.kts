@@ -13,12 +13,15 @@ android {
   namespace = "com.example"
   compileSdk = 36
 
+  val vCode = (System.getenv("APP_VERSION_CODE") ?: project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 2
+  val vName = System.getenv("APP_VERSION_NAME") ?: (project.findProperty("versionName") as? String) ?: "1.1.0"
+
   defaultConfig {
-    applicationId = "com.aistudio.financemanager.vpkrz"
+    applicationId = "yosan.finance"
     minSdk = 24
     targetSdk = 35
-    versionCode = 2
-    versionName = "1.1.0"
+    versionCode = vCode
+    versionName = vName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -26,6 +29,8 @@ android {
   signingConfigs {
     create("release") {
       val keystoreFile = sequenceOf(
+        file("${rootDir}/app/debug.keystore"),
+        file("${rootDir}/debug.keystore"),
         file("${rootDir}/app/release-key.jks"),
         file("${rootDir}/release-key.jks"),
         file("${rootDir}/my-upload-key.jks")
@@ -33,9 +38,9 @@ android {
 
       if (keystoreFile != null) {
         storeFile = keystoreFile
-        storePassword = "yosanpassword123"
-        keyAlias = if (keystoreFile.name.contains("release-key")) "yosan" else "upload"
-        keyPassword = "yosanpassword123"
+        storePassword = if (keystoreFile.name.contains("debug")) "android" else "yosanpassword123"
+        keyAlias = if (keystoreFile.name.contains("debug")) "androiddebugkey" else if (keystoreFile.name.contains("release-key")) "yosan" else "upload"
+        keyPassword = if (keystoreFile.name.contains("debug")) "android" else "yosanpassword123"
         enableV1Signing = true
         enableV2Signing = true
       }
@@ -89,6 +94,12 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  ignoreList.add("SMTP_.*")
+  ignoreList.add("JWT_.*")
+  ignoreList.add("DB_.*")
+  ignoreList.add("PORT")
+  ignoreList.add("NODE_ENV")
+  ignoreList.add("GOOGLE_CLIENT_SECRET")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+require('../config');
 
 class EmailService {
   constructor() {
@@ -40,6 +41,10 @@ class EmailService {
   }
 
   async sendOtpEmail(toEmail, otp, purpose = 'LOGIN') {
+    if (!this.transporter) {
+      this.initTransporter();
+    }
+
     const purposeTitles = {
       LOGIN: 'Login to Yosan',
       REGISTER: 'Welcome to Yosan - Verify Email',

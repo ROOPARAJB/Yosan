@@ -240,7 +240,10 @@ class TransactionCoordinator(
             )
             if (newType == TransactionType.LENDING) {
                 val existingLoans = database.loanDao().getAllLoansList()
-                val alreadyLinked = existingLoans.any { it.notes.contains(tx.description, ignoreCase = true) || it.amount == amount && it.lentDate == tx.transactionDate }
+                val alreadyLinked = existingLoans.any {
+                    it.notes.contains(tx.description, ignoreCase = true) ||
+                    (kotlin.math.abs(it.amount - amount) < 0.01 && it.lentDate == tx.transactionDate)
+                }
                 if (!alreadyLinked) {
                     val cleanPersonName = tx.description.replace(Regex("(?i)upi/|imps/|neft/|transfer to|to |[0-9]"), "").trim().ifBlank { "Lending Contact" }
                     database.loanDao().insertLoan(
@@ -527,10 +530,12 @@ class TransactionCoordinator(
                             database.syncDao().insertDeletedTransaction(DeletedTransactionEntity(currentTx.syncId))
                         } catch (_: Exception) {}
                     }
-                    val allExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
                     val txAmt = if (currentTx.amount > 0) currentTx.amount else maxOf(currentTx.debitAmount, currentTx.creditAmount)
-                    val matchedExp = allExpenses.filter { it.date == currentTx.transactionDate && Math.abs(it.amount - txAmt) < 0.01 }
-                    matchedExp.forEach { database.companyExpenseDao().deleteCompanyExpense(it.id) }
+                    if (currentTx.advanceId != null || currentTx.categoryName.equals("Official Expense", ignoreCase = true)) {
+                        val allExpenses = database.companyExpenseDao().getAllCompanyExpensesList()
+                        val matchedExp = allExpenses.filter { it.date == currentTx.transactionDate && kotlin.math.abs(it.amount - txAmt) < 0.01 }
+                        matchedExp.forEach { database.companyExpenseDao().deleteCompanyExpense(it.id) }
+                    }
 
                     currentTx.linkedLoanId?.let { loanId ->
                         database.loanDao().deleteLoan(loanId)
@@ -538,7 +543,7 @@ class TransactionCoordinator(
                     }
                     if (currentTx.transactionType == TransactionType.LENDING) {
                         val matchingLoans = database.loanDao().getAllLoansList().filter {
-                            it.lentDate == currentTx.transactionDate && Math.abs(it.amount - txAmt) < 0.01
+                            it.lentDate == currentTx.transactionDate && kotlin.math.abs(it.amount - txAmt) < 0.01
                         }
                         matchingLoans.forEach { loan ->
                             database.loanDao().deleteLoan(loan.id)
@@ -592,8 +597,10 @@ class TransactionCoordinator(
                     } catch (_: Exception) {}
                 }
                 val txAmt = if (tx.amount > 0) tx.amount else maxOf(tx.debitAmount, tx.creditAmount)
-                val matchedExp = allExpenses.filter { it.date == tx.transactionDate && Math.abs(it.amount - txAmt) < 0.01 }
-                matchedExp.forEach { database.companyExpenseDao().deleteCompanyExpense(it.id) }
+                if (tx.advanceId != null || tx.categoryName.equals("Official Expense", ignoreCase = true)) {
+                    val matchedExp = allExpenses.filter { it.date == tx.transactionDate && kotlin.math.abs(it.amount - txAmt) < 0.01 }
+                    matchedExp.forEach { database.companyExpenseDao().deleteCompanyExpense(it.id) }
+                }
 
                 tx.linkedLoanId?.let { loanId ->
                     database.loanDao().deleteLoan(loanId)
@@ -601,7 +608,7 @@ class TransactionCoordinator(
                 }
                 if (tx.transactionType == TransactionType.LENDING) {
                     val matchingLoans = allLoans.filter {
-                        it.lentDate == tx.transactionDate && Math.abs(it.amount - txAmt) < 0.01
+                        it.lentDate == tx.transactionDate && kotlin.math.abs(it.amount - txAmt) < 0.01
                     }
                     matchingLoans.forEach { loan ->
                         database.loanDao().deleteLoan(loan.id)

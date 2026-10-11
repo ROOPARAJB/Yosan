@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
+import androidx.room.withTransaction
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.*
 import org.json.JSONArray
@@ -310,16 +311,22 @@ object BackupService {
 
             val root = JSONObject(cleanJson)
 
-            // Purge tables that are present in the backup before restoring to prevent duplicates
-            if (root.has("transactions")) database.transactionDao().deleteAllTransactions()
-            if (root.has("loans")) database.loanDao().deleteAllLoans()
-            if (root.has("loanRepayments")) database.loanRepaymentDao().deleteAllRepayments()
-            if (root.has("companyExpenses")) database.companyExpenseDao().deleteAllCompanyExpenses()
-            if (root.has("accounts")) database.accountDao().deleteAllAccounts()
-            if (root.has("categories")) database.categoryDao().deleteAllCategories()
-            if (root.has("rules")) database.categorizationRuleDao().deleteAllRules()
+            var accCount = 0
+            var txCount = 0
+            var loanCount = 0
+            var compCount = 0
 
-            // 1. User Profile
+            database.withTransaction {
+                // Purge tables that are present in the backup before restoring to prevent duplicates
+                if (root.has("transactions")) database.transactionDao().deleteAllTransactions()
+                if (root.has("loans")) database.loanDao().deleteAllLoans()
+                if (root.has("loanRepayments")) database.loanRepaymentDao().deleteAllRepayments()
+                if (root.has("companyExpenses")) database.companyExpenseDao().deleteAllCompanyExpenses()
+                if (root.has("accounts")) database.accountDao().deleteAllAccounts()
+                if (root.has("categories")) database.categoryDao().deleteAllCategories()
+                if (root.has("rules")) database.categorizationRuleDao().deleteAllRules()
+
+                // 1. User Profile
             if (root.has("userProfile")) {
                 try {
                     val pObj = root.getJSONObject("userProfile")
@@ -349,7 +356,6 @@ object BackupService {
             }
 
             // 2. Accounts
-            var accCount = 0
             if (root.has("accounts")) {
                 try {
                     val accArray = root.getJSONArray("accounts")
@@ -448,7 +454,6 @@ object BackupService {
             }
 
             // 5. Transactions
-            var txCount = 0
             if (root.has("transactions")) {
                 try {
                     val txArray = root.getJSONArray("transactions")
@@ -496,7 +501,6 @@ object BackupService {
             }
 
             // 6. Loans
-            var loanCount = 0
             if (root.has("loans")) {
                 try {
                     val loanArray = root.getJSONArray("loans")
@@ -559,7 +563,6 @@ object BackupService {
             }
 
             // 8. Company Expenses
-            var compCount = 0
             if (root.has("companyExpenses")) {
                 try {
                     val compArray = root.getJSONArray("companyExpenses")
@@ -589,6 +592,7 @@ object BackupService {
                 } catch (e: Exception) {
                     android.util.Log.e("BackupService", "Error restoring company expenses", e)
                 }
+            }
             }
 
             RestoreResult(

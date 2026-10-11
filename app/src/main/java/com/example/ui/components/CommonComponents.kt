@@ -59,6 +59,7 @@ fun MetricCard(
     backgroundColor: Color = MaterialTheme.colorScheme.surface,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
+    customValueText: String? = null,
     onClick: (() -> Unit)? = null
 ) {
     Card(
@@ -102,7 +103,7 @@ fun MetricCard(
             }
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = CurrencyFormatter.formatInr(amount),
+                text = customValueText ?: CurrencyFormatter.formatInr(amount),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,

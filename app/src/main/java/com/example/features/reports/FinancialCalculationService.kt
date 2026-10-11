@@ -1,6 +1,7 @@
 package com.example.features.reports
 
 import com.example.data.local.entity.*
+import com.example.utils.DateUtils
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
@@ -196,7 +197,7 @@ object FinancialCalculationService {
                 val amount = txs.sumOf { if (it.debitAmount > 0) it.debitAmount else it.amount }
                 val percentage = if (totalExpense > 0) ((amount / totalExpense) * 100).toFloat() else 0f
                 val color = categoryColorMap[catName.lowercase()]
-                    ?: palette[Math.abs(catName.hashCode()) % palette.size]
+                    ?: palette[Math.floorMod(catName.hashCode(), palette.size)]
                 CategoryExpenseItem(
                     categoryName = catName,
                     amount = amount,
@@ -228,7 +229,7 @@ object FinancialCalculationService {
                 val amount = txs.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
                 val percentage = if (totalIncome > 0) ((amount / totalIncome) * 100).toFloat() else 0f
                 val color = categoryColorMap[catName.lowercase()]
-                    ?: incomePalette[Math.abs(catName.hashCode()) % incomePalette.size]
+                    ?: incomePalette[Math.floorMod(catName.hashCode(), incomePalette.size)]
                 CategoryExpenseItem(
                     categoryName = catName,
                     amount = amount,
@@ -242,7 +243,7 @@ object FinancialCalculationService {
 
     fun calculateMonthlyTrends(transactions: List<TransactionEntity>): List<MonthlyTrendItem> {
         val monthGroups = transactions.groupBy { tx ->
-            if (tx.transactionDate.length >= 7) tx.transactionDate.substring(0, 7) else "2026-02"
+            if (tx.transactionDate.length >= 7) tx.transactionDate.substring(0, 7) else DateUtils.getCurrentDate().take(7)
         }
 
         val sortedMonths = monthGroups.keys.sorted()

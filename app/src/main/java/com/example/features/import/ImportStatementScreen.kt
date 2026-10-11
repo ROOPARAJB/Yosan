@@ -73,8 +73,8 @@ fun ImportStatementScreen(
         val uri = selectedPdfUri
         if (uri != null) {
             isRenderingPdf = true
-            withContext(Dispatchers.IO) {
-                val pages = mutableListOf<Bitmap>()
+            val pages = withContext(Dispatchers.IO) {
+                val resultList = mutableListOf<Bitmap>()
                 try {
                     context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                         PdfRenderer(pfd).use { renderer ->
@@ -87,18 +87,20 @@ fun ImportStatementScreen(
                                     val canvas = Canvas(bmp)
                                     canvas.drawColor(android.graphics.Color.WHITE)
                                     page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                    pages.add(bmp)
+                                    resultList.add(bmp)
                                 }
                             }
                         }
                     }
                 } catch (_: Exception) {}
-                pdfDocPages = pages
-                currentPdfPage = 0
-                isRenderingPdf = false
+                resultList
             }
+            pdfDocPages = pages
+            currentPdfPage = 0
+            isRenderingPdf = false
         } else {
             pdfDocPages = emptyList()
+            isRenderingPdf = false
         }
     }
 
