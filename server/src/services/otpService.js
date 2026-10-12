@@ -55,7 +55,10 @@ class OtpService {
       VALUES (?, ?, ?, ?, 0, ?, 0, ?)
     `).run(cleanEmail, otpHash, purpose, userId, expiresAt, now);
 
-    await emailService.sendOtpEmail(cleanEmail, otp, purpose);
+    // Send email asynchronously in the background so response to app is instant (<100ms)
+    emailService.sendOtpEmail(cleanEmail, otp, purpose).catch(err => {
+      console.error('[OTP_SERVICE] Background email delivery failed:', err && err.message ? err.message : err);
+    });
 
     return {
       success: true,
