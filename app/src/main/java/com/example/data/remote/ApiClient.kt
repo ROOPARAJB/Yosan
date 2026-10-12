@@ -45,8 +45,7 @@ object ApiClient {
 
         return when {
             defaultOnlineUrl.isNotBlank() -> if (defaultOnlineUrl.endsWith("/")) defaultOnlineUrl else "$defaultOnlineUrl/"
-            isEmulator -> "http://10.0.2.2:3000/"
-            else -> "http://192.168.1.10:3000/"
+            else -> "https://yosan-xgsd.onrender.com/"
         }
     }
 

@@ -15,7 +15,7 @@ android {
 
   val vCode = (System.getenv("APP_VERSION_CODE") ?: project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 3
   val vName = System.getenv("APP_VERSION_NAME") ?: (project.findProperty("versionName") as? String) ?: "1.1.2"
-  val backendUrl = (System.getenv("BACKEND_URL") ?: project.findProperty("backendUrl") as? String) ?: ""
+  val backendUrl = (System.getenv("BACKEND_URL") ?: project.findProperty("backendUrl") as? String) ?: "https://yosan-xgsd.onrender.com/"
 
   defaultConfig {
     applicationId = "yosan.finance"
