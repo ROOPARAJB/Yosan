@@ -110,4 +110,36 @@ object ApiClient {
         }
         return retrofit!!.create(AuthApi::class.java)
     }
+
+    /**
+     * Sends a non-blocking background request to the health endpoint to wake up
+     * the backend if it is asleep (e.g. Render free tier cold start).
+     */
+    fun prewarmBackend(context: Context? = null) {
+        try {
+            val url = getBaseUrl(context) + "api/health"
+            val request = okhttp3.Request.Builder()
+                .url(url)
+                .get()
+                .build()
+
+            val client = OkHttpClient.Builder()
+                .connectTimeout(60, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .build()
+
+            client.newCall(request).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    // Silent fail: best effort wake-up ping
+                }
+
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    response.close()
+                }
+            })
+        } catch (_: Exception) {
+            // Best effort ignore
+        }
+    }
 }
+

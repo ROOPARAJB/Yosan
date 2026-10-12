@@ -21,11 +21,15 @@ import com.example.features.auth.AuthViewModel
 import com.example.features.auth.BiometricAuthManager
 import com.example.features.transactions.FinanceViewModel
 import com.example.utils.AppPreferences
+import com.example.data.remote.ApiClient
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Silently wake up Render backend in background if cold-started
+        ApiClient.prewarmBackend(applicationContext)
 
         val appPreferences = AppPreferences(applicationContext)
         val biometricAuthManager = BiometricAuthManager(applicationContext)

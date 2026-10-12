@@ -19,7 +19,10 @@ class EmailService {
       try {
         this.transporter = nodemailer.createTransport({
           service,
-          auth: { user, pass }
+          auth: { user, pass },
+          connectionTimeout: 6000,
+          greetingTimeout: 6000,
+          socketTimeout: 6000
         });
       } catch (err) {
         console.error('[EMAIL_SERVICE] Failed to initialize SMTP service:', err.message);
@@ -31,7 +34,10 @@ class EmailService {
           host,
           port,
           secure,
-          auth: { user, pass }
+          auth: { user, pass },
+          connectionTimeout: 6000,
+          greetingTimeout: 6000,
+          socketTimeout: 6000
         });
       } catch (err) {
         console.error('[EMAIL_SERVICE] Failed to initialize SMTP transporter:', err.message);
@@ -95,24 +101,90 @@ class EmailService {
       </html>
     `;
 
+    // 1. Resend HTTP API (Recommended for Render Free Tier - Uses Port 443 HTTPS)
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (resendApiKey) {
+      try {
+        const res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            from: process.env.RESEND_FROM || 'Yosan Finance <onboarding@resend.dev>',
+            to: [toEmail],
+            subject: `${otp} is your ${title} verification code`,
+            html: htmlContent
+          })
+        });
+
+        if (res.ok) {
+          console.log(`[EMAIL_SERVICE] Delivered OTP email to ${toEmail} via Resend HTTP API`);
+          return { success: true, delivered: true, provider: 'resend' };
+        } else {
+          const errData = await res.text();
+          console.error('[EMAIL_SERVICE] Resend API error response:', errData);
+        }
+      } catch (err) {
+        console.error('[EMAIL_SERVICE] Failed to send email via Resend HTTP API:', err.message);
+      }
+    }
+
+    // 2. Brevo HTTP API (Uses Port 443 HTTPS)
+    const brevoApiKey = process.env.BREVO_API_KEY;
+    if (brevoApiKey) {
+      try {
+        const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            'api-key': brevoApiKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            sender: { name: 'Yosan Finance', email: process.env.SMTP_USER || 'yosanfinance@gmail.com' },
+            to: [{ email: toEmail }],
+            subject: `${otp} is your ${title} verification code`,
+            htmlContent: htmlContent
+          })
+        });
+
+        if (res.ok) {
+          console.log(`[EMAIL_SERVICE] Delivered OTP email to ${toEmail} via Brevo HTTP API`);
+          return { success: true, delivered: true, provider: 'brevo' };
+        } else {
+          const errData = await res.text();
+          console.error('[EMAIL_SERVICE] Brevo API error response:', errData);
+        }
+      } catch (err) {
+        console.error('[EMAIL_SERVICE] Failed to send email via Brevo HTTP API:', err.message);
+      }
+    }
+
+    // 3. Fallback to direct SMTP (With strict timeout so Render Free Tier SMTP block cannot hang the request)
     if (this.transporter) {
       try {
-        await this.transporter.sendMail({
-          from: fromAddress,
-          to: toEmail,
-          subject: `${otp} is your ${title} verification code`,
-          text: `${title}\n\n${description}\n\nVerification Code: ${otp}\n\nValid for 10 minutes.`,
-          html: htmlContent
-        });
-        return { success: true, delivered: true };
+        await Promise.race([
+          this.transporter.sendMail({
+            from: fromAddress,
+            to: toEmail,
+            subject: `${otp} is your ${title} verification code`,
+            text: `${title}\n\n${description}\n\nVerification Code: ${otp}\n\nValid for 10 minutes.`,
+            html: htmlContent
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('SMTP timeout: Render Free Tier blocks outbound SMTP ports (25, 465, 587)')), 6000)
+          )
+        ]);
+        console.log(`[EMAIL_SERVICE] Delivered OTP email to ${toEmail} via SMTP`);
+        return { success: true, delivered: true, provider: 'smtp' };
       } catch (err) {
-        console.error('[EMAIL_SERVICE] Failed to send email via SMTP:', err.message);
-        // Fall back to console log so authentication never gets stuck
+        console.error('[EMAIL_SERVICE] SMTP delivery failed or timed out:', err.message);
       }
     }
 
     // Fallback: log to console in dev/test/simulated mode
-    console.log(`[EMAIL_SERVICE] [DEV/FALLBACK] OTP for ${toEmail} (${purpose}): [${otp}]`);
+    console.log(`[EMAIL_SERVICE] [FALLBACK/CONSOLE] OTP for ${toEmail} (${purpose}): [${otp}]`);
     return { success: true, delivered: false, simulated: true };
   }
 }

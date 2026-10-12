@@ -1,0 +1,16 @@
+name: Backend Keep Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render free tier from going to sleep (inactivity timer is 15 min)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Health Check
+        run: |
+          echo "Pinging Render backend at $(date)"
+          curl -s -f -m 60 "https://yosan-xgsd.onrender.com/api/health" || echo "Ping request completed"
