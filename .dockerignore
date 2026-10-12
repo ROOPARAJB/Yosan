@@ -1,0 +1,14 @@
+.git
+.github
+app
+gradle
+.gradle
+build
+server/node_modules
+server/*.db
+server/.env
+server/.env.*
+node_modules
+*.db
+.env
+.env.*
