@@ -94,8 +94,8 @@ object ApiClient {
             val okHttpClient = OkHttpClient.Builder()
                 .addInterceptor(authInterceptor)
                 .addInterceptor(logging)
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
+                .connectTimeout(60, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
                 .build()
 
             val moshi = Moshi.Builder()

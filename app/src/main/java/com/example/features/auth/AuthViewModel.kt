@@ -281,7 +281,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 val hostUrl = ApiClient.getBaseUrl(getApplication())
-                val errorMsg = "Unable to reach Yosan server ($hostUrl). Please ensure server is running and device is connected."
+                val errorMsg = when (e) {
+                    is java.net.SocketTimeoutException -> "Server is spinning up (cold start). Please tap Send Code again in a moment."
+                    is java.net.UnknownHostException -> "No internet connection. Please check your data or Wi-Fi."
+                    else -> "Unable to reach Yosan server ($hostUrl). Please ensure server is running and device is connected."
+                }
                 _errorMessage.value = errorMsg
                 onResult?.invoke(false, errorMsg)
             } finally {
@@ -367,7 +371,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 val hostUrl = ApiClient.getBaseUrl(getApplication())
-                onResult?.invoke(false, "Unable to reach server ($hostUrl). Please check your connection.")
+                val errorMsg = when (e) {
+                    is java.net.SocketTimeoutException -> "Server is spinning up (cold start). Please tap Send Verification Code again in a moment."
+                    is java.net.UnknownHostException -> "No internet connection. Please check your data or Wi-Fi."
+                    else -> "Unable to reach server ($hostUrl). Please check your connection."
+                }
+                onResult?.invoke(false, errorMsg)
             } finally {
                 _isOtpSending.value = false
             }
