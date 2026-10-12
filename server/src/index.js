@@ -30,6 +30,16 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
+// Root status check
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Yosan Finance API',
+    status: 'online',
+    healthCheck: '/api/health',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), env: config.NODE_ENV });
