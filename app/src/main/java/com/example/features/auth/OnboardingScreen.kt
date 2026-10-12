@@ -356,8 +356,23 @@ fun OnboardingScreen(
 
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.End
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
+                                            if (!isOtpSent && emailInput.isNotBlank()) {
+                                                TextButton(
+                                                    onClick = {
+                                                        isOtpSent = true
+                                                        otpErrorMessage = null
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                                ) {
+                                                    Text("I have a code", style = MaterialTheme.typography.labelSmall)
+                                                }
+                                            } else {
+                                                Spacer(modifier = Modifier.weight(1f))
+                                            }
+
                                             Button(
                                                 onClick = {
                                                     otpErrorMessage = null
@@ -457,6 +472,18 @@ fun OnboardingScreen(
                                                     contentPadding = PaddingValues(0.dp)
                                                 ) {
                                                     Text("Tap here to check / edit Server URL", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                                }
+                                            }
+                                            if (!isOtpSent && emailInput.isNotBlank()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                TextButton(
+                                                    onClick = {
+                                                        isOtpSent = true
+                                                        otpErrorMessage = null
+                                                    },
+                                                    contentPadding = PaddingValues(0.dp)
+                                                ) {
+                                                    Text("Already received code in email? Tap here to enter", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                                                 }
                                             }
                                         }
