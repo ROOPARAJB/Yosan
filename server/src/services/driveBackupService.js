@@ -166,6 +166,7 @@ function generateBackupPayload(userId) {
   const payload = {
     application: 'Yosan Finance',
     backup_id: crypto.randomUUID(),
+    version: 1,
     backup_version: 1,
     schema_version: 1,
     created_at: new Date().toISOString(),
@@ -214,6 +215,8 @@ async function uploadBackup(userId, clientPayload = null) {
   payload.application = payload.application || 'Yosan Finance';
   payload.backup_id = payload.backup_id || crypto.randomUUID();
   payload.schema_version = payload.schema_version || 1;
+  payload.version = payload.version || payload.backup_version || 1;
+  payload.backup_version = payload.backup_version || payload.version || 1;
   payload.updated_at = new Date().toISOString();
   if (!payload.created_at) payload.created_at = payload.updated_at;
 
@@ -255,6 +258,7 @@ async function uploadBackup(userId, clientPayload = null) {
 
         // Increment version
         payload.backup_version = prevVersion + 1;
+        payload.version = payload.backup_version;
         fs.writeFileSync(detailsPath, JSON.stringify(payload, null, 2), 'utf8');
         driveRepository.updateLastBackup(userId, now);
 
@@ -274,6 +278,7 @@ async function uploadBackup(userId, clientPayload = null) {
 
     // First backup
     payload.backup_version = 1;
+    payload.version = 1;
     fs.writeFileSync(detailsPath, JSON.stringify(payload, null, 2), 'utf8');
     driveRepository.updateLastBackup(userId, now);
 
@@ -333,6 +338,7 @@ async function uploadBackup(userId, clientPayload = null) {
 
         // Update detailsaboutbackup.json with incremented version
         payload.backup_version = prevVersion + 1;
+        payload.version = payload.backup_version;
         const updateMedia = { mimeType: 'application/json', body: JSON.stringify(payload, null, 2) };
         await drive.files.update({ fileId: existingFile.id, media: updateMedia, fields: 'id, name, modifiedTime' });
 
@@ -353,6 +359,7 @@ async function uploadBackup(userId, clientPayload = null) {
 
     // First backup in Drive
     payload.backup_version = 1;
+    payload.version = 1;
     const fileMetadata = { name: 'detailsaboutbackup.json', parents: [rootFolderId] };
     const media = { mimeType: 'application/json', body: JSON.stringify(payload, null, 2) };
     const created = await drive.files.create({ resource: fileMetadata, media, fields: 'id, name, createdTime' });
