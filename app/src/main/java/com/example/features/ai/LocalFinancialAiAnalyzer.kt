@@ -50,10 +50,108 @@ object LocalFinancialAiAnalyzer {
                 | 🍔 Category Spending | "How much did I spend on Food?", "Show my Groceries expenses" |
                 | 🕒 Recent Activity | "Show recent transactions", "What did I spend today?" |
                 | 💰 Account Balances | "What is my bank balance?", "Show my net worth" |
-                | 🤝 Loans & Debts | "Who owes me money?", "Show my active loans" |
+                | 📑 Claims & Reimbursements | "Show my pending claims", "What is my outstanding reimbursement?" |
+                | 💳 Borrowed & Debts | "How much do I owe?", "Show my borrowing summary" |
+                | 🤝 Money Lent (Loans) | "Who owes me money?", "Show my active loans" |
                 | 💡 Savings Advice | "How can I save more this month?", "Suggest a budget" |
 
                 You currently have **${formatCurrency(totalBalance)}** across **${accounts.size} accounts**. What would you like to analyze?
+            """.trimIndent()
+        }
+
+        // Claims, Reimbursements, Corporate Expenses & Advances
+        if (msgLower.contains("claim") || msgLower.contains("reimburse") || msgLower.contains("official") ||
+            msgLower.contains("advance") || msgLower.contains("corporate")
+        ) {
+            val officialMetrics = viewModel?.dashboardSummary?.value?.officialExpenseMetrics
+            val compExpenses = viewModel?.companyExpenses?.value ?: emptyList()
+
+            if (officialMetrics == null || compExpenses.isEmpty()) {
+                return """
+                    ### Official & Corporate Expense Summary
+
+                    No official or company expenses have been recorded yet.
+
+                    | Section | Status | Amount |
+                    | :--- | :--- | :--- |
+                    | Pending Claims | Not submitted | ${currencySymbol}0.00 |
+                    | Applied Claims | Under review | ${currencySymbol}0.00 |
+                    | Total Reimbursed | Paid to you | ${currencySymbol}0.00 |
+                    | Outstanding Reimbursement | Payable balance | ${currencySymbol}0.00 |
+                    | Remaining Advance | Available balance | ${currencySymbol}0.00 |
+
+                    You can record claimable corporate expenses in the **Official Expenses** section.
+                """.trimIndent()
+            }
+
+            val pending = officialMetrics.pendingClaimsTotal
+            val applied = officialMetrics.appliedClaimsTotal
+            val approved = officialMetrics.approvedClaimsTotal
+            val reimbursed = officialMetrics.totalReimbursed
+            val outstanding = officialMetrics.outstandingReimbursement
+            val advancesReceived = officialMetrics.advancesReceived
+            val advancesUtilized = officialMetrics.advancesUtilized
+            val remainingAdvance = officialMetrics.remainingAdvance
+
+            return """
+                ### 📑 Official Expense & Reimbursement Audit
+
+                Here is the verified status of your corporate claims and advances:
+
+                | Claim / Advance Stage | Count | Total Amount | Status / Notes |
+                | :--- | :--- | :--- | :--- |
+                | **Pending Claims** | ${officialMetrics.pendingClaimsCount} | ${formatCurrency(pending)} | Recorded, awaiting submission |
+                | **Applied Claims** | ${officialMetrics.appliedClaimsCount} | ${formatCurrency(applied)} | Submitted, under manager review |
+                | **Approved Claims** | ${officialMetrics.approvedClaimsCount} | ${formatCurrency(approved)} | Approved eligible amount |
+                | **Total Reimbursed** | - | ${formatCurrency(reimbursed)} | Confirmed payments received |
+                | **Outstanding Reimbursement** | - | ${formatCurrency(outstanding)} | **Eligible payable balance** |
+
+                #### 🏢 Company Advances
+                | Advance Metric | Amount | Description |
+                | :--- | :--- | :--- |
+                | Advances Received | ${formatCurrency(advancesReceived)} | Funds received upfront for official spending |
+                | Advances Utilized | ${formatCurrency(advancesUtilized)} | Spent and settled against advance |
+                | **Remaining Advance** | ${formatCurrency(remainingAdvance)} | Unspent advance balance |
+
+                **Accounting Rule:** Outstanding reimbursement is strictly calculated as `Approved Amount - Reimbursed Payments`. Pending, rejected, and cancelled claims are excluded from payable liabilities.
+            """.trimIndent()
+        }
+
+        // Borrowing, Debts & Money Owed to Others
+        if (msgLower.contains("borrow") || msgLower.contains("debt") || msgLower.contains("i owe") ||
+            msgLower.contains("creditor") || msgLower.contains("settlement")
+        ) {
+            val borrowMetrics = viewModel?.dashboardSummary?.value?.borrowingMetrics
+            if (borrowMetrics == null || borrowMetrics.totalBorrowed <= 0.0) {
+                return """
+                    ### Borrowing & Debt Summary
+
+                    You have **no recorded borrowing or debt liabilities**.
+
+                    | Metric | Value |
+                    | :--- | :--- |
+                    | Total Borrowed | ${currencySymbol}0.00 |
+                    | Repaid / Settled | ${currencySymbol}0.00 |
+                    | Outstanding Debt | ${currencySymbol}0.00 |
+
+                    When you borrow funds, tag them with unique **#BORROW-X** IDs to track repayments.
+                """.trimIndent()
+            }
+
+            return """
+                ### 💳 Money Borrowed & Debt Liabilities
+
+                Here is your current borrowing and settlement standing:
+
+                | Metric | Amount | Notes |
+                | :--- | :--- | :--- |
+                | **Total Borrowed** | ${formatCurrency(borrowMetrics.totalBorrowed)} | Principal borrowed from lenders/contacts |
+                | **Total Repaid** | ${formatCurrency(borrowMetrics.totalRepaid)} | Confirmed settlements made |
+                | **Outstanding Debt** | ${formatCurrency(borrowMetrics.outstandingBorrowing)} | **Remaining balance to pay** |
+                | Active Debts | ${borrowMetrics.activeBorrowCount} active | In-progress borrowing sets |
+                | Settled Debts | ${borrowMetrics.settledBorrowCount} settled | Fully paid off (#SETTLED) |
+
+                **Rule:** Borrowed principal is excluded from ordinary income, and repayments are tracked separately from routine expenses.
             """.trimIndent()
         }
 

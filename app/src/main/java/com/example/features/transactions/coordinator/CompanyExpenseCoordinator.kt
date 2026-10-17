@@ -253,7 +253,13 @@ class CompanyExpenseCoordinator(
                 } else {
                     cleanNotes
                 }
-                val updated = exp.copy(isReimbursed = false, notes = newNotes, updatedAt = System.currentTimeMillis())
+                val updated = exp.copy(
+                    isReimbursed = false,
+                    claimStatus = if (applied) com.example.data.local.entity.ClaimStatus.SUBMITTED else com.example.data.local.entity.ClaimStatus.PENDING,
+                    submittedDate = if (applied) com.example.utils.DateUtils.getCurrentDate() else null,
+                    notes = newNotes,
+                    updatedAt = System.currentTimeMillis()
+                )
                 repository.updateCompanyExpense(updated)
                 showMessage(if (applied) "Claim marked as Applied" else "Claim moved to Pending")
             }
@@ -265,7 +271,13 @@ class CompanyExpenseCoordinator(
             val exp = companyExpenses.value.find { it.id == id }
                 ?: database.companyExpenseDao().getAllCompanyExpensesList().find { it.id == id }
             if (exp != null) {
-                val updated = exp.copy(isReimbursed = reimbursed, updatedAt = System.currentTimeMillis())
+                val updated = exp.copy(
+                    isReimbursed = reimbursed,
+                    claimStatus = if (reimbursed) com.example.data.local.entity.ClaimStatus.APPROVED else com.example.data.local.entity.ClaimStatus.PENDING,
+                    approvedAmount = if (reimbursed) (exp.approvedAmount ?: exp.amount) else null,
+                    reimbursedAmount = if (reimbursed) (exp.approvedAmount ?: exp.amount) else 0.0,
+                    updatedAt = System.currentTimeMillis()
+                )
                 repository.updateCompanyExpense(updated)
                 showMessage(if (reimbursed) "Marked as Reimbursed" else "Moved to Pending Claims")
             }

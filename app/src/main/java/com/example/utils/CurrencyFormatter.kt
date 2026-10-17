@@ -79,4 +79,16 @@ object DateUtils {
             isoDate
         }
     }
+
+    private val dateTimeFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.ENGLISH)
+
+    @Synchronized
+    fun formatDateTime(timestamp: Long): String {
+        return try {
+            dateTimeFormat.format(Date(timestamp))
+        } catch (_: Exception) {
+            timestamp.toString()
+        }
+    }
 }
+

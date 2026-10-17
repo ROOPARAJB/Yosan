@@ -42,12 +42,41 @@ class AppPreferences(private val context: Context) {
         get() = prefs.getBoolean(KEY_EXTERNAL_INTENT_ACTIVE, false)
         set(value) = prefs.edit().putBoolean(KEY_EXTERNAL_INTENT_ACTIVE, value).apply()
 
+    var isIntroNoteDismissed: Boolean
+        get() = prefs.getBoolean(KEY_INTRO_NOTE_DISMISSED, false)
+        set(value) = prefs.edit().putBoolean(KEY_INTRO_NOTE_DISMISSED, value).apply()
+
+    var isWalkthroughCompleted: Boolean
+        get() = prefs.getBoolean(KEY_WALKTHROUGH_COMPLETED, false)
+        set(value) = prefs.edit().putBoolean(KEY_WALKTHROUGH_COMPLETED, value).apply()
+
+    var themeMode: String
+        get() = prefs.getString(KEY_THEME_MODE, "SYSTEM") ?: "SYSTEM"
+        set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
+
+    var isLoggedOut: Boolean
+        get() = prefs.getBoolean(KEY_IS_LOGGED_OUT, false)
+        set(value) = prefs.edit().putBoolean(KEY_IS_LOGGED_OUT, value).apply()
+
+    var isOfflineMode: Boolean
+        get() = prefs.getBoolean(KEY_IS_OFFLINE_MODE, false)
+        set(value) = prefs.edit().putBoolean(KEY_IS_OFFLINE_MODE, value).apply()
+
+    fun clearAll() {
+        prefs.edit().clear().apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "yosan_app_preferences"
         private const val KEY_ONBOARDING_COMPLETED = "is_onboarding_completed"
         private const val KEY_DARK_MODE = "is_dark_mode"
+        private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_BIOMETRIC_ENABLED = "is_biometric_enabled"
         private const val KEY_APP_LOCK_TIMEOUT_SECONDS = "app_lock_timeout_seconds"
         private const val KEY_EXTERNAL_INTENT_ACTIVE = "external_intent_active"
+        private const val KEY_INTRO_NOTE_DISMISSED = "is_intro_note_dismissed"
+        private const val KEY_WALKTHROUGH_COMPLETED = "is_walkthrough_completed"
+        private const val KEY_IS_LOGGED_OUT = "is_logged_out"
+        private const val KEY_IS_OFFLINE_MODE = "is_offline_mode"
     }
 }

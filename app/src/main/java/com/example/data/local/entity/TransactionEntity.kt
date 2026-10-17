@@ -31,6 +31,7 @@ data class TransactionEntity(
     val transferId: String? = null,
     val linkedLoanId: Long? = null,
     val advanceId: String? = null,
+    val importId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

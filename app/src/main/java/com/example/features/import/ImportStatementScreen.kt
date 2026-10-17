@@ -43,6 +43,9 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+import androidx.compose.foundation.verticalScroll
+import com.example.data.local.entity.StatementAuditStatus
+import com.example.data.local.entity.StatementImportEntity
 import com.example.ui.components.CategoryChip
 import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
@@ -68,6 +71,10 @@ fun ImportStatementScreen(
     var pdfDocPages by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     var currentPdfPage by remember { mutableIntStateOf(0) }
     var isRenderingPdf by remember { mutableStateOf(false) }
+    val statementImports by viewModel.statementImports.collectAsState()
+    var selectedScreenTab by remember { mutableIntStateOf(0) }
+    var showAuditDetailsDialog by remember { mutableStateOf(false) }
+    var importToDelete by remember { mutableStateOf<StatementImportEntity?>(null) }
 
     LaunchedEffect(selectedPdfUri) {
         val uri = selectedPdfUri
@@ -140,306 +147,333 @@ fun ImportStatementScreen(
         }
     }
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .testTag("import_statement_screen"),
-        contentPadding = PaddingValues(bottom = 24.dp)
+            .testTag("import_statement_screen")
     ) {
-        // 1. Header
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-            ) {
-                Text(
-                    text = "Upload bank statements in Excel (.xlsx, .xls) or PDF (.pdf) formats with automatic categorization.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "AI Smart Statement Parsing Active",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "Automatically strips disclaimers, GSTIN, and junk headers to extract clean transactions.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
+        // Tab Row: 0 = Import Statement, 1 = History
+        TabRow(
+            selectedTabIndex = selectedScreenTab,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Tab(
+                selected = selectedScreenTab == 0,
+                onClick = { selectedScreenTab = 0 },
+                text = { Text("Import Statement") },
+                icon = { Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp)) }
+            )
+            Tab(
+                selected = selectedScreenTab == 1,
+                onClick = { selectedScreenTab = 1 },
+                text = { Text("History (${statementImports.size})") },
+                icon = { Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(18.dp)) }
+            )
         }
 
-        // 2. Upload Document Card (PDF, Excel, CSV)
-        item {
-            Card(
+        if (selectedScreenTab == 0) {
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
+                    .weight(1f),
+                contentPadding = PaddingValues(bottom = 24.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.FileUpload,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Upload Bank Statement (Excel / PDF)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Select an Excel spreadsheet (.xlsx, .xls) or PDF statement from your device storage.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (selectedFileName != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Description,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = selectedFileName!!,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = {
-                            viewModel.setExternalIntentActive(true)
-                            filePickerLauncher.launch(SUPPORTED_STATEMENT_MIMES)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Select Statement File (.xlsx, .xls, .pdf)")
-                    }
-                }
-            }
-        }
-
-        // 2b. Document Preview (Multi-page display for uploaded PDF statements)
-        if (isRenderingPdf || pdfDocPages.isNotEmpty()) {
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .clip(RoundedCornerShape(16.dp)),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
+                // 1. Header with Bank Support Notice
+                item {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Text(
+                            text = "Upload bank statements in Excel (.xlsx, .xls) or PDF (.pdf) formats with automated mathematical reconciliation.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Icon(
-                                    imageVector = Icons.Default.PictureAsPdf,
+                                    imageVector = Icons.Default.AccountBalance,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Document Preview",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            if (pdfDocPages.isNotEmpty()) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
+                                Column {
                                     Text(
-                                        text = "Page ${currentPdfPage + 1} of ${pdfDocPages.size}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        text = "Supported Banks: Indian Bank & YES BANK",
+                                        style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "Optimized layout heuristics, header striping, and sequential balance auditing.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                         }
+                    }
+                }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                // 2. Upload Document Card (PDF, Excel, CSV)
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .clip(RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.FileUpload,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Upload Bank Statement (Excel / PDF)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Select an Excel spreadsheet (.xlsx, .xls) or PDF statement from your device storage.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (selectedFileName != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Description,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = selectedFileName!!,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = {
+                                    viewModel.setExternalIntentActive(true)
+                                    filePickerLauncher.launch(SUPPORTED_STATEMENT_MIMES)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Select Statement File (.xlsx, .xls, .pdf)")
+                            }
+                        }
+                    }
+                }
 
-                        if (isRenderingPdf && pdfDocPages.isEmpty()) {
-                            Box(
+                // 2b. Document Preview (Multi-page display for uploaded PDF statements)
+                if (isRenderingPdf || pdfDocPages.isNotEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(16.dp)),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(260.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                                contentAlignment = Alignment.Center
+                                    .padding(16.dp)
                             ) {
-                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                            }
-                        } else if (pdfDocPages.isNotEmpty()) {
-                            // Multi-page navigation controls
-                            if (pdfDocPages.size > 1) {
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(bottom = 10.dp),
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    FilledTonalButton(
-                                        onClick = { if (currentPdfPage > 0) currentPdfPage-- },
-                                        enabled = currentPdfPage > 0,
-                                        shape = RoundedCornerShape(10.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Page", modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Previous")
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.PictureAsPdf,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Document Preview",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
-
-                                    Text(
-                                        text = "Page ${currentPdfPage + 1} / ${pdfDocPages.size}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-
-                                    FilledTonalButton(
-                                        onClick = { if (currentPdfPage < pdfDocPages.size - 1) currentPdfPage++ },
-                                        enabled = currentPdfPage < pdfDocPages.size - 1,
-                                        shape = RoundedCornerShape(10.dp),
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Text("Next")
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Page", modifier = Modifier.size(16.dp))
+                                    if (pdfDocPages.isNotEmpty()) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text(
+                                                text = "Page ${currentPdfPage + 1} of ${pdfDocPages.size}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            )
+                                        }
                                     }
                                 }
-                            }
 
-                            val currentBmp = pdfDocPages.getOrNull(currentPdfPage) ?: pdfDocPages.first()
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp)),
-                                colors = CardDefaults.cardColors(containerColor = Color.White),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(6.dp)
-                                ) {
-                                    Image(
-                                        bitmap = currentBmp.asImageBitmap(),
-                                        contentDescription = "Statement Document Page ${currentPdfPage + 1}",
-                                        contentScale = ContentScale.FillWidth,
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                if (isRenderingPdf && pdfDocPages.isEmpty()) {
+                                    Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(8.dp))
-                                    )
-                                }
-                            }
-
-                            // Multi-page thumbnail strip for fast page switching
-                            if (pdfDocPages.size > 1) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "All Document Pages (${pdfDocPages.size})",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                LazyRow(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    itemsIndexed(pdfDocPages) { idx, bmp ->
-                                        val isSelected = idx == currentPdfPage
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            .height(260.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                    }
+                                } else if (pdfDocPages.isNotEmpty()) {
+                                    // Multi-page navigation controls
+                                    if (pdfDocPages.size > 1) {
+                                        Row(
                                             modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable { currentPdfPage = idx }
-                                                .border(
-                                                    width = if (isSelected) 2.dp else 1.dp,
-                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                                    shape = RoundedCornerShape(8.dp)
-                                                )
-                                                .padding(4.dp)
+                                                .fillMaxWidth()
+                                                .padding(bottom = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            FilledTonalButton(
+                                                onClick = { if (currentPdfPage > 0) currentPdfPage-- },
+                                                enabled = currentPdfPage > 0,
+                                                shape = RoundedCornerShape(10.dp),
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                            ) {
+                                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Page", modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Previous")
+                                            }
+
+                                            Text(
+                                                text = "Page ${currentPdfPage + 1} / ${pdfDocPages.size}",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+
+                                            FilledTonalButton(
+                                                onClick = { if (currentPdfPage < pdfDocPages.size - 1) currentPdfPage++ },
+                                                enabled = currentPdfPage < pdfDocPages.size - 1,
+                                                shape = RoundedCornerShape(10.dp),
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                            ) {
+                                                Text("Next")
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Page", modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
+
+                                    val currentBmp = pdfDocPages.getOrNull(currentPdfPage) ?: pdfDocPages.first()
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp)),
+                                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(6.dp)
                                         ) {
                                             Image(
-                                                bitmap = bmp.asImageBitmap(),
-                                                contentDescription = "Thumbnail Page ${idx + 1}",
+                                                bitmap = currentBmp.asImageBitmap(),
+                                                contentDescription = "Statement Document Page ${currentPdfPage + 1}",
+                                                contentScale = ContentScale.FillWidth,
                                                 modifier = Modifier
-                                                    .height(80.dp)
-                                                    .width(56.dp)
-                                                    .clip(RoundedCornerShape(4.dp)),
-                                                contentScale = ContentScale.Fit
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(8.dp))
                                             )
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            Text(
-                                                text = "Page ${idx + 1}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontSize = 10.sp,
-                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                            )
+                                        }
+                                    }
+
+                                    // Multi-page thumbnail strip for fast page switching
+                                    if (pdfDocPages.size > 1) {
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = "All Document Pages (${pdfDocPages.size})",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        LazyRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            itemsIndexed(pdfDocPages) { idx, bmp ->
+                                                val isSelected = idx == currentPdfPage
+                                                Column(
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .clickable { currentPdfPage = idx }
+                                                        .border(
+                                                            width = if (isSelected) 2.dp else 1.dp,
+                                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                                            shape = RoundedCornerShape(8.dp)
+                                                        )
+                                                        .padding(4.dp)
+                                                ) {
+                                                    Image(
+                                                        bitmap = bmp.asImageBitmap(),
+                                                        contentDescription = "Thumbnail Page ${idx + 1}",
+                                                        modifier = Modifier
+                                                            .height(80.dp)
+                                                            .width(56.dp)
+                                                            .clip(RoundedCornerShape(4.dp)),
+                                                        contentScale = ContentScale.Fit
+                                                    )
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        text = "Page ${idx + 1}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontSize = 10.sp,
+                                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -447,172 +481,429 @@ fun ImportStatementScreen(
                         }
                     }
                 }
-            }
-        }
 
-        // 3. Custom Paste Input Area
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Or Paste Statement Text",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = customText,
-                        onValueChange = { customText = it },
-                        placeholder = { Text("Txn Date,Description,Debit,Credit,Balance\n2026-02-01,STORE PURCHASE,340,0,45000") },
+                // 3. Custom Paste Input Area
+                item {
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(100.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = { viewModel.previewStatement(customText, "pasted_statement.csv") },
-                        enabled = customText.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .clip(RoundedCornerShape(16.dp)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                     ) {
-                        Text("Parse & Preview Text")
-                    }
-                }
-            }
-        }
-
-        // 4. Preview & Validation Section
-        if (previewResult != null) {
-            val preview = previewResult!!
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "Validation Summary • ${preview.fileName}",
+                                text = "Or Paste Statement Text",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                            OutlinedTextField(
+                                value = customText,
+                                onValueChange = { customText = it },
+                                placeholder = { Text("Txn Date,Description,Debit,Credit,Balance\n2026-02-01,STORE PURCHASE,340,0,45000") },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(100.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = { viewModel.previewStatement(customText, "pasted_statement.csv") },
+                                enabled = customText.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(text = "Total Rows: ${preview.totalRows}")
-                                Text(text = "Valid: ${preview.validRows.size}", color = IncomeGreen, fontWeight = FontWeight.Bold)
-                                Text(text = "Duplicates: ${preview.duplicateCount}", color = if (preview.duplicateCount > 0) OutstandingAmber else MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Parse & Preview Text")
                             }
                         }
                     }
+                }
 
-                    // Bank Account Selector Card
-                    if (accounts.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
+                // 4. Preview & Validation Section
+                if (previewResult != null) {
+                    val preview = previewResult!!
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(
-                                    text = "Assign Statement to Bank Account",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    accounts.forEach { acc ->
-                                        val isSelected = (selectedAccountId ?: accounts.first().id) == acc.id
+                            // 4a. Detected Bank & Override Selector
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Bank: ${preview.detectedBank.displayName}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "Bank Override",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
                                         FilterChip(
-                                            selected = isSelected,
-                                            onClick = { selectedAccountId = acc.id },
-                                            leadingIcon = {
-                                                if (isSelected) {
-                                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                }
-                                            },
-                                            label = { Text("${acc.bankName} (${acc.accountName})") }
+                                            selected = preview.detectedBank == SupportedBank.INDIAN_BANK,
+                                            onClick = { viewModel.setManualBankOverride(SupportedBank.INDIAN_BANK) },
+                                            label = { Text("Indian Bank") },
+                                            leadingIcon = if (preview.detectedBank == SupportedBank.INDIAN_BANK) {
+                                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                            } else null
+                                        )
+                                        FilterChip(
+                                            selected = preview.detectedBank == SupportedBank.YES_BANK,
+                                            onClick = { viewModel.setManualBankOverride(SupportedBank.YES_BANK) },
+                                            label = { Text("YES BANK") },
+                                            leadingIcon = if (preview.detectedBank == SupportedBank.YES_BANK) {
+                                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                            } else null
                                         )
                                     }
                                 }
                             }
-                        }
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Checkbox(
-                            checked = skipDuplicates,
-                            onCheckedChange = { skipDuplicates = it }
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = "Skip duplicate transactions", style = MaterialTheme.typography.bodyMedium)
-                    }
+                            // 4b. Mathematical Audit Result Banner
+                            preview.auditReport?.let { audit ->
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = when (audit.status) {
+                                            StatementAuditStatus.PASS -> IncomeGreen.copy(alpha = 0.12f)
+                                            StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber.copy(alpha = 0.15f)
+                                            else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                        }
+                                    ),
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        when (audit.status) {
+                                            StatementAuditStatus.PASS -> IncomeGreen.copy(alpha = 0.4f)
+                                            StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber.copy(alpha = 0.5f)
+                                            else -> MaterialTheme.colorScheme.outlineVariant
+                                        }
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = when (audit.status) {
+                                                        StatementAuditStatus.PASS -> Icons.Default.CheckCircle
+                                                        StatementAuditStatus.REVIEW_REQUIRED -> Icons.Default.Warning
+                                                        else -> Icons.Default.Info
+                                                    },
+                                                    contentDescription = null,
+                                                    tint = when (audit.status) {
+                                                        StatementAuditStatus.PASS -> IncomeGreen
+                                                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
+                                                        else -> MaterialTheme.colorScheme.primary
+                                                    },
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = "Audit: ${audit.status}",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = when (audit.status) {
+                                                        StatementAuditStatus.PASS -> IncomeGreen
+                                                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
+                                                        else -> MaterialTheme.colorScheme.primary
+                                                    }
+                                                )
+                                            }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                                            FilledTonalButton(
+                                                onClick = { showAuditDetailsDialog = true },
+                                                shape = RoundedCornerShape(8.dp),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                            ) {
+                                                Text("Audit Details", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
 
-                    Button(
-                        onClick = {
-                            val accountId = selectedAccountId ?: (accounts.firstOrNull()?.id ?: 1L)
-                            viewModel.confirmImport(
-                                skipDuplicates = skipDuplicates,
-                                targetAccountId = accountId,
-                                onComplete = onImportSuccess
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(text = "Valid: ${audit.validCount}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                                            Text(text = "Debits: ₹${CurrencyFormatter.formatInrCompact(audit.totalDebits)}", color = ExpenseRed, style = MaterialTheme.typography.bodySmall)
+                                            Text(text = "Credits: ₹${CurrencyFormatter.formatInrCompact(audit.totalCredits)}", color = IncomeGreen, style = MaterialTheme.typography.bodySmall)
+                                        }
+
+                                        if (audit.discrepancies.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                text = "${audit.discrepancies.size} discrepancy flagged. Review items below before confirming import.",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = OutstandingAmber,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // 4c. Bank Account Selector Card
+                            if (accounts.isNotEmpty()) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = "Assign Statement to Bank Account",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            accounts.forEach { acc ->
+                                                val isSelected = (selectedAccountId ?: accounts.first().id) == acc.id
+                                                FilterChip(
+                                                    selected = isSelected,
+                                                    onClick = { selectedAccountId = acc.id },
+                                                    leadingIcon = {
+                                                        if (isSelected) {
+                                                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                        }
+                                                    },
+                                                    label = { Text("${acc.bankName} (${acc.accountName})") }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Checkbox(
+                                    checked = skipDuplicates,
+                                    onCheckedChange = { skipDuplicates = it }
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(text = "Skip duplicate transactions", style = MaterialTheme.typography.bodyMedium)
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Button(
+                                onClick = {
+                                    val accountId = selectedAccountId ?: (accounts.firstOrNull()?.id ?: 1L)
+                                    viewModel.confirmImport(
+                                        skipDuplicates = skipDuplicates,
+                                        targetAccountId = accountId,
+                                        onComplete = onImportSuccess
+                                    )
+                                },
+                                enabled = !isImporting && preview.validRows.isNotEmpty(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen)
+                            ) {
+                                if (isImporting) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
+                                } else {
+                                    Icon(Icons.Default.Check, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Confirm & Import ${preview.validRows.size} Transactions", fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text(
+                                text = "Transactions Preview (${preview.validRows.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
                             )
-                        },
-                        enabled = !isImporting && preview.validRows.isNotEmpty(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen)
-                    ) {
-                        if (isImporting) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
-                        } else {
-                            Icon(Icons.Default.Check, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Confirm & Import ${preview.validRows.size} Transactions", fontWeight = FontWeight.Bold)
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "Transactions Preview (${preview.validRows.size})",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+                    items(preview.validRows) { row ->
+                        ImportRowPreviewCard(row = row, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                    }
                 }
             }
+        } else {
+            // Tab 1: Statement Import History
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Text(
+                        text = "Statement Import History & Audits",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Review previously parsed statements, audit outcomes, or safely delete an imported batch and its transactions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
-            items(preview.validRows) { row ->
-                ImportRowPreviewCard(row = row, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                if (statementImports.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ReceiptLong,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = MaterialTheme.colorScheme.outline
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "No Imported Statements Yet",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Statements imported from Indian Bank or YES BANK will appear here along with mathematical audit logs.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    items(statementImports, key = { it.id }) { item ->
+                        StatementImportHistoryCard(
+                            item = item,
+                            onDeleteClick = { importToDelete = item }
+                        )
+                    }
+                }
             }
         }
+    }
+
+    // Dialog 1: Statement Audit Details Dialog
+    if (showAuditDetailsDialog && previewResult?.auditReport != null) {
+        StatementAuditDetailsDialog(
+            audit = previewResult!!.auditReport!!,
+            onDismiss = { showAuditDetailsDialog = false }
+        )
+    }
+
+    // Dialog 2: Delete Import Confirmation Dialog
+    if (importToDelete != null) {
+        val target = importToDelete!!
+        AlertDialog(
+            onDismissRequest = { importToDelete = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = ExpenseRed
+                )
+            },
+            title = {
+                Text(
+                    text = "Delete Imported Transactions?",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "You are about to delete ${target.importedCount} transactions associated with this import:",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(text = "File: ${target.fileName}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            Text(text = "Bank: ${target.bankName}", style = MaterialTheme.typography.bodySmall)
+                            Text(text = "Imported: ${DateUtils.formatDateTime(target.importTimestamp)}", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Text(
+                        text = "This action will remove all ${target.importedCount} imported transactions from your account and automatically recalculate running balances. This action cannot be undone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val id = target.id
+                        importToDelete = null
+                        viewModel.deleteStatementImport(id)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ExpenseRed)
+                ) {
+                    Text("Delete Transactions")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { importToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -808,6 +1099,295 @@ fun ImportRowPreviewCard(row: ParsedImportRow, modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.Bold,
                         fontSize = 10.sp
                     )
+                }
+                if (row.hasDiscrepancy) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Audit Flag",
+                        color = ExpenseRed,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StatementAuditDetailsDialog(
+    audit: StatementAuditReport,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = when (audit.status) {
+                        StatementAuditStatus.PASS -> Icons.Default.CheckCircle
+                        StatementAuditStatus.REVIEW_REQUIRED -> Icons.Default.Warning
+                        else -> Icons.Default.Info
+                    },
+                    contentDescription = null,
+                    tint = when (audit.status) {
+                        StatementAuditStatus.PASS -> IncomeGreen
+                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Statement Audit Report", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    color = when (audit.status) {
+                        StatementAuditStatus.PASS -> IncomeGreen.copy(alpha = 0.12f)
+                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber.copy(alpha = 0.12f)
+                        else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "Audit Outcome: ${audit.status}",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = when (audit.status) {
+                                StatementAuditStatus.PASS -> IncomeGreen
+                                StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                        Text(
+                            text = "Detected Bank: ${audit.detectedBank.displayName}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                Text("Audit Summary", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Total Parsed Transactions:", style = MaterialTheme.typography.bodySmall)
+                    Text("${audit.validCount}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Duplicate Transactions:", style = MaterialTheme.typography.bodySmall)
+                    Text("${audit.duplicateCount}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Total Withdrawals (Debits):", style = MaterialTheme.typography.bodySmall)
+                    Text("-₹${CurrencyFormatter.formatInr(audit.totalDebits)}", fontWeight = FontWeight.SemiBold, color = ExpenseRed, style = MaterialTheme.typography.bodySmall)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Total Deposits (Credits):", style = MaterialTheme.typography.bodySmall)
+                    Text("+₹${CurrencyFormatter.formatInr(audit.totalCredits)}", fontWeight = FontWeight.SemiBold, color = IncomeGreen, style = MaterialTheme.typography.bodySmall)
+                }
+
+                if (audit.openingBalance != null || audit.closingBalance != null) {
+                    HorizontalDivider()
+                    Text("Balance Reconciliation", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                    if (audit.openingBalance != null) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Opening Balance:", style = MaterialTheme.typography.bodySmall)
+                            Text("₹${CurrencyFormatter.formatInr(audit.openingBalance)}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (audit.closingBalance != null) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Statement Closing Balance:", style = MaterialTheme.typography.bodySmall)
+                            Text("₹${CurrencyFormatter.formatInr(audit.closingBalance)}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (audit.calculatedClosingBalance != null) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Reconciled Balance:", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "₹${CurrencyFormatter.formatInr(audit.calculatedClosingBalance)}",
+                                fontWeight = FontWeight.Bold,
+                                color = if (audit.balanceReconciliationPassed == true) IncomeGreen else ExpenseRed,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Reconciliation Check:", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = if (audit.balanceReconciliationPassed == true) "PASSED" else if (audit.balanceReconciliationPassed == false) "FAILED" else "INCOMPLETE",
+                            fontWeight = FontWeight.Bold,
+                            color = if (audit.balanceReconciliationPassed == true) IncomeGreen else if (audit.balanceReconciliationPassed == false) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+
+                if (audit.discrepancies.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("Flagged Discrepancies (${audit.discrepancies.size})", fontWeight = FontWeight.Bold, color = OutstandingAmber, style = MaterialTheme.typography.bodyMedium)
+                    audit.discrepancies.forEach { disc ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(8.dp)) {
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "${disc.field}${if (disc.rowIndex > 0) " (Row ${disc.rowIndex})" else ""}",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                    Text(
+                                        text = "${disc.actual}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = disc.reason,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
+fun StatementImportHistoryCard(
+    item: StatementImportEntity,
+    onDeleteClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { expanded = !expanded },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.fileName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${item.bankName} • ${DateUtils.formatDateTime(item.importTimestamp)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Surface(
+                    color = when (item.auditStatus) {
+                        StatementAuditStatus.PASS -> IncomeGreen.copy(alpha = 0.15f)
+                        StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber.copy(alpha = 0.15f)
+                        else -> MaterialTheme.colorScheme.outlineVariant
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = item.auditStatus,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = when (item.auditStatus) {
+                            StatementAuditStatus.PASS -> IncomeGreen
+                            StatementAuditStatus.REVIEW_REQUIRED -> OutstandingAmber
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${item.importedCount} txns imported (${item.totalParsed} parsed)",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (item.duplicateCount > 0) {
+                    Text(
+                        text = "${item.duplicateCount} duplicates",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OutstandingAmber
+                    )
+                }
+            }
+
+            if (expanded) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Total Debits:", style = MaterialTheme.typography.bodySmall)
+                    Text("-₹${CurrencyFormatter.formatInr(item.totalDebits)}", color = ExpenseRed, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Total Credits:", style = MaterialTheme.typography.bodySmall)
+                    Text("+₹${CurrencyFormatter.formatInr(item.totalCredits)}", color = IncomeGreen, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                }
+                if (item.openingBalance != null) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Opening Balance:", style = MaterialTheme.typography.bodySmall)
+                        Text("₹${CurrencyFormatter.formatInr(item.openingBalance)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (item.closingBalance != null) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Closing Balance:", style = MaterialTheme.typography.bodySmall)
+                        Text("₹${CurrencyFormatter.formatInr(item.closingBalance)}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onDeleteClick,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ExpenseRed),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Delete Import & Transactions")
                 }
             }
         }

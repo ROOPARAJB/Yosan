@@ -1,0 +1,122 @@
+YOSAN FINANCE — IN-APP USER WALKTHROUGH IMPLEMENTATION PROMPT
+
+Objective
+Implement, maintain, and specify the comprehensive in-app user walkthrough dialog in the Yosan Finance Android application. The walkthrough guides users through the app's financial features, clarifies accounting models (separating personal and official expenses), explains permissions and connected services, and provides actionable privacy and security advice.
+
+ARCHITECTURE & COMPONENT MAPPING
+- Dialog Component: `app/src/main/java/com/example/features/walkthrough/UserWalkthroughDialog.kt`
+- Data Definitions: `WALKTHROUGH_MODULES` in `UserWalkthroughDialog.kt` (13 structured modules)
+- Host Screen Integration: `app/src/main/java/com/example/ui/screens/MainContainerScreen.kt` and `SettingsScreen.kt`
+- Persistence Key: `AppPreferences.hasSeenWalkthrough` (Boolean flag in SharedPreferences)
+- Automated Unit Tests: `app/src/test/java/com/example/IntroductionAndWalkthroughTest.kt`
+
+WALKTHROUGH EXPERIENCE
+- Interactive Paged Modal: Built with Material 3 `AlertDialog` and step carousel.
+- Step Counter: Displays current progress (e.g., "Module 1 of 13").
+- Navigation Controls: "Back", "Next", "Skip", and "Finish" buttons.
+- "Don't show again" Checkbox: Persists completion status into `AppPreferences.hasSeenWalkthrough`.
+- Non-Intrusive & Reopenable: Users can exit at any point without restricting access to financial tools. Reopenable anytime from Settings -> Help / Walkthrough.
+- Adaptive Layout: Scrollable text content (`verticalScroll`) supporting small screens, landscape orientation, and dynamic font scaling.
+
+WALKTHROUGH CONTENT (13 CORE MODULES)
+
+1. Introduction
+- Purpose: Overview of Yosan Finance as an offline-first personal and official finance manager.
+- Key Highlights: Local data storage, zero cloud leaks without explicit user consent, and separation of financial streams.
+
+2. Dashboard
+- Purpose: Explains dashboard KPI cards, time-based greetings, and dynamic date filtering (Today, This Week, This Month, This Year, All Time, Custom).
+- Guidance: Emphasizes that summaries derive from authoritative Room database records.
+
+3. Personal Expense
+- Purpose: Recording and tracking day-to-day personal consumption.
+- Classification: Excludes company expenses, income, loans, investments, and transfers.
+- Features: Category assignment, date filtering, and underlying transaction inspection dialog.
+
+4. Official Expense — Company
+- Purpose: Complete claim reimbursement lifecycle management.
+- Workflow Subsections:
+  * Pending Claim: Official expenses recorded but not yet submitted.
+  * Applied Claim: Submitted claims awaiting management review and approval.
+  * Reimbursements: Explains Total Reimbursed vs Outstanding Reimbursement with multi-payment allocation support.
+  * Company Advance: Tracks company advance credits, utilization, and remaining balance.
+
+5. Spending by Category
+- Purpose: Category distribution analysis with visual progress bars and percentage share.
+- Features: Tapping a category row opens itemized transaction lists for that category.
+
+6. Borrow
+- Purpose: Tracking money borrowed from lenders and institutions.
+- Metrics: Tracks borrowed principal, repayments made, and outstanding liabilities owed.
+- Accounting Rule: Borrowed principal is excluded from ordinary income; repayments are excluded from personal consumption expenses.
+
+7. Income by Category
+- Purpose: Recording salary, business earnings, and refunds.
+- Accounting Rule: Excludes borrowing, reimbursements, transfers, and returned lending principal from income.
+
+8. Lend
+- Purpose: Managing loans disbursed to friends, family, or colleagues.
+- Metrics: Tracks loan principal disbursed, repayments received, and outstanding receivables owed to the user.
+- Accounting Rule: Disbursed principal is excluded from expenses; returned principal is excluded from income.
+
+9. Investment
+- Purpose: Capital asset contributions (mutual funds, stocks, fixed deposits).
+- Accounting Rule: Tracks investment capital additions separately from personal consumption expenses.
+
+10. Rotational / Transfers
+- Purpose: Internal transfers between user-owned accounts (e.g., Bank to Cash or Bank to Bank).
+- Accounting Rule: Transfers have zero net impact on savings and net worth and are excluded from income and expenses.
+
+11. Manual Addition to Entry
+- Purpose: Adding transactions manually via the Add Transaction bottom sheet.
+- Fields & Validation: Amount validation, date selection, category assignment, account linking, and duplicate-prevention debouncing.
+
+12. AI Financial Assistant
+- Purpose: On-device local financial intelligence (`LocalFinancialAiAnalyzer`).
+- Privacy Guarantee: 100% on-device local computation. Zero external API calls, zero server telemetry, and no secret keys embedded in APK. Analyzes actual local balances and trends.
+
+13. Settings & Privacy
+- Purpose: Walkthrough of the 8 settings sections: User Profile, Finance Categorization, Appearance & Dark Mode, Bank Accounts, Google Drive Backup, System Updates, Danger Zone, and Developer Details.
+
+SETTINGS WALKTHROUGH
+Explains each settings area:
+- User Profile: Display name, email, avatar, and independent Google Drive connection status.
+- Finance Categorization: Managing custom categories, protected system categories, and automated keyword rules.
+- Appearance and Layout: Reordering dashboard cards, dark mode toggle, and privacy blur.
+- Account: Managing local bank accounts and cash wallets with safe deletion guards.
+- Backup and Restore: Google Drive backups, SHA-256 versioned snapshots, Excel import/export sync, and Undo.
+- System and Updates: Version check against GitHub releases and developer feedback.
+- Danger Zone: Separate account deletion and logout workflows.
+- Developer Details: Verified developer contact, GitHub repository, and Privacy Policy.
+
+PERMISSION AND CONNECTED-SERVICE EXPLANATIONS
+Permissions are requested contextually only when the related feature is opened:
+- Google Drive: Restricted to `drive.file` scope. Authorization is completely independent of app login.
+- Biometrics & Screen Lock: Utilizes Android `BiometricPrompt` with device credential fallback. The app never stores or accesses raw biometric templates.
+- Storage Access Framework: Standard Android system file pickers for statements, PDF export, and Excel files. No broad media or storage permissions requested.
+- Internet Permission: Used strictly for Supabase authentication, Google Drive backup sync, and update checking.
+
+FINANCIAL PRIVACY AND SAFETY
+- Financial Privacy Blur: Masks balances with `₹••••` in public spaces; one-tap temporary reveal.
+- Local Storage Security: Offline Room database with safe transactional commits.
+- Android Recents Screen Security: `FLAG_SECURE` prevents app switcher thumbnail capture when enabled.
+- Safe Backups: Checksummed JSON backups stored in user's private Google Drive; Supabase stores metadata only.
+
+IMPLEMENTATION RULES
+- Reuses existing navigation and UI design system (`MaterialTheme`).
+- Does not modify database records or calculation logic.
+- Accurately reflects existing feature availability without claiming unverified functions.
+- Conforms to dynamic light and dark theme attributes.
+
+TESTING
+Verified by automated unit tests in `IntroductionAndWalkthroughTest.kt`:
+- `testWalkthroughModulesCompleteness`: Verifies all 13 modules exist with correct titles and descriptions.
+- `testOfficialExpenseClaimsLifecycleInWalkthrough`: Verifies Pending, Applied, Reimbursement, and Advance explanations.
+- `testTransfersExplanationExcludesIncomeExpense`: Verifies transfer net-zero accounting rules.
+- `testSettingsAndPrivacyGuideContents`: Verifies Profile, Categorization, Appearance, Drive, Biometrics, and Privacy Blur coverage.
+
+DELIVERABLES
+- Walkthrough Dialog: `app/src/main/java/com/example/features/walkthrough/UserWalkthroughDialog.kt`
+- Unit Test Suite: `app/src/test/java/com/example/IntroductionAndWalkthroughTest.kt`
+- Settings Integration: `SettingsScreen.kt`
+- Main Flow Integration: `MainContainerScreen.kt`

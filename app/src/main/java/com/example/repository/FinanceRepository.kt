@@ -168,7 +168,7 @@ class FinanceRepository(private val database: AppDatabase) {
     private val transactionRepo by lazy { com.example.features.transactions.data.TransactionRepository(database) }
 
     // Balance recalculation helper — delegates to TransactionRepository which has the full implementation
-    private suspend fun recalculateAccountBalance(accountId: Long) {
+    suspend fun recalculateAccountBalance(accountId: Long) {
         try {
             transactionRepo.recalculateAccountBalance(accountId)
         } catch (_: Exception) {}

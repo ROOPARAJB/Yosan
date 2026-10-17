@@ -1,0 +1,167 @@
+SETTINGS SECTION IMPLEMENTATION PROMPT
+
+PROJECT CONTEXT
+Yosan Finance is a Kotlin-based Android personal and official finance management application built with Jetpack Compose, Material 3, and Room SQLite database. This document specifies the exact implementation, architecture, preferences persistence, security controls, and verified status of the Settings section currently in the codebase.
+
+The Settings section is organized into 8 distinct functional groups, providing comprehensive control over user profile, categorization rules, UI customization, bank accounts, version-controlled Google Drive backup, system updates, account security, and developer details.
+
+SETTINGS PAGE STRUCTURE
+Organized into 8 structured groups:
+1. User Profile
+2. Finance
+3. Appearance and Layout
+4. Account
+5. Backup and Restore
+6. System and Updates
+7. Danger Zone
+8. Details About the Developer
+
+1. USER PROFILE
+Displays authenticated user details derived from the Supabase authentication session and Google profile:
+- Profile Avatar: Displays Google profile image via coil/async image or user's initials fallback.
+- User Name: User's display name or email prefix.
+- Email Address: Authenticated email address.
+- Google Drive Sync Status Pill:
+  * "Connected" (Green indicator) when authorized.
+  * "Not Connected" (Grey/Amber indicator) when unlinked.
+  * "Syncing..." during backup upload.
+  * "Sync Failed" with actionable error details.
+- Clear separation between the app's Supabase authentication account and the Google Drive backup authorization.
+
+2. FINANCE — CATEGORIZATION
+Provides end-to-end management of financial categories and automated categorization rules:
+- Category Management (`CategoryEntity`):
+  * Pre-populated with default system categories (`isSystem = true`, e.g. Food & Dining, Salary, Groceries, Shopping, Travel, Bills & Utilities).
+  * Safe Deletion Guard: System categories are protected and cannot be deleted. Custom categories can only be deleted if no transactions are currently assigned to them; otherwise, the user is prompted to reassign existing transactions.
+  * Custom Categories: Add custom expense and income categories with duplicate name validation.
+- Smart Categorization Rules (`CategorizationRuleEntity`):
+  * Create, edit, and toggle automated description-matching rules.
+  * Supports match types: `CONTAINS`, `EXACT`, `STARTS_WITH`, and `REGEX`.
+  * Configurable priority and target category assignment.
+
+3. APPEARANCE AND LAYOUT
+
+A. CUSTOMIZATION DASHBOARD
+- Card Visibility & Ordering (`DashboardCardConfigManager`):
+  * Toggle visibility of individual dashboard cards (Personal Expense, Official Expense, Lending, Borrowing, Investment, Transfers, Monthly Breakdown, Spending by Category, Income by Category).
+  * Reorder card positions with persisted order index.
+  * Persisted locally in `UserProfileEntity.dashboardCardsConfig`.
+
+B. DARK MODE
+- Theme Selection (`AppPreferences.themeMode`):
+  * Options: `LIGHT`, `DARK`, and `SYSTEM` (System Default).
+  * Immediate real-time theme application across all composables, dialogs, charts, and bottom sheets without requiring app restart.
+
+C. FINANCIAL PRIVACY BLUR
+- Privacy Toggle (`userProfile.isPrivacyBlurEnabled` & `AppPreferences`):
+  * When enabled, masks all financial balances, expense totals, income figures, and account balances across Dashboard, Transactions, and Reports with `₹••••`.
+  * One-Tap Temporary Reveal: Eye icon in header allows quick temporary reveal (`isAmountTemporarilyRevealed`), resetting automatically on resume or timeout.
+  * Preserves underlying database values and calculations.
+
+D. BIOMETRIC AND SCREEN LOCK
+- App Lock (`AppPreferences.isBiometricEnabled` & `BiometricAuthManager`):
+  * Integrates Android `BiometricPrompt` supporting Fingerprint, Face, and Device Credential (PIN/Pattern/Password) fallback.
+  * Configurable lock timeout: Immediate, 30 seconds, 1 minute, 5 minutes (`AppPreferences.appLockTimeoutSeconds`).
+  * Enforces authentication upon app launch or returning from background.
+  * Prevents sensitive screen previews in Android recent apps switcher (`FLAG_SECURE`).
+
+4. ACCOUNT — BANK ACCOUNTS
+Manages user bank and cash accounts (`AccountEntity`):
+- Displays tracked accounts: Account Name, Account Type (`SAVINGS`, `CURRENT`, `CREDIT_CARD`, `CASH`, `WALLET`), Current Balance, and Opening Balance.
+- Add and Edit Accounts: Create accounts with opening balance and custom labels.
+- Safe Deletion Guard: Checks if transactions are linked to an account (`TransactionDao.getTransactionCountForAccount()`). Prevents accidental deletion of active accounts and offers deactivation instead.
+- Clear distinction: Accounts represent locally tracked balances; no online banking passwords, OTPs, or credentials are ever requested or stored.
+
+5. BACKUP AND RESTORE
+
+A. GOOGLE DRIVE BACKUP
+- Connect / Disconnect Google Drive independently of app sign-in.
+- Uses `drive.file` restricted scope, creating folder `Yosan-Backup` and backup file `detailsaboutbackup.json`.
+- Displays last successful backup timestamp and backup version.
+
+B. BACKUP ALL DATA
+- Exports complete Room database entities (Transactions, Company Expenses, Loans, Accounts, Categories, Rules, Statement Imports).
+- Generates JSON envelope with schema version (1), unique backup UUID, ISO timestamp, transaction count, and SHA-256 integrity checksum.
+- Validates payload before upload.
+- Uploads to Google Drive without storing financial JSON in Supabase.
+
+C. RESTORE FROM BACKUP
+- Selects current backup from Google Drive or local storage.
+- Validates schema version and checksum before importing.
+- Executes transactional restore (`@Transaction`) in Room DB, preventing partial database corruption on interrupted imports.
+- Refreshes all UI screens reactively upon completion.
+
+D. HISTORICAL VERSION RECOVERY
+- Backup History Screen: Lists historical snapshots from Google Drive (`Yosan-Backup/versions/backup-vXXXX.json`).
+- Shows version number, timestamp, and transaction count.
+- Allows user to restore any historical snapshot transactionally.
+
+E. EXCEL TWO-WAY SYNC
+- Export to Excel: Generates formatted `.xlsx` workbook containing all transactions.
+- Import from Excel: Validates XLSX structure, previews rows, detects duplicates via composite key, and merges records safely.
+
+F. UNDO OPTION
+- In-memory undo stack records recent transaction deletions or bulk operations.
+- Snackbar action allows user to undo recent actions within 10 seconds, safely restoring records without duplication.
+
+6. SYSTEM AND UPDATES
+
+A. CHECK FOR UPDATES
+- `UpdateManager` connects to release endpoint / GitHub releases.
+- Compares installed version code with latest release.
+- Displays update dialog with release notes, download button, and current version info.
+
+B. FEEDBACK
+- Launches email intent to developer support (`mailto:support@yosanfinance.com` or developer contact) pre-populating app version and OS information, excluding sensitive financial data.
+
+7. DANGER ZONE
+
+A. DELETE ACCOUNT
+- Clearly separated red-themed destructive section.
+- Explicit confirmation dialog explaining that account deletion permanently removes user cloud profile and Supabase auth records.
+- Distinguishes deleting cloud account from deleting local offline financial data.
+
+B. LOGOUT
+- Signs out of Supabase authentication session.
+- Clears session tokens and in-memory caches.
+- Navigates cleanly to Onboarding / Login screen.
+- Retains local database safely unless user explicitly chooses to clear local data.
+
+8. DETAILS ABOUT THE DEVELOPER
+- Developer: Rooparaj Balasundaram / Yosan.
+- Application: Yosan Finance (Version 1.0.0, Build 1).
+- Official links: Project GitHub, Developer Website, Support Contact.
+- Legal & Compliance: In-app Privacy Policy dialog and Terms of Service.
+
+9. SETTINGS PERSISTENCE AND SECURITY
+- Preferences Storage: `AppPreferences` wraps Android SharedPreferences / EncryptedSharedPreferences for settings storage.
+- Zero Secret Logging: Auth tokens, refresh tokens, and passwords are never logged or exported.
+- Reactive UI: Preference changes immediately emit StateFlow updates across all active composables.
+
+10. TESTING REQUIREMENTS & RESULTS
+Verified by automated unit tests in `SettingsAndPreferencesTest.kt`:
+- `testThemeModeResolution`: Verified LIGHT, DARK, and SYSTEM resolution.
+- `testAppPreferencesPersistence`: Verified theme, biometrics, and timeout persistence.
+- `testCategorySystemProtectionAndValidation`: Verified system category protection and duplicate detection.
+- `testAccountSafeReassignmentLogic`: Verified account deletion guards against linked transactions.
+
+11. IMPLEMENTATION WORKFLOW & ARCHITECTURE
+Key Files:
+- UI: `app/src/main/java/com/example/features/settings/SettingsScreen.kt`
+- Preferences: `app/src/main/java/com/example/utils/AppPreferences.kt`
+- Backup Engine: `app/src/main/java/com/example/utils/BackupService.kt`
+- Biometrics: `app/src/main/java/com/example/features/auth/BiometricAuthManager.kt`
+- Updater: `app/src/main/java/com/example/features/updater/UpdateManager.kt`
+- Tests: `app/src/test/java/com/example/SettingsAndPreferencesTest.kt`
+
+DEFINITION OF DONE
+- All 8 settings sections are fully implemented, functional, and organized.
+- Profile and Drive connection statuses reflect real state.
+- System categories are protected; custom categories validate duplicates and usage.
+- Privacy blur, dark mode, and biometric lock operate seamlessly.
+- Backup, restore, version history, and Excel sync operate safely with SHA-256 verification.
+- Account deletion and logout are completely decoupled and safe.
+- Unit tests pass with 100% success.
+
+PRIORITY
+Prioritizes data integrity, user privacy, non-destructive defaults, and robust authentication security across all settings workflows.

@@ -25,10 +25,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.local.entity.LoanEntity
 import com.example.data.local.entity.LoanStatus
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
+import com.example.features.reports.FinancialCalculationService
 import com.example.features.reports.FinancialInsight
 import com.example.features.reports.InsightType
 import com.example.features.updater.UpdateManager
@@ -94,14 +98,27 @@ fun DashboardScreen(
         DashboardCardConfigManager.parse(userProfile?.dashboardCardsConfig)
     }
 
-    val greeting = remember {
-        val calendar = java.util.Calendar.getInstance()
-        when (calendar.get(java.util.Calendar.HOUR_OF_DAY)) {
-            in 5..11 -> "Good Morning,"
-            in 12..16 -> "Good Afternoon,"
-            in 17..21 -> "Good Evening,"
-            else -> "Good Night,"
+    var resumeTrigger by remember { mutableStateOf(0L) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                resumeTrigger = System.currentTimeMillis()
+            }
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val greeting = remember(resumeTrigger) {
+        FinancialCalculationService.getGreeting()
+    }
+
+    val userName = remember(userProfile?.name) {
+        userProfile?.name?.trim()?.takeIf { it.isNotBlank() }
     }
 
     LazyColumn(
@@ -110,7 +127,7 @@ fun DashboardScreen(
             .testTag("dashboard_screen"),
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
-        // Top Header & User Greeting
+        // Top Header & User Greeting & Quick Actions
         item(key = "dashboard_header") {
             Column(
                 modifier = Modifier
@@ -119,41 +136,64 @@ fun DashboardScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = greeting,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text(
-                            text = userProfile?.name ?: "Personal Finance",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
+                        if (userName != null) {
+                            Text(
+                                text = userName,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalIconButton(
+                            onClick = onOpenAiChat,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "AI Financial Assistant",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onOpenAddSheet,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AddCircleOutline,
+                                contentDescription = "Add Transaction",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
                 }
             }
         }
 
 
-        // If data is still loading from local DB, don't flash the import card
+
+
+        // If data is still loading from local DB, show skeleton loading
         if (!isDataLoaded) {
-            item(key = "dashboard_loading_placeholder") {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                    )
-                }
+            item(key = "dashboard_skeleton_loading") {
+                SkeletonDashboardLoading()
             }
         } else if (allTransactions.isEmpty() && userProfile?.isOnboardingCompleted != true) {
             item(key = "dashboard_import_box") {
@@ -335,16 +375,11 @@ fun DashboardScreen(
                         // 2. Official Expense Card
                         DashboardCardType.OFFICIAL_EXPENSE -> {
                             item {
-                                val outstandingClaims = remember(companyExpenses) { companyExpenses.filter { !it.isReimbursed }.sumOf { it.amount } }
-                                val reimbursedClaims = remember(companyExpenses) { companyExpenses.filter { it.isReimbursed }.sumOf { it.amount } }
-                                val officialTxs = remember(allTransactions) {
-                                    allTransactions.filter {
-                                        it.categoryName.equals("Official Expense", ignoreCase = true) ||
-                                                it.notes.contains("Company", ignoreCase = true) ||
-                                                it.description.contains("Company", ignoreCase = true) ||
-                                                it.description.contains("Official", ignoreCase = true)
-                                    }
-                                }
+                                val officialMetrics = summary.officialExpenseMetrics
+                                val outstanding = officialMetrics.outstandingReimbursement
+                                val reimbursed = officialMetrics.totalReimbursed
+                                val remainingAdvance = officialMetrics.remainingAdvance
+
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -385,30 +420,39 @@ fun DashboardScreen(
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                     Text(
-                                                        text = "${companyExpenses.size} claims • ${officialTxs.size} transactions",
+                                                        text = "${companyExpenses.size} recorded",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
                                             }
+
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                contentDescription = "Open Official Expenses",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(16.dp)
+                                            )
                                         }
+
                                         Spacer(modifier = Modifier.height(12.dp))
+
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Column {
                                                 Text(
-                                                    text = "Outstanding Claims",
+                                                    text = "Outstanding Reimbursement",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 PrivacyAmountText(
-                                                    amount = outstandingClaims,
+                                                    amount = outstanding,
                                                     style = MaterialTheme.typography.titleLarge,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = OutstandingAmber,
+                                                    color = if (outstanding > 0) OutstandingAmber else MaterialTheme.colorScheme.onSurface,
                                                     isRevealed = isRevealed,
                                                     isPrivacyEnabled = privacyEnabled,
                                                     onTap = { viewModel.revealAmountsTemporarily() }
@@ -416,13 +460,13 @@ fun DashboardScreen(
                                             }
                                             Column(horizontalAlignment = Alignment.End) {
                                                 Text(
-                                                    text = "Reimbursed",
+                                                    text = "Total Reimbursed",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 PrivacyAmountText(
-                                                    amount = reimbursedClaims,
+                                                    amount = reimbursed,
                                                     style = MaterialTheme.typography.titleLarge,
                                                     fontWeight = FontWeight.Bold,
                                                     color = IncomeGreen,
@@ -432,6 +476,48 @@ fun DashboardScreen(
                                                 )
                                             }
                                         }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "Claims Status",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                if (officialMetrics.advancesReceived > 0 || remainingAdvance > 0) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            text = "Advance: ",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                        PrivacyAmountText(
+                                                            amount = remainingAdvance,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = LendingIndigo,
+                                                            isRevealed = isRevealed,
+                                                            isPrivacyEnabled = privacyEnabled,
+                                                            onTap = { viewModel.revealAmountsTemporarily() }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Text(
+                                                text = "${officialMetrics.pendingClaimsCount} pending • ${officialMetrics.appliedClaimsCount} applied • ${officialMetrics.approvedClaimsCount} approved",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -440,22 +526,10 @@ fun DashboardScreen(
                         // 3. Lend Card
                         DashboardCardType.LEND -> {
                             item {
-                                val lendTotal = remember(loans) {
-                                    loans.filter { it.status != LoanStatus.PAID && it.status != LoanStatus.CANCELLED }.sumOf { it.remainingAmount }
-                                }
-                                val totalRepaidLend = remember(loans) {
-                                    loans.sumOf { it.amountRepaid }
-                                }
-                                val lendTxs = remember(allTransactions) {
-                                    allTransactions.filter {
-                                        it.transactionType != TransactionType.BORROWING &&
-                                        !it.categoryName.contains("Borrow", ignoreCase = true) &&
-                                        (it.transactionType == TransactionType.LENDING ||
-                                                it.linkedLoanId != null ||
-                                                it.categoryName.contains("Lend", ignoreCase = true) ||
-                                                it.categoryName.contains("Loan", ignoreCase = true))
-                                    }
-                                }
+                                val lendMetrics = summary.lendingMetrics
+                                val pendingCollection = lendMetrics.outstandingLending
+                                val totalRepaid = lendMetrics.totalRepaid
+
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -496,12 +570,19 @@ fun DashboardScreen(
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                     Text(
-                                                        text = "${loans.filter { it.remainingAmount > 0 }.size} active entries",
+                                                        text = "${lendMetrics.activeLoansCount} active loans • ${lendMetrics.settledLoansCount} settled",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
                                             }
+
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                contentDescription = "Open Lending",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(16.dp)
+                                            )
                                         }
                                         Spacer(modifier = Modifier.height(12.dp))
                                         Row(
@@ -516,7 +597,7 @@ fun DashboardScreen(
                                                 )
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 PrivacyAmountText(
-                                                    amount = lendTotal,
+                                                    amount = pendingCollection,
                                                     style = MaterialTheme.typography.titleLarge,
                                                     fontWeight = FontWeight.Bold,
                                                     color = IncomeGreen,
@@ -533,7 +614,7 @@ fun DashboardScreen(
                                                 )
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 PrivacyAmountText(
-                                                    amount = totalRepaidLend,
+                                                    amount = totalRepaid,
                                                     style = MaterialTheme.typography.titleLarge,
                                                     fontWeight = FontWeight.Bold,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -551,16 +632,10 @@ fun DashboardScreen(
                         // 4. Borrow Card
                         DashboardCardType.BORROW -> {
                             item {
-                                val borrowTxs = remember(allTransactions) {
-                                    allTransactions.filter {
-                                        it.transactionType == TransactionType.BORROWING ||
-                                                it.categoryName.contains("Borrow", ignoreCase = true) ||
-                                                it.categoryName.contains("Debt", ignoreCase = true)
-                                    }
-                                }
-                                val borrowTotal = remember(borrowTxs) {
-                                    borrowTxs.sumOf { if (it.creditAmount > 0.0) it.creditAmount else it.amount }
-                                }
+                                val borrowMetrics = summary.borrowingMetrics
+                                val outstandingDebt = borrowMetrics.outstandingBorrowing
+                                val totalRepaid = borrowMetrics.totalRepaid
+
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -601,29 +676,60 @@ fun DashboardScreen(
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                     Text(
-                                                        text = "${borrowTxs.size} borrowed records",
+                                                        text = "${borrowMetrics.activeBorrowCount} active debts • ${borrowMetrics.settledBorrowCount} settled",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
                                             }
+
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                                contentDescription = "Open Borrowing",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(16.dp)
+                                            )
                                         }
                                         Spacer(modifier = Modifier.height(12.dp))
-                                        Text(
-                                            text = "Total Borrowed / Debt",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        PrivacyAmountText(
-                                            amount = borrowTotal,
-                                            style = MaterialTheme.typography.titleLarge,
-                                            fontWeight = FontWeight.Bold,
-                                            color = OutstandingAmber,
-                                            isRevealed = isRevealed,
-                                            isPrivacyEnabled = privacyEnabled,
-                                            onTap = { viewModel.revealAmountsTemporarily() }
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column {
+                                                Text(
+                                                    text = "Outstanding Debt",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = outstandingDebt,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (outstandingDebt > 0) ExpenseRed else IncomeGreen,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                Text(
+                                                    text = "Total Repaid",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                PrivacyAmountText(
+                                                    amount = totalRepaid,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = IncomeGreen,
+                                                    isRevealed = isRevealed,
+                                                    isPrivacyEnabled = privacyEnabled,
+                                                    onTap = { viewModel.revealAmountsTemporarily() }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -765,7 +871,7 @@ fun DashboardScreen(
                                                         fontWeight = FontWeight.Bold
                                                     )
                                                     Text(
-                                                        text = "${transferTxs.size} self transfers",
+                                                        text = "${transferTxs.size} self transfers • Net ₹0 impact",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
@@ -774,7 +880,7 @@ fun DashboardScreen(
                                         }
                                         Spacer(modifier = Modifier.height(12.dp))
                                         Text(
-                                            text = "Total Inter-Account Transfers",
+                                            text = "Total Inter-Account Transfers (Excluded from Spending/Income)",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )

@@ -45,6 +45,10 @@ import com.example.features.transactions.PersonalExpensesScreen
 import com.example.features.transactions.InvestmentsScreen
 import com.example.features.transactions.TransfersScreen
 import com.example.features.ai.FinancialChatSheet
+import com.example.features.walkthrough.IntroductionNoteDialog
+import com.example.features.walkthrough.UserWalkthroughDialog
+import com.example.utils.AppPreferences
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 
 enum class MainTab(
@@ -69,6 +73,9 @@ fun MainContainerScreen(
     viewModel: FinanceViewModel = viewModel(),
     authViewModel: AuthViewModel? = null
 ) {
+    val context = LocalContext.current
+    val appPreferences = remember { AppPreferences(context) }
+
     var currentTab by remember { mutableStateOf(MainTab.DASHBOARD) }
     var currentSubScreen by remember { mutableStateOf(SubScreen.NONE) }
 
@@ -78,6 +85,9 @@ fun MainContainerScreen(
     var addSheetTab by remember { mutableStateOf(AddTab.EXPENSE) }
     var preselectedLoanForRepay by remember { mutableStateOf<LoanEntity?>(null) }
     var selectedTransactionForDetail by remember { mutableStateOf<TransactionEntity?>(null) }
+
+    var showIntroNoteDialog by remember { mutableStateOf(!appPreferences.isIntroNoteDismissed) }
+    var showUserWalkthroughDialog by remember { mutableStateOf(false) }
 
     val smartRulePrompt by viewModel.smartRulePrompt.collectAsState()
     val uiMessage by viewModel.uiMessage.collectAsState()
@@ -133,10 +143,12 @@ fun MainContainerScreen(
         )
     }
 
-    val isBackNavEnabled = currentSubScreen != SubScreen.NONE || currentTab != MainTab.DASHBOARD || showAddSheet || selectedTransactionForDetail != null
+    val isBackNavEnabled = showIntroNoteDialog || showUserWalkthroughDialog || currentSubScreen != SubScreen.NONE || currentTab != MainTab.DASHBOARD || showAddSheet || selectedTransactionForDetail != null
 
     BackHandler(enabled = isBackNavEnabled) {
         when {
+            showIntroNoteDialog -> showIntroNoteDialog = false
+            showUserWalkthroughDialog -> showUserWalkthroughDialog = false
             selectedTransactionForDetail != null -> selectedTransactionForDetail = null
             showAddSheet -> {
                 showAddSheet = false
@@ -149,51 +161,7 @@ fun MainContainerScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        floatingActionButton = {
-            if (currentSubScreen == SubScreen.NONE && (currentTab == MainTab.DASHBOARD || currentTab == MainTab.TRANSACTIONS)) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // Chatbot Floating Action Button (placed above the + icon)
-                    SmallFloatingActionButton(
-                        onClick = { showAiChatSheet = true },
-                        shape = CircleShape,
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        elevation = FloatingActionButtonDefaults.elevation(
-                            defaultElevation = 4.dp,
-                            pressedElevation = 2.dp
-                        ),
-                        modifier = Modifier
-                            .size(46.dp)
-                            .testTag("chatbot_fab")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = "AI Finance Chatbot",
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    // Main Add (+) Floating Action Button
-                    FloatingActionButton(
-                        onClick = {
-                            addSheetTab = AddTab.EXPENSE
-                            preselectedLoanForRepay = null
-                            showAddSheet = true
-                        },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.testTag("add_transaction_fab")
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Transaction")
-                    }
-                }
-            }
-        },
         topBar = {
 
             if (currentSubScreen != SubScreen.NONE) {
@@ -425,7 +393,12 @@ fun MainContainerScreen(
                             MainTab.TRANSACTIONS -> TransactionsScreen(
                                 viewModel = viewModel,
                                 onTransactionClick = { tx -> selectedTransactionForDetail = tx },
-                                onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT }
+                                onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
+                                onOpenAddSheet = {
+                                    addSheetTab = AddTab.EXPENSE
+                                    preselectedLoanForRepay = null
+                                    showAddSheet = true
+                                }
                             )
 
                             MainTab.SETTINGS -> SettingsScreen(
@@ -436,7 +409,9 @@ fun MainContainerScreen(
                                 onNavigateToReports = { currentTab = MainTab.REPORTS },
                                 onNavigateToImport = { currentSubScreen = SubScreen.IMPORT_STATEMENT },
                                 onNavigateToLending = { currentSubScreen = SubScreen.LENDING },
-                                onNavigateToExcelSync = { currentSubScreen = SubScreen.EXCEL_SYNC }
+                                onNavigateToExcelSync = { currentSubScreen = SubScreen.EXCEL_SYNC },
+                                onOpenWalkthrough = { showUserWalkthroughDialog = true },
+                                onOpenIntroNote = { showIntroNoteDialog = true }
                             )
 
                             MainTab.REPORTS -> ReportsScreen(viewModel = viewModel)
@@ -485,6 +460,38 @@ fun MainContainerScreen(
                         viewModel.acceptSmartRule(prompt.copy(keyword = editedKeyword))
                     },
                     onDismiss = { viewModel.dismissSmartRule() }
+                )
+            }
+
+            // Introduction & Welcome Note Dialog (shown on first launch, dismissable)
+            if (showIntroNoteDialog) {
+                IntroductionNoteDialog(
+                    onGetStarted = {
+                        appPreferences.isIntroNoteDismissed = true
+                        showIntroNoteDialog = false
+                    },
+                    onOpenWalkthrough = {
+                        appPreferences.isIntroNoteDismissed = true
+                        showIntroNoteDialog = false
+                        showUserWalkthroughDialog = true
+                    },
+                    onSkip = {
+                        appPreferences.isIntroNoteDismissed = true
+                        showIntroNoteDialog = false
+                    }
+                )
+            }
+
+            // In-App User Walkthrough Dialog (12 modules + Settings guide, reopenable)
+            if (showUserWalkthroughDialog) {
+                UserWalkthroughDialog(
+                    onDismissRequest = { showUserWalkthroughDialog = false },
+                    onCompleted = { dontShowAgain ->
+                        if (dontShowAgain) {
+                            appPreferences.isWalkthroughCompleted = true
+                        }
+                        showUserWalkthroughDialog = false
+                    }
                 )
             }
         }

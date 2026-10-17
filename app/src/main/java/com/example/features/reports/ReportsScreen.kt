@@ -1,27 +1,32 @@
 package com.example.features.reports
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.pdf.PdfRenderer
+import android.net.Uri
 import android.os.ParcelFileDescriptor
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,19 +34,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import com.example.data.local.entity.TransactionEntity
+import com.example.data.local.entity.TransactionType
 import com.example.features.transactions.FinanceViewModel
+import com.example.ui.components.*
+import com.example.ui.theme.*
+import com.example.utils.CurrencyFormatter
+import com.example.utils.DateUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(
     viewModel: FinanceViewModel,
@@ -49,38 +64,107 @@ fun ReportsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val summary by viewModel.dashboardSummary.collectAsState()
+
+    // ViewModel Flows
+    val allTransactions by viewModel.allTransactions.collectAsState()
+    val loans by viewModel.loans.collectAsState()
+    val companyExpenses by viewModel.companyExpenses.collectAsState()
+    val accounts by viewModel.accounts.collectAsState()
+    val categories by viewModel.categories.collectAsState()
+    val userProfile by viewModel.userProfile.collectAsState()
+    val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
     val categoryBreakdown by viewModel.categoryBreakdown.collectAsState()
     val categoryIncomeBreakdown by viewModel.categoryIncomeBreakdown.collectAsState()
     val monthlyTrends by viewModel.monthlyTrends.collectAsState()
-    val loans by viewModel.loans.collectAsState()
-    val allTransactions by viewModel.allTransactions.collectAsState()
-    val companyExpenses by viewModel.companyExpenses.collectAsState()
-    val userProfile by viewModel.userProfile.collectAsState()
-    val isRevealed by viewModel.isAmountTemporarilyRevealed.collectAsState()
+
     val privacyEnabled = userProfile?.isPrivacyBlurEnabled ?: true
     val isMasked = privacyEnabled && !isRevealed
+
+    // Report State
+    var selectedReportType by remember { mutableStateOf(ReportType.OVERALL_SUMMARY) }
+    var selectedDateRange by remember { mutableStateOf(DateRangeFilter.ALL_TIME) }
+    var customStartDate by remember { mutableStateOf("") }
+    var customEndDate by remember { mutableStateOf("") }
+    var showCustomDateDialog by remember { mutableStateOf(false) }
+    var selectedAccountId by remember { mutableStateOf<Long?>(null) }
+    var selectedCategoryName by remember { mutableStateOf<String?>(null) }
+    var selectedTab by remember { mutableIntStateOf(0) } // 0 = PDF Document Preview, 1 = Data Records
+
+    var lastRefreshedTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var isRefreshing by remember { mutableStateOf(false) }
 
     var pdfPreviewBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     var currentPageIndex by remember { mutableIntStateOf(0) }
     var generatedFile by remember { mutableStateOf<File?>(null) }
     var isRendering by remember { mutableStateOf(true) }
 
-    // Generate & Render PDF Preview
-    LaunchedEffect(summary, categoryBreakdown, categoryIncomeBreakdown, monthlyTrends, loans, allTransactions, companyExpenses, userProfile?.name) {
+    // Period Label
+    val periodLabel = remember(selectedDateRange, customStartDate, customEndDate) {
+        when (selectedDateRange) {
+            DateRangeFilter.ALL_TIME -> "All Time"
+            DateRangeFilter.TODAY -> "Today (${DateUtils.getCurrentDate()})"
+            DateRangeFilter.THIS_WEEK -> "This Week"
+            DateRangeFilter.THIS_MONTH -> "This Month"
+            DateRangeFilter.THIS_YEAR -> "This Year"
+            DateRangeFilter.CUSTOM -> {
+                if (customStartDate.isNotBlank() && customEndDate.isNotBlank()) "$customStartDate to $customEndDate"
+                else if (customStartDate.isNotBlank()) "From $customStartDate"
+                else "Custom Range"
+            }
+        }
+    }
+
+    // Filtered Records based on user criteria
+    val filteredTransactions = remember(allTransactions, selectedDateRange, customStartDate, customEndDate, selectedAccountId, selectedCategoryName) {
+        allTransactions.filter { tx ->
+            ExportService.matchesDateRange(tx.transactionDate, selectedDateRange, customStartDate, customEndDate) &&
+                    (selectedAccountId == null || tx.accountId == selectedAccountId) &&
+                    (selectedCategoryName == null || tx.categoryName.equals(selectedCategoryName, ignoreCase = true))
+        }
+    }
+
+    val filteredLoans = remember(loans, selectedDateRange, customStartDate, customEndDate) {
+        loans.filter { loan ->
+            ExportService.matchesDateRange(loan.lentDate, selectedDateRange, customStartDate, customEndDate)
+        }
+    }
+
+    val filteredCompanyExpenses = remember(companyExpenses, selectedDateRange, customStartDate, customEndDate) {
+        companyExpenses.filter { exp ->
+            ExportService.matchesDateRange(exp.date, selectedDateRange, customStartDate, customEndDate)
+        }
+    }
+
+    val filteredSummary = remember(filteredTransactions, filteredLoans, filteredCompanyExpenses, accounts) {
+        FinancialCalculationService.calculateSummary(
+            transactions = filteredTransactions,
+            loans = filteredLoans,
+            companyExpenses = filteredCompanyExpenses,
+            accounts = accounts
+        )
+    }
+
+    // Regenerate & Render PDF whenever filters, report type, or sync time change
+    LaunchedEffect(
+        selectedReportType, selectedDateRange, customStartDate, customEndDate,
+        selectedAccountId, selectedCategoryName, filteredTransactions, filteredLoans,
+        filteredCompanyExpenses, userProfile?.name, lastRefreshedTime
+    ) {
         isRendering = true
         withContext(Dispatchers.IO) {
             try {
                 val file = ExportService.generatePdfReport(
                     context = context,
-                    summary = summary,
+                    summary = filteredSummary,
                     categoryExpenseBreakdown = categoryBreakdown,
                     categoryIncomeBreakdown = categoryIncomeBreakdown,
                     monthlyTrends = monthlyTrends,
-                    loans = loans,
-                    allTransactions = allTransactions,
-                    companyExpenses = companyExpenses,
-                    userName = userProfile?.name
+                    loans = filteredLoans,
+                    allTransactions = filteredTransactions,
+                    companyExpenses = filteredCompanyExpenses,
+                    userName = userProfile?.name,
+                    reportType = selectedReportType,
+                    periodLabel = periodLabel
                 )
                 generatedFile = file
 
@@ -111,22 +195,30 @@ fun ReportsScreen(
         }
     }
 
+    // SAF Native Document Saver
+    val savePdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri: Uri? ->
+        if (uri != null && generatedFile != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        generatedFile!!.inputStream().use { inp ->
+                            inp.copyTo(out)
+                        }
+                    }
+                    viewModel.showMessage("Report PDF saved successfully!")
+                } catch (e: Exception) {
+                    viewModel.showMessage("Failed to save PDF: ${e.localizedMessage}")
+                }
+            }
+        }
+    }
+
     fun sharePdfReport() {
         scope.launch {
             try {
-                val file = generatedFile ?: withContext(Dispatchers.IO) {
-                    ExportService.generatePdfReport(
-                        context = context,
-                        summary = summary,
-                        categoryExpenseBreakdown = categoryBreakdown,
-                        categoryIncomeBreakdown = categoryIncomeBreakdown,
-                        monthlyTrends = monthlyTrends,
-                        loans = loans,
-                        allTransactions = allTransactions,
-                        companyExpenses = companyExpenses,
-                        userName = userProfile?.name
-                    )
-                }
+                val file = generatedFile ?: return@launch
                 val authority = "${context.packageName}.fileprovider"
                 val uri = FileProvider.getUriForFile(context, authority, file)
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -134,15 +226,12 @@ fun ReportsScreen(
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                val chooser = Intent.createChooser(sendIntent, "Share PDF Report").apply {
+                val chooser = Intent.createChooser(sendIntent, "Share ${selectedReportType.displayName}").apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(chooser)
             } catch (e: Exception) {
-                if (com.example.BuildConfig.DEBUG) {
-                    android.util.Log.e("ReportsScreen", "Could not share PDF", e)
-                }
-                viewModel.showMessage("Could not share PDF: ${e.localizedMessage ?: "Please install a PDF sharing app"}")
+                viewModel.showMessage("Could not share PDF: ${e.localizedMessage ?: "No sharing app found"}")
             }
         }
     }
@@ -150,347 +239,618 @@ fun ReportsScreen(
     fun openPdfReport() {
         scope.launch {
             try {
-                val file = generatedFile ?: withContext(Dispatchers.IO) {
-                    ExportService.generatePdfReport(
-                        context = context,
-                        summary = summary,
-                        categoryExpenseBreakdown = categoryBreakdown,
-                        categoryIncomeBreakdown = categoryIncomeBreakdown,
-                        monthlyTrends = monthlyTrends,
-                        loans = loans,
-                        allTransactions = allTransactions,
-                        companyExpenses = companyExpenses,
-                        userName = userProfile?.name
-                    )
-                }
+                val file = generatedFile ?: return@launch
                 val authority = "${context.packageName}.fileprovider"
                 val uri = FileProvider.getUriForFile(context, authority, file)
                 val viewIntent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, "application/pdf")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                val chooser = Intent.createChooser(viewIntent, "Open PDF Report").apply {
+                val chooser = Intent.createChooser(viewIntent, "Open ${selectedReportType.displayName}").apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(chooser)
             } catch (e: Exception) {
-                if (com.example.BuildConfig.DEBUG) {
-                    android.util.Log.e("ReportsScreen", "Could not open PDF", e)
-                }
-                viewModel.showMessage("Could not open PDF: ${e.localizedMessage ?: "Please install a PDF viewer app"}")
+                viewModel.showMessage("Could not open PDF: ${e.localizedMessage ?: "No PDF viewer app found"}")
             }
         }
     }
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .testTag("reports_screen"),
-        contentPadding = PaddingValues(bottom = 100.dp)
+            .testTag("reports_screen")
     ) {
-        // 1. Header & Actions
-        item {
-            Column(
+        // 1. Live Sync & Refresh Bar
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Consolidated income, expense, and financial statement performance report.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Sync,
+                        contentDescription = null,
+                        tint = IncomeGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "Live Sync: Device Records Active",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Refreshed: ${DateUtils.formatDateTime(lastRefreshedTime)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                IconButton(
+                    onClick = {
+                        isRefreshing = true
+                        lastRefreshedTime = System.currentTimeMillis()
+                        viewModel.showMessage("Reports synced with latest financial records.")
+                        isRefreshing = false
+                    },
+                    modifier = Modifier.size(32.dp)
                 ) {
-                    Button(
-                        onClick = { sharePdfReport() },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Share PDF")
-                    }
-
-                    OutlinedButton(
-                        onClick = { openPdfReport() },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Open File")
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Sync Data",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
         }
 
-        // 2. In-App Live PDF Document Preview
-        item {
-            Column(
+        // 2. Report Type Selector Chips
+        Text(
+            text = "Report Type",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ReportType.values().forEach { rType ->
+                val isSelected = selectedReportType == rType
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { selectedReportType = rType },
+                    label = { Text(rType.displayName) },
+                    leadingIcon = if (isSelected) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                    } else null
+                )
+            }
+        }
+
+        // 3. Date Range Filter Chips
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DateRangeFilter.values().forEach { dFilter ->
+                val isSelected = selectedDateRange == dFilter
+                FilterChip(
+                    selected = isSelected,
+                    onClick = {
+                        selectedDateRange = dFilter
+                        if (dFilter == DateRangeFilter.CUSTOM) {
+                            showCustomDateDialog = true
+                        }
+                    },
+                    label = {
+                        Text(
+                            if (dFilter == DateRangeFilter.CUSTOM && customStartDate.isNotBlank()) {
+                                "$customStartDate -> $customEndDate"
+                            } else {
+                                dFilter.displayName
+                            }
+                        )
+                    },
+                    leadingIcon = if (isSelected) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                    } else null
+                )
+            }
+        }
+
+        // 4. Action Buttons: Save PDF, Share PDF, Open File
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = {
+                    val defName = generatedFile?.name ?: "Yosan_Report.pdf"
+                    savePdfLauncher.launch(defName)
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Save PDF", fontSize = 12.sp)
+            }
+
+            OutlinedButton(
+                onClick = { sharePdfReport() },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Share", fontSize = 12.sp)
+            }
+
+            OutlinedButton(
+                onClick = { openPdfReport() },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Open", fontSize = 12.sp)
+            }
+        }
+
+        // 5. Segmented Tabs: [ PDF Document Preview ] vs [ Data Records ]
+        val recordCount = when (selectedReportType) {
+            ReportType.PERSONAL_EXPENSE -> filteredTransactions.count { it.transactionType == TransactionType.EXPENSE }
+            ReportType.COMPANY_EXPENSE -> filteredCompanyExpenses.size
+            ReportType.INCOME -> filteredTransactions.count { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
+            ReportType.CATEGORY_SPENDING -> categoryBreakdown.size
+            ReportType.BORROWING -> ExportService.computeBorrowSummaries(filteredTransactions).size
+            ReportType.LENDING -> filteredLoans.size
+            ReportType.INVESTMENT -> filteredTransactions.count { it.transactionType == TransactionType.INVESTMENT }
+            ReportType.TRANSFERS -> filteredTransactions.count { it.transactionType == TransactionType.TRANSFER }
+            ReportType.OVERALL_SUMMARY -> filteredTransactions.size
+        }
+
+        TabRow(
+            selectedTabIndex = selectedTab,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("PDF Preview") },
+                icon = { Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp)) }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("Records ($recordCount)") },
+                icon = { Icon(Icons.Default.ListAlt, contentDescription = null, modifier = Modifier.size(16.dp)) }
+            )
+        }
+
+        // 6. Tab Content
+        if (selectedTab == 0) {
+            // Tab 0: In-App PDF Document Preview
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .weight(1f),
+                contentPadding = PaddingValues(16.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.PictureAsPdf,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "Document Preview",
-                            style = MaterialTheme.typography.titleMedium,
+                            text = "${selectedReportType.displayName} • $periodLabel",
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
-                    }
-                    if (isMasked) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.clickable { viewModel.revealAmountsTemporarily() }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+
+                        if (pdfPreviewBitmaps.size > 1) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(8.dp)
                             ) {
-                                Icon(
-                                    Icons.Default.Lock,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(12.dp),
-                                    tint = MaterialTheme.colorScheme.onErrorContainer
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Blurred • Tap to reveal",
+                                    text = "Page ${currentPageIndex + 1} of ${pdfPreviewBitmaps.size}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                         }
-                    } else if (pdfPreviewBitmaps.size > 1) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                text = "Page ${currentPageIndex + 1} of ${pdfPreviewBitmaps.size}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (isRendering && pdfPreviewBitmaps.isEmpty()) {
+                        SkeletonReportsLoading(modifier = Modifier.fillMaxWidth())
+                    } else if (pdfPreviewBitmaps.isNotEmpty()) {
+                        // Multi-page navigation controls
+                        if (pdfPreviewBitmaps.size > 1) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilledTonalButton(
+                                    onClick = { if (currentPageIndex > 0) currentPageIndex-- },
+                                    enabled = currentPageIndex > 0,
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Prev", modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Previous", fontSize = 12.sp)
+                                }
+
+                                Text(
+                                    text = "Page ${currentPageIndex + 1} / ${pdfPreviewBitmaps.size}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+
+                                FilledTonalButton(
+                                    onClick = { if (currentPageIndex < pdfPreviewBitmaps.size - 1) currentPageIndex++ },
+                                    enabled = currentPageIndex < pdfPreviewBitmaps.size - 1,
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Next", fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next", modifier = Modifier.size(14.dp))
+                                }
+                            }
                         }
-                    } else {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                            shape = RoundedCornerShape(8.dp)
+
+                        val currentBmp = pdfPreviewBitmaps.getOrNull(currentPageIndex) ?: pdfPreviewBitmaps.first()
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable(enabled = isMasked) { viewModel.revealAmountsTemporarily() },
+                            contentAlignment = Alignment.Center
                         ) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .shadow(4.dp, RoundedCornerShape(16.dp))
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .blur(if (isMasked) 28.dp else 0.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            ) {
+                                Image(
+                                    bitmap = currentBmp.asImageBitmap(),
+                                    contentDescription = "PDF Report Preview",
+                                    contentScale = ContentScale.FillWidth,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                )
+                            }
+
+                            if (isMasked) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                                    shadowElevation = 8.dp,
+                                    border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                                    modifier = Modifier
+                                        .size(68.dp)
+                                        .clickable { viewModel.revealAmountsTemporarily() }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Report Blurred - Tap to reveal",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Thumbnail strip
+                        if (pdfPreviewBitmaps.size > 1) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                itemsIndexed(pdfPreviewBitmaps) { idx, bmp ->
+                                    val isSelected = idx == currentPageIndex
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { currentPageIndex = idx }
+                                            .border(
+                                                width = if (isSelected) 2.dp else 1.dp,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .padding(4.dp)
+                                    ) {
+                                        Image(
+                                            bitmap = bmp.asImageBitmap(),
+                                            contentDescription = "Thumb ${idx + 1}",
+                                            modifier = Modifier
+                                                .height(70.dp)
+                                                .width(50.dp)
+                                                .clip(RoundedCornerShape(4.dp)),
+                                            contentScale = ContentScale.Fit
+                                        )
+                                        Text(text = "P ${idx + 1}", fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Tab 1: On-Screen Data Records List
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Summary Metric Card
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
                             Text(
-                                text = "A4 Format • Live",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                text = selectedReportType.displayName,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
+                            Text(
+                                text = "Period: $periodLabel • $recordCount entries",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            when (selectedReportType) {
+                                ReportType.PERSONAL_EXPENSE -> {
+                                    val total = filteredTransactions.filter { it.transactionType == TransactionType.EXPENSE }
+                                        .sumOf { if (it.debitAmount > 0) it.debitAmount else it.amount }
+                                    Text(
+                                        text = "Total Expenses: ₹${CurrencyFormatter.formatInr(total)}",
+                                        fontWeight = FontWeight.Bold,
+                                        color = ExpenseRed
+                                    )
+                                }
+                                ReportType.COMPANY_EXPENSE -> {
+                                    val total = filteredCompanyExpenses.sumOf { it.amount }
+                                    val rem = filteredCompanyExpenses.filter { it.isReimbursed }.sumOf { it.amount }
+                                    Text(text = "Total Claimed: ₹${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
+                                    Text(text = "Reimbursed: ₹${CurrencyFormatter.formatInr(rem)}", color = IncomeGreen, fontWeight = FontWeight.SemiBold)
+                                }
+                                ReportType.INCOME -> {
+                                    val total = filteredTransactions.filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
+                                        .sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+                                    Text(
+                                        text = "Total Income: ₹${CurrencyFormatter.formatInr(total)}",
+                                        fontWeight = FontWeight.Bold,
+                                        color = IncomeGreen
+                                    )
+                                }
+                                ReportType.LENDING -> {
+                                    val total = filteredLoans.sumOf { it.amount }
+                                    val due = filteredLoans.sumOf { it.remainingAmount }
+                                    Text(text = "Total Lent: ₹${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
+                                    Text(text = "Outstanding Due: ₹${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
+                                }
+                                ReportType.BORROWING -> {
+                                    val borrows = ExportService.computeBorrowSummaries(filteredTransactions)
+                                    val total = borrows.sumOf { it.totalBorrowed }
+                                    val due = borrows.sumOf { it.remainingDebt }
+                                    Text(text = "Total Borrowed: ₹${CurrencyFormatter.formatInr(total)}", fontWeight = FontWeight.Bold)
+                                    Text(text = "Outstanding Debt: ₹${CurrencyFormatter.formatInr(due)}", color = ExpenseRed, fontWeight = FontWeight.SemiBold)
+                                }
+                                else -> {
+                                    Text(
+                                        text = "Net Balance: ₹${CurrencyFormatter.formatInr(filteredSummary.currentBalance)}",
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "Total Income: ₹${CurrencyFormatter.formatInr(filteredSummary.totalIncome)}",
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = IncomeGreen
+                                    )
+                                    Text(
+                                        text = "Total Expenses: ₹${CurrencyFormatter.formatInr(filteredSummary.totalExpense)}",
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = ExpenseRed
+                                    )
+                                    Text(
+                                        text = "Total Money Lent: ₹${CurrencyFormatter.formatInr(filteredSummary.moneyLent)}",
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "Total Money Borrowed: ₹${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.totalBorrowed)}",
+                                        fontWeight = FontWeight.Bold,
+                                        color = OutstandingAmber
+                                    )
+                                    if (filteredSummary.borrowingMetrics.outstandingBorrowing > 0) {
+                                        Text(
+                                            text = "Outstanding Debt: ₹${CurrencyFormatter.formatInr(filteredSummary.borrowingMetrics.outstandingBorrowing)}",
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = ExpenseRed
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                if (isRendering && pdfPreviewBitmaps.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(420.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                    }
-                } else if (pdfPreviewBitmaps.isNotEmpty()) {
-                    // Multi-page navigation controls
-                    if (pdfPreviewBitmaps.size > 1) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            FilledTonalButton(
-                                onClick = { if (currentPageIndex > 0) currentPageIndex-- },
-                                enabled = currentPageIndex > 0,
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Page", modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Previous")
-                            }
-
-                            Text(
-                                text = "Page ${currentPageIndex + 1} / ${pdfPreviewBitmaps.size}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
-                            FilledTonalButton(
-                                onClick = { if (currentPageIndex < pdfPreviewBitmaps.size - 1) currentPageIndex++ },
-                                enabled = currentPageIndex < pdfPreviewBitmaps.size - 1,
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                            ) {
-                                Text("Next")
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Page", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-
-                    val currentBmp = pdfPreviewBitmaps.getOrNull(currentPageIndex) ?: pdfPreviewBitmaps.first()
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable(enabled = isMasked) { viewModel.revealAmountsTemporarily() }
-                    ) {
+                // Render list items
+                if (recordCount == 0) {
+                    item {
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .shadow(6.dp, RoundedCornerShape(16.dp))
-                                .clip(RoundedCornerShape(16.dp))
-                                .blur(if (isMasked) 28.dp else 0.dp),
-                            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                .padding(vertical = 24.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
                         ) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(8.dp)
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Image(
-                                    bitmap = currentBmp.asImageBitmap(),
-                                    contentDescription = "PDF Report Preview Page ${currentPageIndex + 1}",
-                                    contentScale = ContentScale.FillWidth,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
+                                Icon(
+                                    imageVector = Icons.Default.FilterListOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "No records found",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "No entries match the selected report type and filters for $periodLabel.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-
-                        if (isMasked) {
-                            Box(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f))
-                                    .clickable { viewModel.revealAmountsTemporarily() }
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
+                    }
+                } else {
+                    when (selectedReportType) {
+                        ReportType.COMPANY_EXPENSE -> {
+                            items(filteredCompanyExpenses, key = { it.id }) { exp ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                 ) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = CircleShape,
-                                        modifier = Modifier.size(60.dp)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.VisibilityOff,
-                                                contentDescription = "Hidden by Privacy Blur",
-                                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                modifier = Modifier.size(30.dp)
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(text = exp.companyName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(text = "${exp.date} • ${exp.category}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(text = "₹${CurrencyFormatter.formatInr(exp.amount)}", fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = if (exp.isReimbursed) "Reimbursed" else "Pending",
+                                                color = if (exp.isReimbursed) IncomeGreen else ExpenseRed,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    Text(
-                                        text = "Financial Privacy Mode Active",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "Tap anywhere to reveal report preview",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
                             }
                         }
-                    }
-
-                    // Multi-page thumbnail strip for fast page switching
-                    if (pdfPreviewBitmaps.size > 1) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "All Pages (${pdfPreviewBitmaps.size})",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        LazyRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            itemsIndexed(pdfPreviewBitmaps) { idx, bmp ->
-                                val isSelected = idx == currentPageIndex
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            if (isMasked) viewModel.revealAmountsTemporarily()
-                                            currentPageIndex = idx
-                                        }
-                                        .border(
-                                            width = if (isSelected) 2.dp else 1.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
-                                        .padding(4.dp)
+                        ReportType.LENDING -> {
+                            items(filteredLoans, key = { it.id }) { loan ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                                 ) {
-                                    Image(
-                                        bitmap = bmp.asImageBitmap(),
-                                        contentDescription = "Thumbnail Page ${idx + 1}",
+                                    Row(
                                         modifier = Modifier
-                                            .height(80.dp)
-                                            .width(56.dp)
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .blur(if (isMasked) 16.dp else 0.dp),
-                                        contentScale = ContentScale.Fit
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "Page ${idx + 1}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(text = loan.personName.ifBlank { "Contact / Borrower" }, fontWeight = FontWeight.Bold)
+                                            Text(text = "Lent: ${loan.lentDate} • Status: ${loan.status}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text(text = "Due: ₹${CurrencyFormatter.formatInr(loan.remainingAmount)}", color = ExpenseRed, fontWeight = FontWeight.Bold)
+                                            Text(text = "Lent: ₹${CurrencyFormatter.formatInr(loan.amount)}", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else -> {
+                            val txList = when (selectedReportType) {
+                                ReportType.PERSONAL_EXPENSE -> filteredTransactions.filter { it.transactionType == TransactionType.EXPENSE }
+                                ReportType.INCOME -> filteredTransactions.filter { it.transactionType == TransactionType.INCOME || it.transactionType == TransactionType.REFUND }
+                                ReportType.INVESTMENT -> filteredTransactions.filter { it.transactionType == TransactionType.INVESTMENT }
+                                ReportType.TRANSFERS -> filteredTransactions.filter { it.transactionType == TransactionType.TRANSFER }
+                                else -> filteredTransactions
+                            }
+                            items(txList, key = { it.id }) { tx ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(text = tx.description, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(text = "${tx.transactionDate} • ${tx.categoryName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        val isIncome = tx.transactionType == TransactionType.INCOME || tx.creditAmount > 0
+                                        Text(
+                                            text = "${if (isIncome) "+" else "-"}₹${CurrencyFormatter.formatInr(tx.amount)}",
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isIncome) IncomeGreen else ExpenseRed
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -499,6 +859,46 @@ fun ReportsScreen(
             }
         }
     }
+
+    // 7. Custom Date Range Dialog
+    if (showCustomDateDialog) {
+        var tempStart by remember { mutableStateOf(customStartDate.ifBlank { DateUtils.getCurrentDate() }) }
+        var tempEnd by remember { mutableStateOf(customEndDate.ifBlank { DateUtils.getCurrentDate() }) }
+
+        AlertDialog(
+            onDismissRequest = { showCustomDateDialog = false },
+            title = { Text("Select Custom Date Range", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text = "Specify start and end dates (yyyy-MM-dd):", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = tempStart,
+                        onValueChange = { tempStart = it },
+                        label = { Text("From Date (yyyy-MM-dd)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = tempEnd,
+                        onValueChange = { tempEnd = it },
+                        label = { Text("To Date (yyyy-MM-dd)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    customStartDate = tempStart.trim()
+                    customEndDate = tempEnd.trim()
+                    showCustomDateDialog = false
+                }) {
+                    Text("Apply Filter")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showCustomDateDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
-
-

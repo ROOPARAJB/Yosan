@@ -18,12 +18,24 @@ import com.example.ui.screens.GPayLockScreen
 import com.example.features.auth.OnboardingScreen
 import com.example.ui.theme.FinanceManagerTheme
 import com.example.features.auth.AuthViewModel
+import com.example.features.auth.AuthState
 import com.example.features.auth.BiometricAuthManager
 import com.example.features.transactions.FinanceViewModel
 import com.example.utils.AppPreferences
 import com.example.data.remote.ApiClient
 
 class MainActivity : FragmentActivity() {
+
+    private var activeAuthViewModel: AuthViewModel? = null
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.data?.let { uri ->
+            activeAuthViewModel?.handleDeepLink(uri)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -37,6 +49,14 @@ class MainActivity : FragmentActivity() {
         setContent {
             val authViewModel: AuthViewModel = viewModel()
             val financeViewModel: FinanceViewModel = viewModel()
+            activeAuthViewModel = authViewModel
+
+            // Check if activity was launched with an OAuth deep link intent
+            LaunchedEffect(intent?.data) {
+                intent?.data?.let { uri ->
+                    authViewModel.handleDeepLink(uri)
+                }
+            }
 
             val userProfile by financeViewModel.userProfile.collectAsState()
             val allTransactions by financeViewModel.allTransactions.collectAsState()
@@ -48,16 +68,23 @@ class MainActivity : FragmentActivity() {
             var lockErrorMessage by remember { mutableStateOf<String?>(null) }
             var lastPauseTimestamp by remember { mutableLongStateOf(0L) }
 
-            val isExistingUser = appPreferences.isOnboardingCompleted ||
-                    (userProfile?.isOnboardingCompleted == true)
+            val authState by authViewModel.authState.collectAsState()
+            val authUser by authViewModel.user.collectAsState()
+            val tokenManager = remember { com.example.utils.SecureTokenManager(this@MainActivity) }
+            val isUserLoggedIn = (authState is AuthState.Authenticated) || (authUser != null) || tokenManager.isLoggedIn()
+
+            val isExistingUser = !appPreferences.isLoggedOut && (
+                appPreferences.isOnboardingCompleted ||
+                (userProfile?.isOnboardingCompleted == true) ||
+                isUserLoggedIn
+            )
 
             // Keep AppPreferences synchronized with Room UserProfile updates
             LaunchedEffect(userProfile) {
                 userProfile?.let { profile ->
-                    if (profile.isOnboardingCompleted) {
+                    if (profile.isOnboardingCompleted && !appPreferences.isLoggedOut) {
                         appPreferences.isOnboardingCompleted = true
                     }
-                    appPreferences.isDarkMode = profile.isDarkMode
                     appPreferences.isBiometricEnabled = profile.isBiometricEnabled
                 }
             }
@@ -172,8 +199,14 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
+            val currentThemeMode by financeViewModel.themeMode.collectAsState()
             val systemInDark = isSystemInDarkTheme()
-            val isDark = userProfile?.isDarkMode ?: appPreferences.isDarkMode ?: systemInDark
+            val isDark = when (currentThemeMode.uppercase()) {
+                "LIGHT" -> false
+                "DARK" -> true
+                "SYSTEM" -> systemInDark
+                else -> systemInDark
+            }
 
             FinanceManagerTheme(darkTheme = isDark) {
                 Surface(
@@ -190,13 +223,15 @@ class MainActivity : FragmentActivity() {
                             onExitApp = { finishAffinity() }
                         )
                     }
-                    // Priority 2: Onboarding for fresh installs
+                    // Priority 2: Onboarding for fresh installs or Login for logged out users
                     else if (!isExistingUser) {
                         OnboardingScreen(
                             authViewModel = authViewModel,
                             financeViewModel = financeViewModel,
+                            initialStep = if (appPreferences.isLoggedOut) 1 else 0,
                             onComplete = {
                                 appPreferences.isOnboardingCompleted = true
+                                appPreferences.isLoggedOut = false
                                 authViewModel.completeOnboarding()
                             }
                         )

@@ -27,6 +27,36 @@ interface CompanyExpenseDao {
     @Update
     suspend fun updateCompanyExpense(expense: CompanyExpenseEntity)
 
+    @Query("SELECT * FROM company_expenses WHERE claimStatus = :status ORDER BY date DESC, id DESC")
+    fun getCompanyExpensesByClaimStatus(status: String): Flow<List<CompanyExpenseEntity>>
+
+    @Query("SELECT * FROM company_expenses WHERE claimStatus = 'PENDING' ORDER BY date DESC, id DESC")
+    fun getPendingClaims(): Flow<List<CompanyExpenseEntity>>
+
+    @Query("SELECT * FROM company_expenses WHERE claimStatus = 'SUBMITTED' ORDER BY date DESC, id DESC")
+    fun getAppliedClaims(): Flow<List<CompanyExpenseEntity>>
+
+    @Query("SELECT * FROM company_expenses WHERE claimStatus = 'APPROVED' ORDER BY date DESC, id DESC")
+    fun getApprovedClaims(): Flow<List<CompanyExpenseEntity>>
+
+    @Query("UPDATE company_expenses SET isReimbursed = :isReimbursed, claimStatus = :claimStatus, approvedAmount = :approvedAmount, reimbursedAmount = :reimbursedAmount, updatedAt = :timestamp WHERE id = :id")
+    suspend fun updateClaimStatus(
+        id: Long,
+        claimStatus: String,
+        approvedAmount: Double?,
+        reimbursedAmount: Double,
+        isReimbursed: Boolean,
+        timestamp: Long = System.currentTimeMillis()
+    )
+
+    @Query("UPDATE company_expenses SET claimStatus = :claimStatus, submittedDate = :submittedDate, updatedAt = :timestamp WHERE id = :id")
+    suspend fun updateClaimSubmission(
+        id: Long,
+        submittedDate: String,
+        claimStatus: String = "SUBMITTED",
+        timestamp: Long = System.currentTimeMillis()
+    )
+
     @Query("UPDATE company_expenses SET isReimbursed = :isReimbursed, updatedAt = :timestamp WHERE id = :id")
     suspend fun updateReimbursementStatus(id: Long, isReimbursed: Boolean, timestamp: Long = System.currentTimeMillis())
 

@@ -10,6 +10,36 @@ import java.io.ByteArrayInputStream
 import java.util.*
 import java.util.zip.ZipInputStream
 
+enum class SupportedBank(val displayName: String) {
+    INDIAN_BANK("Indian Bank"),
+    YES_BANK("YES BANK"),
+    UNKNOWN("Generic / Supported Bank")
+}
+
+data class AuditDiscrepancy(
+    val rowIndex: Int,
+    val field: String,
+    val expected: String,
+    val actual: String,
+    val reason: String
+)
+
+data class StatementAuditReport(
+    val status: String, // StatementAuditStatus.PASS, REVIEW_REQUIRED, INCOMPLETE
+    val detectedBank: SupportedBank,
+    val totalSourceRowsDetected: Int,
+    val totalParsed: Int,
+    val validCount: Int,
+    val duplicateCount: Int,
+    val openingBalance: Double?,
+    val closingBalance: Double?,
+    val calculatedClosingBalance: Double?,
+    val totalDebits: Double,
+    val totalCredits: Double,
+    val balanceReconciliationPassed: Boolean?,
+    val discrepancies: List<AuditDiscrepancy> = emptyList()
+)
+
 data class ParsedImportRow(
     val rawLine: String,
     val date: String,
@@ -23,7 +53,8 @@ data class ParsedImportRow(
     val suggestedCategoryId: Long?,
     val suggestedType: TransactionType,
     val confidence: Float,
-    val isDuplicate: Boolean = false
+    val isDuplicate: Boolean = false,
+    val hasDiscrepancy: Boolean = false
 )
 
 data class ImportPreviewResult(
@@ -31,7 +62,9 @@ data class ImportPreviewResult(
     val validRows: List<ParsedImportRow>,
     val duplicateCount: Int,
     val detectedColumns: List<String>,
-    val fileName: String
+    val fileName: String,
+    val detectedBank: SupportedBank = SupportedBank.UNKNOWN,
+    val auditReport: StatementAuditReport? = null
 )
 
 object StatementImportService {
@@ -51,7 +84,8 @@ object StatementImportService {
         bytes: ByteArray,
         fileName: String,
         rules: List<CategorizationRuleEntity>,
-        existingTransactions: List<TransactionEntity>
+        existingTransactions: List<TransactionEntity>,
+        bankOverride: SupportedBank? = null
     ): ImportPreviewResult {
         val lowerName = fileName.lowercase()
         val isPdf = lowerName.endsWith(".pdf") || (bytes.size >= 4 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte())
@@ -65,7 +99,7 @@ object StatementImportService {
             isXls && !lowerName.endsWith(".xls") -> "$fileName.xls"
             else -> fileName
         }
-        return parseStatementText(textContent, rules, existingTransactions, resolvedName)
+        return parseStatementText(textContent, rules, existingTransactions, resolvedName, bankOverride)
     }
 
     fun extractTextFromStatementBytes(context: Context? = null, bytes: ByteArray, fileName: String): String {
@@ -425,22 +459,157 @@ object StatementImportService {
         return if (collapsed.any { it.isLetterOrDigit() }) collapsed else ""
     }
 
+    fun detectBank(content: String, fileName: String = ""): SupportedBank {
+        val lowerContent = content.lowercase()
+        val lowerName = fileName.lowercase()
+
+        return when {
+            lowerContent.contains("indian bank") || lowerContent.contains("indbank") ||
+                    lowerContent.contains("idib0") || lowerContent.contains("corporate office: 254-260") ||
+                    lowerName.contains("indian_bank") || lowerName.contains("indianbank") || lowerName.contains("indbank") -> {
+                SupportedBank.INDIAN_BANK
+            }
+            lowerContent.contains("yes bank") || lowerContent.contains("yes touch") ||
+                    lowerContent.contains("yesbank") || lowerContent.contains("yes first") ||
+                    lowerContent.contains("smart salary") || lowerContent.contains("cin - l65190mh2003plc143249") ||
+                    lowerName.contains("yes_bank") || lowerName.contains("yesbank") -> {
+                SupportedBank.YES_BANK
+            }
+            else -> SupportedBank.UNKNOWN
+        }
+    }
+
+    fun auditParsedStatement(
+        detectedBank: SupportedBank,
+        sourceRowsCount: Int,
+        parsedRows: List<ParsedImportRow>,
+        openingBalance: Double?,
+        closingBalance: Double?
+    ): StatementAuditReport {
+        val totalDebits = parsedRows.sumOf { it.debitAmount }
+        val totalCredits = parsedRows.sumOf { it.creditAmount }
+        val discrepancies = mutableListOf<AuditDiscrepancy>()
+
+        // 1. Transaction count audit
+        if (sourceRowsCount > 0 && parsedRows.size < sourceRowsCount / 2 && sourceRowsCount > 4) {
+            discrepancies.add(
+                AuditDiscrepancy(
+                    rowIndex = 0,
+                    field = "Transaction Count",
+                    expected = "$sourceRowsCount raw rows",
+                    actual = "${parsedRows.size} parsed",
+                    reason = "Significant difference between detected raw statement lines and valid parsed rows"
+                )
+            )
+        }
+
+        // 2. Sequential running balance reconciliation
+        var prevBalance: Double? = openingBalance
+        for (i in parsedRows.indices) {
+            val row = parsedRows[i]
+            if (row.balance != null) {
+                if (prevBalance != null) {
+                    val expectedBal = prevBalance - row.debitAmount + row.creditAmount
+                    val diff = Math.abs(row.balance - expectedBal)
+                    if (diff > 0.05) {
+                        discrepancies.add(
+                            AuditDiscrepancy(
+                                rowIndex = i + 1,
+                                field = "Running Balance",
+                                expected = String.format(Locale.ENGLISH, "₹%.2f", expectedBal),
+                                actual = String.format(Locale.ENGLISH, "₹%.2f", row.balance),
+                                reason = "Balance step discrepancy: previous (₹${String.format(Locale.ENGLISH, "%.2f", prevBalance)}) - debit (${row.debitAmount}) + credit (${row.creditAmount}) does not match recorded balance (₹${row.balance})"
+                            )
+                        )
+                    }
+                }
+                prevBalance = row.balance
+            }
+        }
+
+        // 3. Opening to Closing balance reconciliation
+        var calculatedClosing: Double? = null
+        var balanceReconciliationPassed: Boolean? = null
+
+        if (openingBalance != null && closingBalance != null) {
+            val calc = openingBalance - totalDebits + totalCredits
+            calculatedClosing = calc
+            val diff = Math.abs(calc - closingBalance)
+            if (diff > 0.05) {
+                balanceReconciliationPassed = false
+                discrepancies.add(
+                    AuditDiscrepancy(
+                        rowIndex = 0,
+                        field = "Closing Balance",
+                        expected = String.format(Locale.ENGLISH, "₹%.2f", closingBalance),
+                        actual = String.format(Locale.ENGLISH, "₹%.2f", calc),
+                        reason = "Opening balance (₹${String.format(Locale.ENGLISH, "%.2f", openingBalance)}) - total debits (₹${String.format(Locale.ENGLISH, "%.2f", totalDebits)}) + total credits (₹${String.format(Locale.ENGLISH, "%.2f", totalCredits)}) = ₹${String.format(Locale.ENGLISH, "%.2f", calc)}, mismatch with statement closing balance ₹${String.format(Locale.ENGLISH, "%.2f", closingBalance)}"
+                    )
+                )
+            } else {
+                balanceReconciliationPassed = true
+            }
+        } else if (parsedRows.any { it.balance != null }) {
+            balanceReconciliationPassed = discrepancies.none { it.field == "Running Balance" }
+        }
+
+        // 4. Duplicate checks
+        val duplicates = parsedRows.count { it.isDuplicate }
+        if (duplicates > 0) {
+            discrepancies.add(
+                AuditDiscrepancy(
+                    rowIndex = 0,
+                    field = "Duplicates",
+                    expected = "0 duplicates",
+                    actual = "$duplicates duplicate rows",
+                    reason = "Possible duplicate transactions matching existing account records"
+                )
+            )
+        }
+
+        // 5. Determine audit status
+        val status = when {
+            discrepancies.isNotEmpty() -> StatementAuditStatus.REVIEW_REQUIRED
+            openingBalance == null && closingBalance == null && parsedRows.none { it.balance != null } -> StatementAuditStatus.INCOMPLETE
+            else -> StatementAuditStatus.PASS
+        }
+
+        return StatementAuditReport(
+            status = status,
+            detectedBank = detectedBank,
+            totalSourceRowsDetected = if (sourceRowsCount > 0) sourceRowsCount else parsedRows.size,
+            totalParsed = parsedRows.size,
+            validCount = parsedRows.size,
+            duplicateCount = duplicates,
+            openingBalance = openingBalance,
+            closingBalance = closingBalance,
+            calculatedClosingBalance = calculatedClosing,
+            totalDebits = totalDebits,
+            totalCredits = totalCredits,
+            balanceReconciliationPassed = balanceReconciliationPassed,
+            discrepancies = discrepancies
+        )
+    }
+
     fun parseStatementText(
         content: String,
         rules: List<CategorizationRuleEntity> = emptyList(),
         existingTransactions: List<TransactionEntity> = emptyList(),
-        fileName: String = "statement.csv"
+        fileName: String = "statement.csv",
+        bankOverride: SupportedBank? = null
     ): ImportPreviewResult {
         if (content.isBlank()) {
             return ImportPreviewResult(0, emptyList(), 0, emptyList(), fileName)
         }
+
+        val detectedBank = bankOverride ?: detectBank(content, fileName)
 
         val rawLines = content.lines()
             .map { it.trim() }
             .filter { it.isNotBlank() }
 
         if (rawLines.isEmpty()) {
-            return ImportPreviewResult(0, emptyList(), 0, emptyList(), fileName)
+            return ImportPreviewResult(0, emptyList(), 0, emptyList(), fileName, detectedBank)
         }
 
         // Find the first line that matches the header criteria
@@ -523,12 +692,21 @@ object StatementImportService {
             }
         }
 
-        // 2-Pass Balance Delta Mathematical Verification:
-        var runningBal: Double? = null
-        val openingBalMatch = Regex("Opening\\s*Balance\\s*[:\\-]?\\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{2})|[0-9]+\\.[0-9]{2})", RegexOption.IGNORE_CASE).find(content)
+        // Opening & Closing Balance Extraction
+        var openingBal: Double? = null
+        val openingBalMatch = Regex("(?:Opening|Brought Forward|B/F)\\s*(?:Balance)?\\s*[:\\-]?\\s*(?:INR|Rs\\.?|₹)?\\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{2})|[0-9]+\\.[0-9]{2})", RegexOption.IGNORE_CASE).find(content)
         if (openingBalMatch != null) {
-            runningBal = parseAmount(openingBalMatch.groupValues[1])
+            openingBal = parseAmount(openingBalMatch.groupValues[1])
         }
+
+        var closingBal: Double? = null
+        val closingBalMatch = Regex("(?:Closing|Carried Forward|C/F)\\s*(?:Balance)?\\s*[:\\-]?\\s*(?:INR|Rs\\.?|₹)?\\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{2})|[0-9]+\\.[0-9]{2})", RegexOption.IGNORE_CASE).find(content)
+        if (closingBalMatch != null) {
+            closingBal = parseAmount(closingBalMatch.groupValues[1])
+        }
+
+        // 2-Pass Balance Delta Mathematical Verification:
+        var runningBal: Double? = openingBal
 
         val finalizedRows = mutableListOf<ParsedImportRow>()
         var duplicates = 0
@@ -585,12 +763,31 @@ object StatementImportService {
             ))
         }
 
+        val auditReport = auditParsedStatement(
+            detectedBank = detectedBank,
+            sourceRowsCount = consolidatedRows.size,
+            parsedRows = finalizedRows,
+            openingBalance = openingBal,
+            closingBalance = closingBal
+        )
+
+        val flaggedRowIndices = auditReport.discrepancies.map { it.rowIndex }.filter { it > 0 }.toSet()
+        val auditedRows = if (flaggedRowIndices.isNotEmpty()) {
+            finalizedRows.mapIndexed { idx, row ->
+                if (flaggedRowIndices.contains(idx + 1)) row.copy(hasDiscrepancy = true) else row
+            }
+        } else {
+            finalizedRows
+        }
+
         return ImportPreviewResult(
-            totalRows = finalizedRows.size,
-            validRows = finalizedRows,
+            totalRows = auditedRows.size,
+            validRows = auditedRows,
             duplicateCount = duplicates,
             detectedColumns = detectedColumns,
-            fileName = fileName
+            fileName = fileName,
+            detectedBank = detectedBank,
+            auditReport = auditReport
         )
     }
 
@@ -645,6 +842,9 @@ object StatementImportService {
             "please ignore if nominee", "under goods and services tax", "for any assistance required",
             "please contact a yes bank", "unless the discrepancy",
             "adikesavalu naidu complex", "greams rd", "thousand light", "door no. 225",
+            "indian bank", "indbank", "corporate office: 254-260", "avvai shanmugam salai", "royapettah",
+            "chennai - 600014", "scheme description", "cif no", "branch ifsc", "yes bank limited",
+            "yes bank ltd", "yes first", "neft / rtgs ifsc : yesb", "cin: l65190mh2003plc143249",
             "atm withdrawal obd", "mobile funds transfer", "atm funds transfer", "returned rtgs", "rtgs transaction"
         )
 

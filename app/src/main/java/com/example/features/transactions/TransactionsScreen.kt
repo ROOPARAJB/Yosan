@@ -27,10 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.CategoryEntity
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
-import com.example.ui.components.EmptyState
-import com.example.ui.components.SectionHeader
-import com.example.ui.components.TransactionItemCard
-import com.example.ui.components.PrivacyAmountText
+import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.features.transactions.FinanceViewModel
 import com.example.utils.CurrencyFormatter
@@ -42,6 +39,7 @@ fun TransactionsScreen(
     viewModel: FinanceViewModel,
     onTransactionClick: (TransactionEntity) -> Unit,
     onNavigateToImport: () -> Unit,
+    onOpenAddSheet: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val transactions by viewModel.filteredTransactions.collectAsState()
@@ -514,47 +512,33 @@ fun TransactionsScreen(
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    IconButton(
-                        onClick = { showComparerDialog = true },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CompareArrows,
-                            contentDescription = "Audit / Comparer",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = onNavigateToImport,
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FileUpload,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Import",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-                    IconButton(
-                        onClick = { showDeleteAllDialog = true },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = "Delete All",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                    StatementHeaderAction(
+                        icon = Icons.Default.AddCircleOutline,
+                        label = "Add",
+                        contentDescription = "Add Transaction",
+                        onClick = onOpenAddSheet
+                    )
+                    StatementHeaderAction(
+                        icon = Icons.Default.CompareArrows,
+                        label = "Audit",
+                        contentDescription = "Audit / Comparer",
+                        onClick = { showComparerDialog = true }
+                    )
+                    StatementHeaderAction(
+                        icon = Icons.Default.FileUpload,
+                        label = "Import",
+                        contentDescription = "Import Statement",
+                        onClick = onNavigateToImport
+                    )
+                    StatementHeaderAction(
+                        icon = Icons.Default.DeleteOutline,
+                        label = "Delete",
+                        contentDescription = "Delete All",
+                        tint = MaterialTheme.colorScheme.error,
+                        onClick = { showDeleteAllDialog = true }
+                    )
                 }
             }
         }
@@ -770,8 +754,12 @@ fun TransactionsScreen(
             }
         }
 
+        val isDataLoaded by viewModel.isDataLoaded.collectAsState()
+
         // 4. Statement Transactions List
-        if (transactions.isEmpty()) {
+        if (!isDataLoaded) {
+            SkeletonTransactionsLoading(modifier = Modifier.weight(1f))
+        } else if (transactions.isEmpty()) {
             if (allTransactions.isEmpty()) {
                 EmptyState(
                     icon = Icons.Outlined.ReceiptLong,
@@ -870,3 +858,37 @@ fun TransactionsScreen(
     )
 }
 }
+
+@Composable
+private fun StatementHeaderAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    contentDescription: String,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            color = tint,
+            maxLines = 1
+        )
+    }
+}
+

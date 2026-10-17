@@ -8,9 +8,12 @@ import com.example.data.local.entity.CategoryEntity
 import com.example.data.local.entity.CategoryType
 import com.example.data.local.entity.TransactionEntity
 import com.example.data.local.entity.TransactionType
+import com.example.data.local.entity.StatementAuditStatus
+import com.example.data.local.entity.StatementImportEntity
 import com.example.features.import.ImportPreviewResult
 import com.example.features.import.ParsedImportRow
 import com.example.features.import.StatementImportService
+import com.example.features.import.SupportedBank
 import com.example.features.rules.CategorizationEngine
 import com.example.data.remote.StatementAiTransactionDto
 import com.example.features.transactions.data.TransactionRepository
@@ -162,11 +165,35 @@ class StatementImportCoordinator(
 
     fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1, onComplete: (() -> Unit)? = null) {
         val preview = _importPreview.value ?: return
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try {
                 _isImporting.value = true
                 val rowsToImport = if (skipDuplicates) preview.validRows.filterNot { it.isDuplicate } else preview.validRows
 
+                // 1. Record statement import metadata and audit status in statement_imports table
+                val audit = preview.auditReport
+                val importRecord = StatementImportEntity(
+                    fileName = preview.fileName,
+                    bankName = preview.detectedBank.displayName,
+                    importTimestamp = System.currentTimeMillis(),
+                    totalParsed = preview.totalRows,
+                    importedCount = rowsToImport.size,
+                    duplicateCount = preview.duplicateCount,
+                    auditStatus = audit?.status ?: StatementAuditStatus.PASS,
+                    openingBalance = audit?.openingBalance,
+                    closingBalance = audit?.closingBalance,
+                    totalDebits = audit?.totalDebits ?: rowsToImport.sumOf { it.debitAmount },
+                    totalCredits = audit?.totalCredits ?: rowsToImport.sumOf { it.creditAmount },
+                    discrepancyCount = audit?.discrepancies?.size ?: 0,
+                    notes = if (audit?.status == StatementAuditStatus.REVIEW_REQUIRED) {
+                        "${audit.discrepancies.size} audit discrepancies flagged"
+                    } else {
+                        "Audit: ${audit?.status ?: "PASS"}"
+                    }
+                )
+                val generatedImportId = database.statementImportDao().insertImport(importRecord)
+
+                val isPdf = preview.fileName.endsWith(".pdf", ignoreCase = true)
                 val txEntities = rowsToImport.map { row ->
                     val containsCompany = row.description.contains("company", ignoreCase = true)
                     var finalCatId = row.suggestedCategoryId
@@ -203,8 +230,9 @@ class StatementImportCoordinator(
                         balanceAfterTransaction = row.balance,
                         categoryId = finalCatId,
                         categoryName = finalCatName,
-                        source = "IMPORT_EXCEL",
+                        source = if (isPdf) "IMPORT_PDF" else "IMPORT_EXCEL",
                         referenceNumber = row.referenceNumber,
+                        importId = generatedImportId,
                         isManual = false,
                         isCategorized = if (containsCompany) true else (row.confidence > 0f),
                         categorizationConfidence = if (containsCompany) 1.0f else row.confidence
@@ -215,7 +243,7 @@ class StatementImportCoordinator(
                 transactionRepository.recalculateAccountBalance(targetAccountId)
                 database.userProfileDao().updateOnboardingCompleted(true)
                 _importPreview.value = null
-                showMessage("${txEntities.size} transactions imported successfully!")
+                showMessage("${txEntities.size} transactions imported successfully from ${preview.detectedBank.displayName}!")
                 onImportSuccess()
                 withContext(Dispatchers.Main) {
                     onComplete?.invoke()
@@ -229,6 +257,52 @@ class StatementImportCoordinator(
                 _isImporting.value = false
             }
         }
+    }
+
+    fun deleteStatementImport(importId: Long, accountId: Long? = null, onComplete: (() -> Unit)? = null) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                _isImporting.value = true
+                val affectedAccountIds = if (accountId != null) {
+                    listOf(accountId)
+                } else {
+                    database.transactionDao().getTransactionsByImportIdList(importId).map { it.accountId }.distinct()
+                }
+                database.transactionDao().deleteTransactionsByImportId(importId)
+                database.statementImportDao().deleteImport(importId)
+                for (accId in affectedAccountIds) {
+                    transactionRepository.recalculateAccountBalance(accId)
+                }
+                showMessage("Statement import and its associated transactions deleted successfully.")
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke()
+                }
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.e("FinanceViewModel", "Delete import failed", e)
+                }
+                showMessage("Delete failed: ${e.localizedMessage ?: "Database error"}")
+            } finally {
+                _isImporting.value = false
+            }
+        }
+    }
+
+
+    fun setManualBankOverride(bank: SupportedBank?) {
+        val currentPreview = _importPreview.value ?: return
+        val effectiveBank = bank ?: currentPreview.detectedBank
+        val reaudited = StatementImportService.auditParsedStatement(
+            detectedBank = effectiveBank,
+            sourceRowsCount = currentPreview.totalRows,
+            parsedRows = currentPreview.validRows,
+            openingBalance = currentPreview.auditReport?.openingBalance,
+            closingBalance = currentPreview.auditReport?.closingBalance
+        )
+        _importPreview.value = currentPreview.copy(
+            detectedBank = effectiveBank,
+            auditReport = reaudited
+        )
     }
 
     fun clearImportPreview() {

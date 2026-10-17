@@ -2,8 +2,8 @@ package com.example.ui.components
 
 import androidx.compose.ui.window.Dialog
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -1399,5 +1399,243 @@ fun CategoryTransactionsDialog(
         shape = RoundedCornerShape(24.dp)
     )
 }
+
+/**
+ * Modern shimmer modifier providing animated skeleton loading effect
+ */
+@Composable
+fun Modifier.shimmerLoading(
+    durationMillis: Int = 1200
+): Modifier {
+    val transition = rememberInfiniteTransition(label = "shimmer_transition")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1400f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = durationMillis, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer_offset"
+    )
+
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val baseColor = if (isDark) Color(0xFF282C34) else Color(0xFFE2E8F0)
+    val highlightColor = if (isDark) Color(0xFF3E4451) else Color(0xFFF1F5F9)
+
+    val shimmerColors = listOf(
+        baseColor,
+        highlightColor,
+        baseColor
+    )
+
+    return this.background(
+        brush = Brush.linearGradient(
+            colors = shimmerColors,
+            start = Offset(translateAnim - 450f, translateAnim - 450f),
+            end = Offset(translateAnim, translateAnim)
+        )
+    )
+}
+
+@Composable
+fun SkeletonBox(
+    modifier: Modifier = Modifier,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(8.dp)
+) {
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .shimmerLoading()
+    )
+}
+
+@Composable
+fun SkeletonCard(
+    modifier: Modifier = Modifier,
+    height: androidx.compose.ui.unit.Dp = 100.dp,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(20.dp)
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SkeletonBox(modifier = Modifier.size(width = 110.dp, height = 16.dp))
+                SkeletonBox(modifier = Modifier.size(28.dp), shape = CircleShape)
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            SkeletonBox(modifier = Modifier.size(width = 160.dp, height = 24.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+            SkeletonBox(modifier = Modifier.size(width = 90.dp, height = 12.dp))
+        }
+    }
+}
+
+@Composable
+fun SkeletonMetricCard(
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .width(160.dp)
+            .clip(RoundedCornerShape(20.dp)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SkeletonBox(modifier = Modifier.size(width = 75.dp, height = 12.dp))
+                SkeletonBox(modifier = Modifier.size(24.dp), shape = CircleShape)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            SkeletonBox(modifier = Modifier.size(width = 100.dp, height = 20.dp))
+            Spacer(modifier = Modifier.height(6.dp))
+            SkeletonBox(modifier = Modifier.size(width = 60.dp, height = 10.dp))
+        }
+    }
+}
+
+@Composable
+fun SkeletonTransactionItem(
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SkeletonBox(modifier = Modifier.size(42.dp), shape = RoundedCornerShape(12.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                SkeletonBox(modifier = Modifier.size(width = 140.dp, height = 16.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+                SkeletonBox(modifier = Modifier.size(width = 90.dp, height = 12.dp))
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            SkeletonBox(modifier = Modifier.size(width = 70.dp, height = 18.dp))
+        }
+    }
+}
+
+@Composable
+fun SkeletonDashboardLoading(
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        SkeletonCard(modifier = Modifier.fillMaxWidth(), height = 130.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SkeletonMetricCard(modifier = Modifier.weight(1f))
+            SkeletonMetricCard(modifier = Modifier.weight(1f))
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        SkeletonBox(modifier = Modifier.size(width = 150.dp, height = 18.dp))
+        repeat(4) {
+            SkeletonTransactionItem()
+        }
+    }
+}
+
+@Composable
+fun SkeletonTransactionsLoading(
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        SkeletonBox(modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            repeat(4) {
+                SkeletonBox(modifier = Modifier.size(width = 75.dp, height = 32.dp), shape = RoundedCornerShape(16.dp))
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        repeat(5) {
+            SkeletonTransactionItem()
+        }
+    }
+}
+
+@Composable
+fun SkeletonReportsLoading(
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        SkeletonCard(modifier = Modifier.fillMaxWidth(), height = 120.dp)
+        SkeletonCard(modifier = Modifier.fillMaxWidth(), height = 200.dp)
+        SkeletonCard(modifier = Modifier.fillMaxWidth(), height = 160.dp)
+    }
+}
+
+@Composable
+fun SkeletonOfficialExpensesLoading(
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SkeletonMetricCard(modifier = Modifier.weight(1f))
+            SkeletonMetricCard(modifier = Modifier.weight(1f))
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        repeat(4) {
+            SkeletonTransactionItem()
+        }
+    }
+}
+
 
 

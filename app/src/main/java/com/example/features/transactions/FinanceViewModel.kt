@@ -146,14 +146,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun completeOnboarding(isDarkMode: Boolean, privacyBlurEnabled: Boolean, timeoutSeconds: Int) {
+    fun completeOnboarding(themeMode: String = "SYSTEM", privacyBlurEnabled: Boolean = true, timeoutSeconds: Int = 5) {
         viewModelScope.launch {
             val appPrefs = com.example.utils.AppPreferences(getApplication())
             appPrefs.isOnboardingCompleted = true
-            appPrefs.isDarkMode = isDarkMode
+            appPrefs.themeMode = themeMode
+            _themeMode.value = themeMode
+            val isDarkBool = when (themeMode) {
+                "DARK" -> true
+                "LIGHT" -> false
+                else -> null
+            }
+            appPrefs.isDarkMode = isDarkBool
             val current = userProfile.value ?: UserProfileEntity(id = 1)
             val updated = current.copy(
-                isDarkMode = isDarkMode,
+                isDarkMode = isDarkBool ?: false,
                 isPrivacyBlurEnabled = privacyBlurEnabled,
                 blurTimeoutSeconds = timeoutSeconds,
                 isOnboardingCompleted = true
@@ -161,6 +168,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             database.userProfileDao().insertOrUpdateProfile(updated)
             database.userProfileDao().updateOnboardingCompleted(true)
         }
+    }
+
+    fun completeOnboarding(isDarkMode: Boolean, privacyBlurEnabled: Boolean, timeoutSeconds: Int) {
+        completeOnboarding(if (isDarkMode) "DARK" else "LIGHT", privacyBlurEnabled, timeoutSeconds)
     }
 
     fun resetOnboarding() {
@@ -179,8 +190,39 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     fun toggleDarkMode(isDark: Boolean) {
         viewModelScope.launch {
-            com.example.utils.AppPreferences(getApplication()).isDarkMode = isDark
+            val mode = if (isDark) "DARK" else "LIGHT"
+            val appPrefs = com.example.utils.AppPreferences(getApplication())
+            appPrefs.themeMode = mode
+            _themeMode.value = mode
+            appPrefs.isDarkMode = isDark
             repository.updateThemePreference(isDark)
+        }
+    }
+
+    private val _themeMode = MutableStateFlow(
+        com.example.utils.AppPreferences(application).themeMode
+    )
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
+    fun setThemeMode(mode: String) {
+        viewModelScope.launch {
+            val appPrefs = com.example.utils.AppPreferences(getApplication())
+            appPrefs.themeMode = mode
+            _themeMode.value = mode
+            when (mode) {
+                "LIGHT" -> {
+                    appPrefs.isDarkMode = false
+                    repository.updateThemePreference(false)
+                }
+                "DARK" -> {
+                    appPrefs.isDarkMode = true
+                    repository.updateThemePreference(true)
+                }
+                else -> {
+                    appPrefs.isDarkMode = null
+                    repository.updateThemePreference(false)
+                }
+            }
         }
     }
 
@@ -334,6 +376,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
     val importPreview: StateFlow<ImportPreviewResult?> = statementImportCoordinator.importPreview
     val isImporting: StateFlow<Boolean> = statementImportCoordinator.isImporting
+    val statementImports: StateFlow<List<StatementImportEntity>> = database.statementImportDao().getAllImports()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val selectedExcelUri: StateFlow<String?> = excelSyncCoordinator.selectedExcelUri
     val selectedExcelFileName: StateFlow<String?> = excelSyncCoordinator.selectedExcelFileName
@@ -535,6 +579,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         transactionCoordinator.addAccount(name, bank, maskedNumber, type, openingBalance)
     fun updateAccount(account: AccountEntity) = transactionCoordinator.updateAccount(account)
     fun deleteAccount(id: Long) = transactionCoordinator.deleteAccount(id)
+    fun deleteAccountWithReassignment(id: Long, fallbackAccountId: Long) = transactionCoordinator.deleteAccountWithReassignment(id, fallbackAccountId)
 
     // Delegated Local Backup Methods
     fun createBackup(context: Context, onDone: (File?) -> Unit) = transactionCoordinator.createBackup(context, onDone)
@@ -595,6 +640,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun updateRule(rule: CategorizationRuleEntity) = categoryRuleCoordinator.updateRule(rule)
     fun addCategory(name: String, type: CategoryType, colorHex: String) = categoryRuleCoordinator.addCategory(name, type, colorHex)
     fun deleteCategory(id: Long) = categoryRuleCoordinator.deleteCategory(id)
+    fun reassignAndDeleteCategory(id: Long, fallbackCategoryId: Long, fallbackCategoryName: String) = categoryRuleCoordinator.reassignAndDeleteCategory(id, fallbackCategoryId, fallbackCategoryName)
     fun updateCategory(category: CategoryEntity) = categoryRuleCoordinator.updateCategory(category)
 
     // Delegated Undo Methods
@@ -613,6 +659,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     fun parseStatementUri(context: Context, uri: Uri, fileName: String = "statement.csv") = statementImportCoordinator.parseStatementUri(context, uri, fileName)
     fun confirmImport(skipDuplicates: Boolean = false, targetAccountId: Long = 1, onComplete: (() -> Unit)? = null) =
         statementImportCoordinator.confirmImport(skipDuplicates, targetAccountId, onComplete)
+    fun deleteStatementImport(importId: Long, accountId: Long? = null, onComplete: (() -> Unit)? = null) =
+        statementImportCoordinator.deleteStatementImport(importId, accountId, onComplete)
+    fun setManualBankOverride(bank: com.example.features.import.SupportedBank?) =
+        statementImportCoordinator.setManualBankOverride(bank)
     fun clearImportPreview() = statementImportCoordinator.clearImportPreview()
 
     // Export Reports

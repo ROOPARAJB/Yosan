@@ -1,10 +1,15 @@
 package com.example.features.settings
 
 import androidx.fragment.app.FragmentActivity
+import android.content.Intent
+import android.net.Uri
 import com.example.features.auth.BiometricAuthManager
 import com.example.features.auth.BiometricCapability
 import com.example.features.auth.GoogleAuthManager
 import com.example.features.auth.GoogleAuthResult
+import com.example.features.sync.StorageMode
+import com.example.features.sync.SyncState
+import com.example.features.sync.SyncStatusInfo
 import com.example.utils.AppPreferences
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,6 +56,7 @@ import com.example.features.dashboard.DashboardCardConfigManager
 import com.example.features.dashboard.DashboardCardItem
 import com.example.features.dashboard.DashboardCardType
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.ui.components.PrivacyAmountText
 import com.example.data.local.entity.UserProfileEntity
@@ -79,6 +85,8 @@ fun SettingsScreen(
     onNavigateToImport: () -> Unit,
     onNavigateToLending: () -> Unit = {},
     onNavigateToExcelSync: () -> Unit = {},
+    onOpenWalkthrough: () -> Unit = {},
+    onOpenIntroNote: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
 
@@ -92,6 +100,9 @@ fun SettingsScreen(
     val undoHistory by viewModel.undoHistory.collectAsState()
 
     val authUser by authViewModel?.user?.collectAsState() ?: remember { mutableStateOf(null) }
+    val isEmailVerified by authViewModel?.isEmailVerified?.collectAsState() ?: remember { mutableStateOf(false) }
+    val storageMode by authViewModel?.storageMode?.collectAsState() ?: remember { mutableStateOf(StorageMode.LOCAL_ONLY) }
+    val syncStatus by authViewModel?.syncStatus?.collectAsState() ?: remember { mutableStateOf(SyncStatusInfo()) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -118,23 +129,27 @@ fun SettingsScreen(
     var resetWizardStep by remember { mutableStateOf(1) }
     var resetConfirmText by remember { mutableStateOf("") }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var showCategoryDialog by remember { mutableStateOf(false) }
+    var showDeveloperDetailsDialog by remember { mutableStateOf(false) }
+    var accountToDeleteWithReassign by remember { mutableStateOf<com.example.data.local.entity.AccountEntity?>(null) }
 
     var statusNotificationMsg by remember { mutableStateOf<String?>(null) }
     var showEditNameDialog by remember { mutableStateOf(false) }
     var tempName by remember { mutableStateOf("") }
     var showEnrollmentDialog by remember { mutableStateOf(false) }
 
-    var showChangeEmailDialog by remember { mutableStateOf(false) }
-    var tempNewEmail by remember { mutableStateOf("") }
-    var tempEmailOtp by remember { mutableStateOf("") }
-    var isChangeEmailOtpSent by remember { mutableStateOf(false) }
-    var changeEmailError by remember { mutableStateOf<String?>(null) }
-    var changeEmailSuccess by remember { mutableStateOf<String?>(null) }
-
     var showGoogleDriveDialog by remember { mutableStateOf(false) }
     var driveMismatchError by remember { mutableStateOf<String?>(null) }
     var isDriveConnecting by remember { mutableStateOf(false) }
     var isDriveBackingUp by remember { mutableStateOf(false) }
+    var isDriveRestoring by remember { mutableStateOf(false) }
+    var showBackupHistoryDialog by remember { mutableStateOf(false) }
+    var backupHistoryList by remember { mutableStateOf<List<com.example.data.remote.DriveBackupVersionDto>>(emptyList()) }
+    var isLoadingHistory by remember { mutableStateOf(false) }
+    var historyErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showRestoreConfirmDialog by remember { mutableStateOf(false) }
+    var targetRestoreVersion by remember { mutableStateOf<Int?>(null) }
+    var isRestoringVersion by remember { mutableStateOf(false) }
 
     var showFeedbackDialog by remember { mutableStateOf(false) }
     var feedbackCategory by remember { mutableStateOf("BUG_REPORT") }
@@ -147,11 +162,10 @@ fun SettingsScreen(
     var showServerConfigDialog by remember { mutableStateOf(false) }
     var editedServerUrl by remember { mutableStateOf("") }
     var currentServerUrl by remember { mutableStateOf(com.example.data.remote.ApiClient.getBaseUrl(context)) }
+    var editedSupabaseUrl by remember { mutableStateOf(com.example.data.remote.ApiClient.getSupabaseUrl(context)) }
+    var editedSupabaseAnonKey by remember { mutableStateOf(com.example.data.remote.ApiClient.getSupabaseAnonKey(context)) }
 
     val driveStatus by authViewModel?.driveStatus?.collectAsState() ?: remember { mutableStateOf(null) }
-    val otpCooldown by authViewModel?.otpCooldown?.collectAsState() ?: remember { mutableStateOf(0) }
-    val isOtpSending by authViewModel?.isOtpSending?.collectAsState() ?: remember { mutableStateOf(false) }
-    val isOtpVerifying by authViewModel?.isOtpVerifying?.collectAsState() ?: remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -203,48 +217,80 @@ fun SettingsScreen(
                             if (!email.isNullOrBlank()) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            tempNewEmail = ""
-                                            tempEmailOtp = ""
-                                            isChangeEmailOtpSent = false
-                                            changeEmailError = null
-                                            changeEmailSuccess = null
-                                            showChangeEmailDialog = true
-                                        }
-                                        .padding(vertical = 2.dp)
+                                    modifier = Modifier.padding(vertical = 2.dp)
                                 ) {
                                     Text(
                                         text = email,
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(
-                                        Icons.Default.Edit,
-                                        contentDescription = "Change Email",
-                                        modifier = Modifier.size(12.dp),
-                                        tint = MaterialTheme.colorScheme.primary
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    val verified = isEmailVerified || (userProfile?.emailVerified == true) || (authUser?.emailVerified == true)
+                                    Surface(
+                                        color = if (verified) IncomeGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            text = if (verified) "✓ Verified" else "⚠ Unverified",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (verified) IncomeGreen else MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val isDriveConnected = driveStatus?.isConnected == true
+                                Surface(
+                                    color = if (isDriveConnected) IncomeGreen.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            driveMismatchError = null
+                                            showGoogleDriveDialog = true
+                                        }
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isDriveConnected) Icons.Default.CloudDone else Icons.Default.Cloud,
+                                            contentDescription = "Drive Connection",
+                                            tint = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (isDriveConnected) "Drive: Connected" else "Drive: Disconnected",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (isDriveConnected) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = storageMode.displayName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
                                 }
-                            } else {
-                                Text(
-                                    text = "Add Email (OTP Verified)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            tempNewEmail = ""
-                                            tempEmailOtp = ""
-                                            isChangeEmailOtpSent = false
-                                            changeEmailError = null
-                                            changeEmailSuccess = null
-                                            showChangeEmailDialog = true
-                                        }
-                                        .padding(vertical = 2.dp)
-                                )
                             }
                         }
                     }
@@ -304,7 +350,7 @@ fun SettingsScreen(
             ) {
                 Column {
                     MoreMenuItem(
-                        title = "Categorization",
+                        title = "Categorization Rules",
                         subtitle = "Automatically categorize transactions using your rules",
                         icon = Icons.Default.AutoAwesome,
                         iconColor = LendingIndigo,
@@ -344,15 +390,16 @@ fun SettingsScreen(
                         onClick = { showCustomizeDashboard = true }
                     )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    val isDark = userProfile?.isDarkMode ?: false
-                    Row(
+                    val currentThemeMode by viewModel.themeMode.collectAsState()
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Surface(
                                 color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                                 shape = CircleShape,
@@ -360,7 +407,11 @@ fun SettingsScreen(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
-                                        imageVector = if (isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                        imageVector = when (currentThemeMode) {
+                                            "DARK" -> Icons.Default.DarkMode
+                                            "LIGHT" -> Icons.Default.LightMode
+                                            else -> Icons.Default.BrightnessMedium
+                                        },
                                         contentDescription = "Theme",
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(20.dp)
@@ -370,21 +421,38 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column {
                                 Text(
-                                    text = "Dark Mode",
+                                    text = "Theme Mode",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = if (isDark) "Dark theme enabled" else "Light theme enabled",
+                                    text = when (currentThemeMode) {
+                                        "DARK" -> "Dark theme active"
+                                        "LIGHT" -> "Light theme active"
+                                        else -> "Follow system default"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                        Switch(
-                            checked = isDark,
-                            onCheckedChange = { viewModel.toggleDarkMode(it) }
-                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                "LIGHT" to "Light",
+                                "DARK" to "Dark",
+                                "SYSTEM" to "System"
+                            ).forEach { (mode, label) ->
+                                FilterChip(
+                                    selected = currentThemeMode == mode,
+                                    onClick = { viewModel.setThemeMode(mode) },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -630,11 +698,11 @@ fun SettingsScreen(
             }
         }
 
-        // 6. Navigation: Backup & Restore Group
+        // 6. Navigation: Backup & Data Management
         item {
             Spacer(modifier = Modifier.height(14.dp))
             Text(
-                text = "Backup & Restore",
+                text = "Backup & Data Management",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold,
                 color = IncomeGreen,
@@ -652,17 +720,6 @@ fun SettingsScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column {
-                    MoreMenuItem(
-                        title = "Google Drive Cloud Backup",
-                        subtitle = if (driveStatus?.isConnected == true) "Connected: ${driveStatus?.driveEmail ?: userProfile?.email} • Verified" else "Validate and connect Google Drive for cloud backup",
-                        icon = if (driveStatus?.isConnected == true) Icons.Default.CloudDone else Icons.Default.Cloud,
-                        iconColor = if (driveStatus?.isConnected == true) IncomeGreen else MaterialTheme.colorScheme.primary,
-                        onClick = {
-                            driveMismatchError = null
-                            showGoogleDriveDialog = true
-                        }
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                     MoreMenuItem(
                         title = "Backup All Data",
                         subtitle = "Export complete database backup (Accounts, Transactions, Loans, Claims)",
@@ -727,7 +784,7 @@ fun SettingsScreen(
                 Column {
                     MoreMenuItem(
                         title = "Check for Updates",
-                        subtitle = "Current version: v${BuildConfig.VERSION_NAME} • Tap to check GitHub",
+                        subtitle = "Current version: v${BuildConfig.VERSION_NAME}",
                         icon = Icons.Default.SystemUpdate,
                         iconColor = MaterialTheme.colorScheme.primary,
                         onClick = {
@@ -752,19 +809,50 @@ fun SettingsScreen(
                             showFeedbackDialog = true
                         }
                     )
+                }
+            }
+        }
+
+        // Help & User Guide Group
+        item {
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "Help & User Guide",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+            )
+        }
+
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(16.dp)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column {
+                    MoreMenuItem(
+                        title = "How to Use the App",
+                        subtitle = "Interactive 12-module walkthrough covering all features & safety",
+                        icon = Icons.Default.MenuBook,
+                        iconColor = LendingIndigo,
+                        onClick = onOpenWalkthrough
+                    )
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                     )
                     MoreMenuItem(
-                        title = "Backend Server URL",
-                        subtitle = "Current: $currentServerUrl",
-                        icon = Icons.Default.Storage,
+                        title = "Welcome Note & Introduction",
+                        subtitle = "Review the purpose, getting-started guide, and privacy note",
+                        icon = Icons.Default.Info,
                         iconColor = MaterialTheme.colorScheme.primary,
-                        onClick = {
-                            editedServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
-                            showServerConfigDialog = true
-                        }
+                        onClick = onOpenIntroNote
                     )
                 }
             }
@@ -834,7 +922,10 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                     shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { showDeveloperDetailsDialog = true }
                 ) {
                     Column(
                         modifier = Modifier
@@ -878,6 +969,12 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Tap for developer info, repository & architecture details",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -1014,7 +1111,7 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(text = "Share to Other Apps", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                                Text(text = "Google Drive, WhatsApp, Gmail, etc.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(text = "WhatsApp, Gmail, Files, etc.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -1101,9 +1198,10 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
                             value = resetConfirmText,
-                            onValueChange = { resetConfirmText = it },
+                            onValueChange = { resetConfirmText = it.uppercase() },
                             placeholder = { Text("DELETE") },
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1115,7 +1213,7 @@ fun SettingsScreen(
                         if (resetWizardStep == 1) {
                             resetWizardStep = 2
                         } else {
-                            if (resetConfirmText.trim().equals("DELETE", ignoreCase = true)) {
+                            if (resetConfirmText.trim() == "DELETE") {
                                 viewModel.clearAllUserData {
                                     authViewModel?.deleteAccount()
                                 }
@@ -1124,7 +1222,7 @@ fun SettingsScreen(
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    enabled = if (resetWizardStep == 1) true else resetConfirmText.trim().equals("DELETE", ignoreCase = true)
+                    enabled = if (resetWizardStep == 1) true else resetConfirmText.trim() == "DELETE"
                 ) {
                     Text(if (resetWizardStep == 1) "Proceed" else "Delete Everything")
                 }
@@ -1156,7 +1254,7 @@ fun SettingsScreen(
             },
             text = {
                 Text(
-                    text = "Are you sure you want to log out? Your cloud and Google Drive session will end and you will be returned to the Welcome screen.",
+                    text = "Are you sure you want to log out? You will be returned to the Login screen.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1182,7 +1280,7 @@ fun SettingsScreen(
 
     if (showAccountsDialog) {
         var addMode by remember { mutableStateOf(false) }
-        var bankName by remember { mutableStateOf("") }
+        var bankName by remember { mutableStateOf("Indian Bank") }
         var accountTypeSelected by remember { mutableStateOf("Savings") }
         var accountNumber by remember { mutableStateOf("") }
         var initialBalance by remember { mutableStateOf("") }
@@ -1449,7 +1547,7 @@ fun SettingsScreen(
                         Button(
                             onClick = {
                                 editingAccount = null
-                                bankName = ""
+                                bankName = "Indian Bank"
                                 accountTypeSelected = "Savings"
                                 accountNumber = ""
                                 initialBalance = ""
@@ -1474,39 +1572,23 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         val indianBanks = listOf(
-                            "State Bank of India (SBI)",
-                            "HDFC Bank",
-                            "ICICI Bank",
-                            "Axis Bank",
-                            "Kotak Mahindra Bank",
-                            "Punjab National Bank (PNB)",
-                            "Bank of Baroda",
-                            "Canara Bank",
-                            "Union Bank of India",
-                            "IndusInd Bank",
-                            "IDFC FIRST Bank",
-                            "Federal Bank",
-                            "Yes Bank",
-                            "Paytm Payments Bank",
-                            "Cash / UPI Wallet"
+                            "Indian Bank",
+                            "Yes Bank"
                         )
-
-                        var isCustomBankSelected by remember { mutableStateOf(false) }
 
                         androidx.compose.foundation.layout.FlowRow(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             indianBanks.forEach { bName ->
-                                val isSelected = !isCustomBankSelected && bankName.equals(bName, ignoreCase = true)
+                                val isSelected = bankName.equals(bName, ignoreCase = true)
                                 FilterChip(
                                     selected = isSelected,
                                     onClick = {
                                         bankName = bName
-                                        isCustomBankSelected = false
                                     },
-                                    label = { Text(bName, fontSize = 11.sp) },
+                                    label = { Text(bName, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
                                     leadingIcon = {
                                         if (isSelected) {
                                             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -1514,31 +1596,6 @@ fun SettingsScreen(
                                     }
                                 )
                             }
-                            FilterChip(
-                                selected = isCustomBankSelected,
-                                onClick = {
-                                    isCustomBankSelected = true
-                                    bankName = ""
-                                },
-                                label = { Text("Other Bank...", fontSize = 11.sp) },
-                                leadingIcon = {
-                                    if (isCustomBankSelected) {
-                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
-                                    }
-                                }
-                            )
-                        }
-
-                        if (isCustomBankSelected || (bankName.isNotBlank() && bankName !in indianBanks)) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = bankName,
-                                onValueChange = { bankName = it },
-                                label = { Text("Enter Bank / Institution Name") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp)
-                            )
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -1591,60 +1648,91 @@ fun SettingsScreen(
                         )
 
                         Spacer(modifier = Modifier.height(16.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = {
-                                addMode = false
-                                editingAccount = null
-                                bankName = ""
-                                accountNumber = ""
-                                initialBalance = ""
-                            }) { Text("Cancel") }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Button(
-                                onClick = {
-                                    if (bankName.isNotBlank()) {
-                                        val resolvedType = when (accountTypeSelected) {
-                                            "Wallet" -> AccountType.WALLET
-                                            "Credit Card" -> AccountType.CREDIT_CARD
-                                            else -> AccountType.BANK
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            if (editingAccount != null) {
+                                TextButton(
+                                    onClick = {
+                                        val curAcc = editingAccount
+                                        if (curAcc != null) {
+                                            if (accounts.size <= 1) {
+                                                viewModel.showMessage("Cannot delete the only account. At least one account is required.")
+                                            } else {
+                                                val linkedCount = allTransactions.count { it.accountId == curAcc.id }
+                                                if (linkedCount > 0) {
+                                                    accountToDeleteWithReassign = curAcc
+                                                } else {
+                                                    viewModel.deleteAccount(curAcc.id)
+                                                    addMode = false
+                                                    editingAccount = null
+                                                }
+                                            }
                                         }
-                                        val initBal = initialBalance.toDoubleOrNull() ?: 0.0
-                                        val currentEditing = editingAccount
-                                        if (currentEditing != null) {
-                                            viewModel.updateAccount(
-                                                currentEditing.copy(
-                                                    accountName = accountTypeSelected,
-                                                    bankName = bankName.trim(),
-                                                    accountNumberMasked = accountNumber.trim(),
-                                                    accountType = resolvedType,
-                                                    openingBalance = initBal,
-                                                    currentBalance = if (currentEditing.currentBalance != 0.0) currentEditing.currentBalance else initBal
+                                    },
+                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Delete Account", modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Delete")
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.width(1.dp))
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = {
+                                    addMode = false
+                                    editingAccount = null
+                                    bankName = ""
+                                    accountNumber = ""
+                                    initialBalance = ""
+                                }) { Text("Cancel") }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        if (bankName.isNotBlank()) {
+                                            val resolvedType = when (accountTypeSelected) {
+                                                "Wallet" -> AccountType.WALLET
+                                                "Credit Card" -> AccountType.CREDIT_CARD
+                                                else -> AccountType.BANK
+                                            }
+                                            val initBal = initialBalance.toDoubleOrNull() ?: 0.0
+                                            val currentEditing = editingAccount
+                                            if (currentEditing != null) {
+                                                viewModel.updateAccount(
+                                                    currentEditing.copy(
+                                                        accountName = accountTypeSelected,
+                                                        bankName = bankName.trim(),
+                                                        accountNumberMasked = accountNumber.trim(),
+                                                        accountType = resolvedType,
+                                                        openingBalance = initBal,
+                                                        currentBalance = if (currentEditing.currentBalance != 0.0) currentEditing.currentBalance else initBal
+                                                    )
                                                 )
-                                            )
-                                        } else {
-                                            viewModel.addAccount(
-                                                com.example.data.local.entity.AccountEntity(
-                                                    accountName = accountTypeSelected,
-                                                    bankName = bankName.trim(),
-                                                    accountNumberMasked = accountNumber.trim(),
-                                                    accountType = resolvedType,
-                                                    openingBalance = initBal,
-                                                    currentBalance = initBal,
-                                                    isDefault = accounts.isEmpty()
+                                            } else {
+                                                viewModel.addAccount(
+                                                    com.example.data.local.entity.AccountEntity(
+                                                        accountName = accountTypeSelected,
+                                                        bankName = bankName.trim(),
+                                                        accountNumberMasked = accountNumber.trim(),
+                                                        accountType = resolvedType,
+                                                        openingBalance = initBal,
+                                                        currentBalance = initBal,
+                                                        isDefault = accounts.isEmpty()
+                                                    )
                                                 )
-                                            )
+                                            }
+                                            viewModel.recalculateAllAccountBalances()
+                                            addMode = false
+                                            editingAccount = null
+                                            bankName = ""
+                                            accountNumber = ""
+                                            initialBalance = ""
                                         }
-                                        viewModel.recalculateAllAccountBalances()
-                                        addMode = false
-                                        editingAccount = null
-                                        bankName = ""
-                                        accountNumber = ""
-                                        initialBalance = ""
-                                    }
-                                },
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Save")
+                                    },
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Save")
+                                }
                             }
                         }
                     }
@@ -1730,207 +1818,7 @@ fun SettingsScreen(
         }
     )
 
-    // Change Email with OTP Verification Dialog
-    if (showChangeEmailDialog) {
-        val currentEmail = userProfile?.email ?: authUser?.email ?: ""
-        AlertDialog(
-            onDismissRequest = {
-                showChangeEmailDialog = false
-                changeEmailError = null
-                changeEmailSuccess = null
-            },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Email,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = if (currentEmail.isNotBlank()) "Change Email Address" else "Add Email Address",
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (currentEmail.isNotBlank()) {
-                        Text(
-                            text = "Current: $currentEmail",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
 
-                    if (!isChangeEmailOtpSent) {
-                        Text(
-                            text = "Enter your new email address. We will send a 6-digit verification code to verify ownership before updating.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        OutlinedTextField(
-                            value = tempNewEmail,
-                            onValueChange = {
-                                tempNewEmail = it
-                                changeEmailError = null
-                            },
-                            label = { Text("New Email Address") },
-                            placeholder = { Text("name@example.com") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Button(
-                            onClick = {
-                                changeEmailError = null
-                                changeEmailSuccess = null
-                                authViewModel?.requestEmailChange(tempNewEmail) { success, msg ->
-                                    if (success) {
-                                        isChangeEmailOtpSent = true
-                                        changeEmailSuccess = msg ?: "Verification code sent to $tempNewEmail"
-                                    } else {
-                                        changeEmailError = msg ?: "Failed to send verification code"
-                                    }
-                                }
-                            },
-                            enabled = tempNewEmail.isNotBlank() && otpCooldown == 0 && !isOtpSending,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (isOtpSending) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                            }
-                            Text(
-                                text = if (otpCooldown > 0) "Resend Code in ${otpCooldown}s" else "Send Verification Code",
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    } else {
-                        Text(
-                            text = "Enter the 6-digit code sent to $tempNewEmail to confirm your new email:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        OutlinedTextField(
-                            value = tempEmailOtp,
-                            onValueChange = {
-                                if (it.length <= 6) {
-                                    tempEmailOtp = it
-                                    changeEmailError = null
-                                }
-                            },
-                            label = { Text("6-Digit Code") },
-                            placeholder = { Text("Enter 6-digit code") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    authViewModel?.requestEmailChange(tempNewEmail) { success, msg ->
-                                        if (success) {
-                                            changeEmailSuccess = "Code resent to $tempNewEmail"
-                                        } else {
-                                            changeEmailError = msg ?: "Failed to resend code"
-                                        }
-                                    }
-                                },
-                                enabled = otpCooldown == 0 && !isOtpSending
-                            ) {
-                                Text(if (otpCooldown > 0) "Resend in ${otpCooldown}s" else "Resend Code")
-                            }
-
-                            TextButton(
-                                onClick = {
-                                    isChangeEmailOtpSent = false
-                                    tempEmailOtp = ""
-                                    changeEmailError = null
-                                }
-                            ) {
-                                Text("Change Email")
-                            }
-                        }
-
-                        Button(
-                            onClick = {
-                                changeEmailError = null
-                                authViewModel?.verifyEmailChange(tempNewEmail, tempEmailOtp) { success, err ->
-                                    if (success) {
-                                        viewModel.updateUserProfile(
-                                            name = userProfile?.name ?: authUser?.name ?: "User",
-                                            currencySymbol = userProfile?.currencySymbol ?: "₹",
-                                            email = tempNewEmail.trim().lowercase()
-                                        )
-                                        showChangeEmailDialog = false
-                                        statusNotificationMsg = "Email updated to ${tempNewEmail.trim().lowercase()}"
-                                    } else {
-                                        changeEmailError = err ?: "Verification failed"
-                                    }
-                                }
-                            },
-                            enabled = tempEmailOtp.length == 6 && !isOtpVerifying,
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            if (isOtpVerifying) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    color = Color.White,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                            }
-                            Text("Verify & Update Email", fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    changeEmailSuccess?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = IncomeGreen)
-                    }
-
-                    changeEmailError?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showChangeEmailDialog = false
-                        changeEmailError = null
-                        changeEmailSuccess = null
-                    }
-                ) {
-                    Text("Close")
-                }
-            }
-        )
-    }
 
     // Google Drive with Strict Email Validation Dialog
     if (showGoogleDriveDialog) {
@@ -1971,30 +1859,43 @@ fun SettingsScreen(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                            Column(modifier = Modifier.padding(14.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         Icons.Default.CheckCircle,
                                         contentDescription = null,
                                         tint = IncomeGreen,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(20.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Cloud Backup Active & Verified",
+                                        text = "Google Drive Connected",
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.titleSmall,
                                         color = IncomeGreen
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Connected Account: $connectedDriveEmail",
+                                    text = "Account: $connectedDriveEmail",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                val currentVer = driveStatus?.currentBackupVersion ?: 1
+                                Text(
+                                    text = "Current Version: v${String.format(Locale.getDefault(), "%04d", currentVer)} (detailsaboutbackup.json)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = IncomeGreen
+                                )
+                                Text(
+                                    text = "Folder: Yosan-Backup/ • Snapshots: Yosan-Backup/versions/",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
                                 driveStatus?.lastBackupAt?.let { lastAt ->
                                     val formattedDate = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(lastAt))
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = "Last synced: $formattedDate",
                                         style = MaterialTheme.typography.bodySmall,
@@ -2006,11 +1907,12 @@ fun SettingsScreen(
                         }
 
                         Text(
-                            text = "Backups are automatically encrypted and synchronized with your personal Google Drive folder.",
+                            text = "Backups are stored as detailsaboutbackup.json in your private Yosan-Backup folder with historical recovery snapshots in versions/.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
+                        // 1. Sync & Back Up Now
                         Button(
                             onClick = {
                                 isDriveBackingUp = true
@@ -2024,7 +1926,7 @@ fun SettingsScreen(
                                     }
                                 }
                             },
-                            enabled = !isDriveBackingUp,
+                            enabled = !isDriveBackingUp && !isDriveRestoring,
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen),
                             modifier = Modifier.fillMaxWidth()
@@ -2036,7 +1938,7 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.onPrimary
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Syncing Backup...")
+                                Text("Syncing Backup to Drive...")
                             } else {
                                 Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -2044,6 +1946,55 @@ fun SettingsScreen(
                             }
                         }
 
+                        // 2. Restore Latest Backup
+                        FilledTonalButton(
+                            onClick = {
+                                targetRestoreVersion = null
+                                showRestoreConfirmDialog = true
+                            },
+                            enabled = !isDriveBackingUp && !isDriveRestoring,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isDriveRestoring && targetRestoreVersion == null) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Restoring from Drive...")
+                            } else {
+                                Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Restore Latest Backup", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        // 3. Backup Version History
+                        OutlinedButton(
+                            onClick = {
+                                showBackupHistoryDialog = true
+                                isLoadingHistory = true
+                                historyErrorMessage = null
+                                authViewModel?.getBackupHistory { success, backups, err ->
+                                    isLoadingHistory = false
+                                    if (success) {
+                                        backupHistoryList = backups
+                                    } else {
+                                        historyErrorMessage = err ?: "Could not fetch versions"
+                                    }
+                                }
+                            },
+                            enabled = !isDriveBackingUp && !isDriveRestoring,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Backup Version History", fontWeight = FontWeight.SemiBold)
+                        }
+
+                        // 4. Disconnect Google Drive
                         OutlinedButton(
                             onClick = {
                                 authViewModel?.disconnectGoogleDrive { success, msg ->
@@ -2070,7 +2021,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        // Strict Email Validation Notice
+                        // Scope and Permissions Notice
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                             shape = RoundedCornerShape(12.dp),
@@ -2086,19 +2037,26 @@ fun SettingsScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Email Validation Requirement",
+                                        text = "Restricted Permission (drive.file scope)",
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = if (registeredEmail.isNotBlank())
-                                        "For security, the Google Drive account MUST match your registered Yosan email ($registeredEmail)."
-                                    else
-                                        "Please register/verify your email address first before connecting Google Drive.",
+                                    text = "Yosan requests access ONLY to the private backup directory it creates ('Yosan-Backup/'). The app can NEVER read, view, or modify any of your other Google Drive files, documents, or photos.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = if (registeredEmail.isNotBlank())
+                                        "Account Match: Your Google Drive account must match your verified Yosan email ($registeredEmail)."
+                                    else
+                                        "Please register and verify your email before connecting Google Drive.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -2111,25 +2069,14 @@ fun SettingsScreen(
                                     try {
                                         val googleAuthManager = GoogleAuthManager(context)
                                         if (!googleAuthManager.isConfigured()) {
-                                            // Web Client ID is not configured in .env, connect directly with registered & verified email
-                                            authViewModel?.connectGoogleDriveWithValidation(
-                                                selectedDriveEmail = registeredEmail,
-                                                authCode = "mock_drive_auth_${System.currentTimeMillis()}"
-                                            ) { success, msg ->
-                                                if (success) {
-                                                    showGoogleDriveDialog = false
-                                                    statusNotificationMsg = "Google Drive successfully connected for $registeredEmail!"
-                                                } else {
-                                                    driveMismatchError = msg ?: "Connection failed"
-                                                }
-                                            }
+                                            driveMismatchError = "Google Web Client ID is not configured. Please check your configuration."
                                         } else {
                                             when (val result = googleAuthManager.getGoogleIdToken()) {
                                                 is GoogleAuthResult.Success -> {
                                                     val claims = AuthViewModel.decodeGoogleIdTokenLocally(result.idToken)
                                                     val selectedEmail = claims?.email?.trim()?.lowercase() ?: ""
                                                     if (selectedEmail.isEmpty()) {
-                                                        driveMismatchError = "Could not verify Google account email."
+                                                        driveMismatchError = "Could not verify Google account email from token."
                                                     } else if (registeredEmail.isNotEmpty() && selectedEmail != registeredEmail) {
                                                         driveMismatchError = "Email Mismatch: Selected Google account ($selectedEmail) does not match your registered email ($registeredEmail). Please connect with $registeredEmail."
                                                     } else {
@@ -2139,7 +2086,7 @@ fun SettingsScreen(
                                                         ) { success, msg ->
                                                             if (success) {
                                                                 showGoogleDriveDialog = false
-                                                                statusNotificationMsg = "Google Drive successfully connected and validated!"
+                                                                statusNotificationMsg = "Google Drive successfully connected and validated for $selectedEmail!"
                                                             } else {
                                                                 driveMismatchError = msg ?: "Connection failed"
                                                             }
@@ -2147,21 +2094,10 @@ fun SettingsScreen(
                                                     }
                                                 }
                                                 is GoogleAuthResult.Cancelled -> {
-                                                    driveMismatchError = "Google connection cancelled."
+                                                    driveMismatchError = "Google authorization was cancelled."
                                                 }
                                                 is GoogleAuthResult.Error -> {
-                                                    // Fallback to connecting with registered email if Google auth prompt is unavailable
-                                                    authViewModel?.connectGoogleDriveWithValidation(
-                                                        selectedDriveEmail = registeredEmail,
-                                                        authCode = "mock_drive_auth_${System.currentTimeMillis()}"
-                                                    ) { success, msg ->
-                                                        if (success) {
-                                                            showGoogleDriveDialog = false
-                                                            statusNotificationMsg = "Connected with registered email $registeredEmail"
-                                                        } else {
-                                                            driveMismatchError = result.message
-                                                        }
-                                                    }
+                                                    driveMismatchError = result.message
                                                 }
                                             }
                                         }
@@ -2231,13 +2167,311 @@ fun SettingsScreen(
         )
     }
 
+    // Google Drive Backup History Dialog
+    if (showBackupHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showBackupHistoryDialog = false },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.History,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Backup Version History", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    }
+                    IconButton(
+                        onClick = {
+                            isLoadingHistory = true
+                            historyErrorMessage = null
+                            authViewModel?.getBackupHistory { success, backups, err ->
+                                isLoadingHistory = false
+                                if (success) {
+                                    backupHistoryList = backups
+                                } else {
+                                    historyErrorMessage = err ?: "Could not fetch versions"
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh", modifier = Modifier.size(20.dp))
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                ) {
+                    Text(
+                        text = "Google Drive: Yosan-Backup/versions/",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    if (isLoadingHistory) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                        }
+                    } else if (historyErrorMessage != null) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = historyErrorMessage ?: "Error",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    } else if (backupHistoryList.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No backup snapshots found in Google Drive.\nCreate your first backup to see version history.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(backupHistoryList.size) { index ->
+                                val item = backupHistoryList[index]
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (item.isCurrent)
+                                            IncomeGreen.copy(alpha = 0.08f)
+                                        else
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    if (item.isCurrent) Icons.Default.CloudDone else Icons.Default.Restore,
+                                                    contentDescription = null,
+                                                    tint = if (item.isCurrent) IncomeGreen else MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Version v${String.format(Locale.getDefault(), "%04d", item.version)}",
+                                                    fontWeight = FontWeight.Bold,
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                            }
+                                            Surface(
+                                                color = if (item.isCurrent) IncomeGreen else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (item.isCurrent) "CURRENT" else "SNAPSHOT",
+                                                    color = if (item.isCurrent) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.primary,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text(
+                                            text = "File: ${item.fileName}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+
+                                        item.createdTime?.let { timeStr ->
+                                            Text(
+                                                text = "Timestamp: $timeStr",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        if (item.transactionCount > 0) {
+                                            Text(
+                                                text = "Records: ${item.transactionCount} transactions",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+
+                                        if (!item.checksum.isNullOrBlank()) {
+                                            Text(
+                                                text = "Checksum: ${item.checksum.take(12)}...",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = {
+                                                targetRestoreVersion = item.version
+                                                showRestoreConfirmDialog = true
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (item.isCurrent) IncomeGreen else MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (item.isCurrent) "Restore Current Backup" else "Restore Snapshot v${item.version}",
+                                                style = MaterialTheme.typography.labelMedium
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showBackupHistoryDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // Google Drive Restore Confirmation Dialog
+    if (showRestoreConfirmDialog) {
+        val ver = targetRestoreVersion
+        AlertDialog(
+            onDismissRequest = {
+                if (!isDriveRestoring) showRestoreConfirmDialog = false
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (ver != null) "Restore Snapshot v$ver?" else "Restore Latest Backup?",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = if (ver != null)
+                            "You are about to restore your financial database to historical snapshot v$ver from Google Drive."
+                        else
+                            "You are about to restore your financial database from the latest Google Drive backup (detailsaboutbackup.json).",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "This will update your local database records. All operations are transactional and verified before applying.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDriveRestoring = true
+                        if (ver != null) {
+                            authViewModel?.restoreBackupVersion(ver) { success, msg ->
+                                isDriveRestoring = false
+                                showRestoreConfirmDialog = false
+                                if (success) {
+                                    statusNotificationMsg = msg ?: "Snapshot v$ver restored successfully!"
+                                    showBackupHistoryDialog = false
+                                    showGoogleDriveDialog = false
+                                } else {
+                                    driveMismatchError = msg ?: "Failed to restore version $ver"
+                                }
+                            }
+                        } else {
+                            authViewModel?.restoreLatestBackup { success, msg ->
+                                isDriveRestoring = false
+                                showRestoreConfirmDialog = false
+                                if (success) {
+                                    statusNotificationMsg = msg ?: "Latest backup restored successfully!"
+                                    showGoogleDriveDialog = false
+                                } else {
+                                    driveMismatchError = msg ?: "Failed to restore latest backup"
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isDriveRestoring,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    if (isDriveRestoring) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Restoring...")
+                    } else {
+                        Text("Confirm Restore")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showRestoreConfirmDialog = false },
+                    enabled = !isDriveRestoring
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // Formatted Feedback / Bug Report Dialog
     if (showFeedbackDialog) {
         val categoriesList = listOf(
-            "BUG_REPORT" to "Bug Report 🐛",
-            "STATEMENT_PARSING" to "Statement Parsing 📄",
-            "FEATURE_REQUEST" to "Feature Request 💡",
-            "GENERAL" to "General Feedback ⭐"
+            "BUG_REPORT" to "Bug Report",
+            "STATEMENT_PARSING" to "Statement Parsing",
+            "FEATURE_REQUEST" to "Feature Request",
+            "GENERAL" to "General Feedback"
         )
 
         AlertDialog(
@@ -2462,18 +2696,50 @@ fun SettingsScreen(
     if (showServerConfigDialog) {
         AlertDialog(
             onDismissRequest = { showServerConfigDialog = false },
-            title = { Text("Backend Server URL", fontWeight = FontWeight.Bold) },
+            title = { Text("Cloud & Auth Backend", fontWeight = FontWeight.Bold) },
             text = {
-                Column {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "Set the online server URL (e.g. https://yosan-backend.onrender.com/) or local address. Used for OTP login, Google sync, and feedback.",
+                        "Configure Supabase for zero-knowledge privacy-first auth and backup storage, or configure a fallback backend server.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "Supabase Project Settings:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = editedSupabaseUrl,
+                        onValueChange = { editedSupabaseUrl = it },
+                        label = { Text("Supabase URL") },
+                        placeholder = { Text("https://your-ref.supabase.co") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = editedSupabaseAnonKey,
+                        onValueChange = { editedSupabaseAnonKey = it },
+                        label = { Text("Supabase Anon Public Key") },
+                        placeholder = { Text("eyJhbGciOi...") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        "Fallback / Local Server URL:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
                     OutlinedTextField(
                         value = editedServerUrl,
                         onValueChange = { editedServerUrl = it },
-                        label = { Text("Server URL") },
+                        label = { Text("Backend Server URL") },
+                        placeholder = { Text("https://yosan-xgsd.onrender.com/") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2482,6 +2748,7 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        com.example.data.remote.ApiClient.setCustomSupabase(context, editedSupabaseUrl.ifBlank { null }, editedSupabaseAnonKey.ifBlank { null })
                         com.example.data.remote.ApiClient.setCustomBaseUrl(context, editedServerUrl.ifBlank { null })
                         currentServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -2493,6 +2760,7 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
+                        com.example.data.remote.ApiClient.setCustomSupabase(context, null, null)
                         com.example.data.remote.ApiClient.setCustomBaseUrl(context, null)
                         currentServerUrl = com.example.data.remote.ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -2501,6 +2769,108 @@ fun SettingsScreen(
                     Text("Reset Default")
                 }
             }
+        )
+    }
+
+    // Reassignment Dialog for Account Deletion
+    accountToDeleteWithReassign?.let { targetAcc ->
+        val otherAccounts = accounts.filter { it.id != targetAcc.id }
+        var selectedFallbackId by remember(targetAcc) { mutableStateOf(otherAccounts.firstOrNull()?.id ?: 1L) }
+        val linkedCount = allTransactions.count { it.accountId == targetAcc.id }
+
+        AlertDialog(
+            onDismissRequest = { accountToDeleteWithReassign = null },
+            icon = {
+                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+            },
+            title = {
+                Text("Reassign Transactions Before Delete", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text(
+                        "Account '${targetAcc.bankName}' has $linkedCount active transaction records.\n\nTo preserve your balance history and financial integrity, select the account to reassign these records to:"
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Fallback Account:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        otherAccounts.forEach { other ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { selectedFallbackId = other.id }
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                RadioButton(
+                                    selected = selectedFallbackId == other.id,
+                                    onClick = { selectedFallbackId = other.id }
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(other.bankName.ifBlank { other.accountName }, fontWeight = FontWeight.SemiBold)
+                                    Text(other.accountName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteAccountWithReassignment(targetAcc.id, selectedFallbackId)
+                        accountToDeleteWithReassign = null
+                        showAccountsDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Reassign & Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { accountToDeleteWithReassign = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Category Management Dialog
+    if (showCategoryDialog) {
+        CategoryManagementDialog(
+            categories = categories,
+            allTransactions = allTransactions,
+            onAddCategory = { name, type, colorHex ->
+                viewModel.addCategory(name, type, colorHex)
+            },
+            onUpdateCategory = { cat ->
+                viewModel.updateCategory(cat)
+            },
+            onDeleteCategory = { id ->
+                viewModel.deleteCategory(id)
+            },
+            onReassignAndDelete = { id, fallbackId, fallbackName ->
+                viewModel.reassignAndDeleteCategory(id, fallbackId, fallbackName)
+            },
+            onDismiss = { showCategoryDialog = false }
+        )
+    }
+
+    // Developer Details Dialog
+    if (showDeveloperDetailsDialog) {
+        DeveloperDetailsDialog(
+            onOpenWalkthrough = {
+                showDeveloperDetailsDialog = false
+                onOpenWalkthrough()
+            },
+            onOpenIntroNote = {
+                showDeveloperDetailsDialog = false
+                onOpenIntroNote()
+            },
+            onDismiss = { showDeveloperDetailsDialog = false }
         )
     }
 }
@@ -2951,6 +3321,466 @@ private fun UndoHistoryDialog(
         }
     )
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryManagementDialog(
+    categories: List<CategoryEntity>,
+    allTransactions: List<com.example.data.local.entity.TransactionEntity>,
+    onAddCategory: (String, CategoryType, String) -> Unit,
+    onUpdateCategory: (CategoryEntity) -> Unit,
+    onDeleteCategory: (Long) -> Unit,
+    onReassignAndDelete: (Long, Long, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedFilter by remember { mutableStateOf<CategoryType?>(null) }
+    var showAddCategoryDialog by remember { mutableStateOf(false) }
+    var editingCategory by remember { mutableStateOf<CategoryEntity?>(null) }
+    var categoryToDeleteWithReassign by remember { mutableStateOf<CategoryEntity?>(null) }
+
+    val filteredCategories = remember(categories, selectedFilter) {
+        if (selectedFilter == null) categories else categories.filter { it.type == selectedFilter }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Category,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Manage Categories", fontWeight = FontWeight.Bold)
+                }
+                IconButton(onClick = { showAddCategoryDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Add Category",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Category Type Filter Chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilterChip(
+                        selected = selectedFilter == null,
+                        onClick = { selectedFilter = null },
+                        label = { Text("All (${categories.size})") }
+                    )
+                    CategoryType.values().forEach { cType ->
+                        val count = categories.count { it.type == cType }
+                        FilterChip(
+                            selected = selectedFilter == cType,
+                            onClick = { selectedFilter = cType },
+                            label = { Text("${cType.name.lowercase().replaceFirstChar { it.uppercase() }} ($count)") }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(filteredCategories.size) { idx ->
+                        val cat = filteredCategories[idx]
+                        val txCount = remember(cat, allTransactions) {
+                            allTransactions.count { it.categoryId == cat.id || it.categoryName.equals(cat.name, ignoreCase = true) }
+                        }
+                        val colorParsed = remember(cat.colorHex) {
+                            try {
+                                Color(android.graphics.Color.parseColor(cat.colorHex))
+                            } catch (_: Exception) {
+                                Color(0xFF10B981)
+                            }
+                        }
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        color = colorParsed,
+                                        shape = CircleShape,
+                                        modifier = Modifier.size(16.dp)
+                                    ) {}
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = cat.name,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (cat.isSystem) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "System",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                                        fontSize = 10.sp
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            text = "${cat.type.name} • $txCount transactions",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { editingCategory = cat },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = "Edit Category",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            if (!cat.isSystem) {
+                                                if (txCount > 0) {
+                                                    categoryToDeleteWithReassign = cat
+                                                } else {
+                                                    onDeleteCategory(cat.id)
+                                                }
+                                            }
+                                        },
+                                        enabled = !cat.isSystem,
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.DeleteOutline,
+                                            contentDescription = "Delete Category",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = if (cat.isSystem) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss, shape = RoundedCornerShape(12.dp)) {
+                Text("Close")
+            }
+        }
+    )
+
+    // Add / Edit Category Dialog
+    if (showAddCategoryDialog || editingCategory != null) {
+        val isEditing = editingCategory != null
+        var catName by remember { mutableStateOf(editingCategory?.name ?: "") }
+        var catType by remember { mutableStateOf(editingCategory?.type ?: CategoryType.EXPENSE) }
+        var catColor by remember { mutableStateOf(editingCategory?.colorHex ?: "#3B82F6") }
+        var errorMessage by remember { mutableStateOf<String?>(null) }
+
+        val palette = listOf(
+            "#EF4444", "#10B981", "#3B82F6", "#8B5CF6",
+            "#F59E0B", "#EC4899", "#06B6D4", "#64748B", "#14B8A6"
+        )
+
+        AlertDialog(
+            onDismissRequest = {
+                showAddCategoryDialog = false
+                editingCategory = null
+            },
+            title = {
+                Text(if (isEditing) "Edit Category" else "Add New Category", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = catName,
+                        onValueChange = {
+                            catName = it
+                            errorMessage = null
+                        },
+                        label = { Text("Category Name") },
+                        placeholder = { Text("e.g. Subscriptions") },
+                        singleLine = true,
+                        isError = errorMessage != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    errorMessage?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+
+                    Text("Classification Type", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(CategoryType.EXPENSE, CategoryType.INCOME, CategoryType.INVESTMENT, CategoryType.OTHER).forEach { t ->
+                            FilterChip(
+                                selected = catType == t,
+                                onClick = { catType = t },
+                                label = { Text(t.name) }
+                            )
+                        }
+                    }
+
+                    Text("Category Color", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        palette.forEach { hex ->
+                            val c = try { Color(android.graphics.Color.parseColor(hex)) } catch (_: Exception) { Color.Gray }
+                            val isSel = catColor.equals(hex, ignoreCase = true)
+                            Surface(
+                                color = c,
+                                shape = CircleShape,
+                                border = if (isSel) BorderStroke(3.dp, MaterialTheme.colorScheme.onSurface) else null,
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clickable { catColor = hex }
+                            ) {}
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = catName.trim()
+                        if (trimmed.isBlank()) {
+                            errorMessage = "Category name cannot be empty"
+                            return@Button
+                        }
+                        val duplicate = categories.any {
+                            it.name.trim().equals(trimmed, ignoreCase = true) && (!isEditing || it.id != editingCategory?.id)
+                        }
+                        if (duplicate) {
+                            errorMessage = "Category '$trimmed' already exists"
+                            return@Button
+                        }
+                        if (isEditing) {
+                            editingCategory?.let { current ->
+                                onUpdateCategory(
+                                    current.copy(
+                                        name = trimmed,
+                                        type = catType,
+                                        colorHex = catColor,
+                                        updatedAt = System.currentTimeMillis()
+                                    )
+                                )
+                            }
+                        } else {
+                            onAddCategory(trimmed, catType, catColor)
+                        }
+                        showAddCategoryDialog = false
+                        editingCategory = null
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(if (isEditing) "Update" else "Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showAddCategoryDialog = false
+                    editingCategory = null
+                }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Category Deletion with Reassignment Dialog
+    categoryToDeleteWithReassign?.let { targetCat ->
+        val candidateFallbacks = remember(categories, targetCat) {
+            categories.filter { it.id != targetCat.id }
+        }
+        var selectedFallbackId by remember(targetCat) {
+            mutableStateOf(candidateFallbacks.firstOrNull()?.id ?: 1L)
+        }
+        val count = allTransactions.count { it.categoryId == targetCat.id || it.categoryName.equals(targetCat.name, ignoreCase = true) }
+
+        AlertDialog(
+            onDismissRequest = { categoryToDeleteWithReassign = null },
+            icon = {
+                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+            },
+            title = {
+                Text("Reassign Category Records", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text(
+                        "Category '${targetCat.name}' has $count linked transactions.\n\nTo prevent orphan transactions or calculation distortion, choose the category to reassign these records to:"
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Target Category:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 240.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        candidateFallbacks.forEach { fallback ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { selectedFallbackId = fallback.id }
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                RadioButton(
+                                    selected = selectedFallbackId == fallback.id,
+                                    onClick = { selectedFallbackId = fallback.id }
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(fallback.name, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val fallbackName = candidateFallbacks.firstOrNull { it.id == selectedFallbackId }?.name ?: "General"
+                        onReassignAndDelete(targetCat.id, selectedFallbackId, fallbackName)
+                        categoryToDeleteWithReassign = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Reassign & Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { categoryToDeleteWithReassign = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun DeveloperDetailsDialog(
+    onOpenWalkthrough: () -> Unit,
+    onOpenIntroNote: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Details About the Developer", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("Application", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text("Yosan Finance Manager", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("Version v${BuildConfig.VERSION_NAME} • Release", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text("Engineering Team", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text("Rooparaj & Gokulraj", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Architected with an offline-first, privacy-respecting methodology using Jetpack Compose, Room SQLite, Material 3 design system, and multi-threaded financial reconciliation.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss, shape = RoundedCornerShape(12.dp)) {
+                Text("Close")
+            }
+        }
+    )
+}
+
 
 
 

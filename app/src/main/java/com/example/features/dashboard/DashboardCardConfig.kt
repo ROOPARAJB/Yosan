@@ -29,15 +29,15 @@ data class DashboardCardItem(
 
 object DashboardCardConfigManager {
     val DEFAULT_CONFIG = listOf(
-        DashboardCardItem(DashboardCardType.PERSONAL_EXPENSE, true),
         DashboardCardItem(DashboardCardType.INCOME_CATEGORY, true),
         DashboardCardItem(DashboardCardType.CATEGORY_WISE, true),
+        DashboardCardItem(DashboardCardType.PERSONAL_EXPENSE, true),
         DashboardCardItem(DashboardCardType.OFFICIAL_EXPENSE, true),
-        DashboardCardItem(DashboardCardType.LEND, true),
+        DashboardCardItem(DashboardCardType.MONTHLY_BREAKDOWN, true),
         DashboardCardItem(DashboardCardType.BORROW, true),
+        DashboardCardItem(DashboardCardType.LEND, true),
         DashboardCardItem(DashboardCardType.INVESTMENT, true),
-        DashboardCardItem(DashboardCardType.ROTATIONAL, true),
-        DashboardCardItem(DashboardCardType.MONTHLY_BREAKDOWN, true)
+        DashboardCardItem(DashboardCardType.ROTATIONAL, true)
     )
 
     fun serialize(cards: List<DashboardCardItem>): String {

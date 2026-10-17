@@ -1,0 +1,147 @@
+REPORT SECTION IMPLEMENTATION PROMPT
+
+## Objective
+
+Implement and maintain the Reports section of the Yosan Finance Android application. Users can generate structured financial reports, preview them as formatted multi-page PDFs directly within the app, save them to the device using the Android Storage Access Framework, share them securely via the Android system share sheet, and synchronize report data reactively with the application's authoritative local database.
+
+**Definition of "Live Sync" in this Application:**
+Live Sync refers to the real-time reactive recalculation and synchronization of report datasets with the local Room SQLite database (`AppDatabase`). When transactions are added, edited, imported, or deleted, the report engine recalculates figures instantly using `FinancialCalculationService`, displaying the last synchronized timestamp. It does not imply external live bank syncing or unauthorized cloud transmission.
+
+## 1. Architecture and Components
+
+The Reports module is built using clean architecture principles:
+- Screen & Viewer: `app/src/main/java/com/example/features/reports/ReportsScreen.kt`
+- PDF Engine & Export: `app/src/main/java/com/example/features/reports/ExportService.kt`
+- Shared Calculations: `app/src/main/java/com/example/features/reports/FinancialCalculationService.kt`
+- View Models & Coordinators: `FinanceViewModel.kt`, `CompanyExpenseCoordinator.kt`
+- Automated Test Suite: `app/src/test/java/com/example/ReportsAndExportServiceTest.kt` (using Robolectric and custom PDF document shadows).
+
+## 2. Reports Dashboard
+
+Accessible from the main bottom navigation bar under "Reports".
+
+9 Supported Report Types:
+1. **Overall Financial Summary:** High-level executive balance sheet detailing Total Income, Total Expenses, Net Savings, Outstanding Company Reimbursements, Money Lent, and Money Borrowed.
+2. **Personal Expense Report:** Itemized personal spending records, grouped by category, excluding official company expenses, transfers, and loans.
+3. **Official / Company Expense Report:** Complete official expense audit report detailing Pending Claims, Submitted/Applied Claims, Approved Claims, Total Reimbursed, and Outstanding Reimbursements.
+4. **Income Report:** Itemized income and refund transactions grouped by income categories.
+5. **Spending by Category:** Category-wise breakdown with percentage share, transaction counts, and category totals.
+6. **Borrowing Report:** Tracks borrowed principal, repayments made, and outstanding liabilities owed to lenders.
+7. **Lending Report:** Tracks loans disbursed, repayments received, and outstanding receivables owed to the user.
+8. **Investment Report:** Capital asset contributions and investment transactions for the period.
+9. **Transfers / Rotational Transactions Report:** Internal account-to-account transfers, verifying zero net distortion on income and expenses.
+
+Each report dynamically computes report headers, reporting period, summary KPI cards, and an itemized data table.
+
+## 3. Report Filters
+
+The report screen provides interactive filter controls:
+- **Date Range Filters:**
+  * `DateRangeFilter.TODAY`
+  * `DateRangeFilter.THIS_WEEK`
+  * `DateRangeFilter.THIS_MONTH`
+  * `DateRangeFilter.THIS_YEAR`
+  * `DateRangeFilter.ALL_TIME`
+  * `DateRangeFilter.CUSTOM` (Interactive Material 3 date picker dialog with start and end date validation).
+- **Transaction Type & Category Filters:** Filter by specific categories (e.g. Food, Travel, Utilities) or transaction classifications.
+- **Account Filters:** Filter by specific bank or wallet account (`AccountEntity`).
+- **Claim Status Filters:** Filter official expenses by `ClaimStatus` (Pending, Submitted, Approved, Reimbursed).
+
+Filters apply identically to the on-screen UI preview, summary KPI cards, and generated PDF documents.
+
+## 4. Live Sync
+
+`ReportsScreen` provides a prominent **Sync / Refresh** action:
+- **Reactive Observation:** Observes Room database StateFlow streams for transactions, company expenses, loans, and accounts.
+- **On-Demand Refresh:** Tapping Sync triggers `viewModel.refreshReport()`, querying the database for the latest records and executing fresh recalculations.
+- **Timestamp Display:** Shows "Last synced: [time]" indicating the exact time of the last successful local sync.
+- **State Handling:** Renders loading progress indicators during intensive calculations and clear empty states when no records match filter criteria.
+
+Distinction of Actions:
+- **Refresh Report:** Recalculates metrics from the local Room database.
+- **Sync Data:** Synchronizes local database with Google Drive backup files.
+- **Generate PDF:** Renders current report data into a standardized PDF document.
+
+## 5. PDF Generation
+
+`ExportService.generatePdfReport()` utilizes Android's native `android.graphics.pdf.PdfDocument` and `Canvas` to generate print-ready A4 documents:
+- **Document Header:**
+  * Title: "YOSAN FINANCE"
+  * Report Name (e.g., "Official / Company Expense Report")
+  * Reporting Period (e.g., "2026-10-01 to 2026-10-15")
+  * Generated Timestamp (ISO / local formatted)
+- **Summary KPI Cards:** Key financial totals displayed in framed highlight boxes at the top of the report.
+- **Data Table:**
+  * Columns: Date, Description, Category, Type, Account, Amount, and Status/Reference.
+  * Formatted with alternating row backgrounds and clean borders.
+  * Descriptions wrap gracefully without overlapping or clipping text.
+  * Right-aligned monetary values formatted via `CurrencyFormatter.formatIndianCurrency()`.
+- **Pagination & Footer:** Multi-page layout with headers repeated across pages and footers indicating "Page X of Y" and confidentiality notices.
+- **Zero Corruption:** PDF generation is strictly read-only and never modifies database records.
+
+## 6. PDF Preview
+
+In-App Document Viewer:
+- After generation, opens an integrated PDF preview sheet in `ReportsScreen.kt`.
+- Built using Android's native `android.graphics.pdf.PdfRenderer`:
+  * Renders each PDF page into high-resolution bitmaps displayed in a scrollable, zoomable carousel.
+  * Page indicator showing current page and total pages.
+  * Toolbar with "Save PDF", "Share PDF", and "Close" actions.
+- Displays the actual rendered PDF bytes, guaranteeing 100% visual fidelity with exported files.
+
+## 7. Save, Export, and Share
+
+Supported Export Actions:
+1. **Save PDF (SAF):**
+   - Uses Android Storage Access Framework (`ActivityResultContracts.CreateDocument("application/pdf")`).
+   - Default suggested filename: `Yosan_Finance_[ReportType]_[Date].pdf`.
+   - Writes directly to user-selected storage location (Internal Storage, SD Card, or cloud folder).
+   - Shows confirmation snackbar with destination confirmation upon write completion.
+2. **Share PDF:**
+   - Saves temporary PDF copy to app-specific cache directory (`cacheDir/reports/`).
+   - Generates secure content URI via `FileProvider` (`content://com.example.fileprovider/cache_reports/...`).
+   - Launches Android system share sheet (`Intent.ACTION_SEND`, `Intent.EXTRA_STREAM`) to share directly with email, messaging, or drive apps.
+
+## 8. Report Accuracy and Data Integrity
+
+Calculations use the single shared `FinancialCalculationService`:
+- Consistent date parsing and timezone boundaries (`DateUtils.parseIsoDate()`).
+- Decimal-safe monetary arithmetic avoiding floating point rounding drift.
+- Official Expense Rules:
+  * Approved Claim = ₹10,000, Reimbursed = ₹6,000 -> Total Reimbursed = ₹6,000, Outstanding Reimbursement = ₹4,000.
+  * Reimbursement payments are never treated as income or double-counted as expenses.
+- Internal Transfers: Self-account transfers are balanced to zero net effect.
+- Lending & Borrowing: Principal is isolated from income/expense calculations.
+- PDF totals are mathematically identical to on-screen report cards.
+
+## 9. User Experience
+
+- Responsive Material 3 design conforming to dynamic light and dark themes.
+- Clear empty-state illustrations when no records exist for the chosen date range.
+- Loading indicator while rendering complex multi-page PDF documents.
+- Error handling with retry buttons if file write or PDF generation encounters errors.
+
+## 10. Privacy and Security
+
+- Zero Cloud Leakage: PDF generation and previews occur 100% locally on the device.
+- No Sensitive Credential Exposure: Tokens, passwords, and private auth keys are never included in reports.
+- Safe Temporary File Storage: Shared files are kept in private app cache with temporary read permissions granted exclusively via Android `FileProvider`.
+
+## 11. Testing
+
+Verified by automated unit tests in `ReportsAndExportServiceTest.kt`:
+- `testDateRangeFilterMatching`: Validates Today, This Week, This Month, This Year, All Time, and Custom Range filters.
+- `testComputeBorrowSummaries`: Validates borrowing summaries and outstanding debt calculations.
+- `testComputeOfficialExpenseReportTotals`: Validates pending, submitted, approved, and reimbursed claim accounting in reports.
+- `testPdfDocumentGenerationAndMockCanvas`: Validates multi-page PDF generation, table wrapping, and stream writing using Robolectric PDF shadows.
+
+## 12. Final Deliverables
+
+- UI & Preview Screen: `app/src/main/java/com/example/features/reports/ReportsScreen.kt`
+- PDF Rendering Service: `app/src/main/java/com/example/features/reports/ExportService.kt`
+- Calculation Engine: `app/src/main/java/com/example/features/reports/FinancialCalculationService.kt`
+- Robolectric Test Suite: `app/src/test/java/com/example/ReportsAndExportServiceTest.kt`
+
+## Definition of Done
+
+The Reports section provides 9 fully functional report types, dynamic date and category filtering, reactive local live sync, on-device multi-page PDF generation, interactive in-app preview, secure SAF saving and FileProvider sharing, and 100% mathematical consistency with dashboard figures.

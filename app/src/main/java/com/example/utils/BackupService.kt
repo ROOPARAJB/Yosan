@@ -30,11 +30,32 @@ data class RestoreResult(
 
 object BackupService {
 
-    suspend fun generateBackupJsonObject(database: AppDatabase): JSONObject {
+    fun calculateChecksum(data: String): String {
+        return try {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val bytes = md.digest(data.toByteArray(Charsets.UTF_8))
+            bytes.joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            UUID.randomUUID().toString().replace("-", "")
+        }
+    }
+
+    suspend fun generateBackupJsonObject(database: AppDatabase, backupVersion: Int = 1): JSONObject {
         val root = JSONObject()
-        root.put("version", 1)
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+        val nowIso = isoFormat.format(Date())
+
+        root.put("application", "Yosan Finance")
         root.put("appName", "Yosan")
+        root.put("backup_id", UUID.randomUUID().toString())
+        root.put("backup_version", backupVersion)
+        root.put("schema_version", 1)
+        root.put("version", backupVersion)
         root.put("createdAt", System.currentTimeMillis())
+        root.put("created_at", nowIso)
+        root.put("updated_at", nowIso)
 
         // 1. User Profile
         try {
@@ -159,13 +180,18 @@ object BackupService {
                 if (tx.transferId != null) obj.put("transferId", tx.transferId)
                 if (tx.linkedLoanId != null) obj.put("linkedLoanId", tx.linkedLoanId)
                 if (tx.advanceId != null) obj.put("advanceId", tx.advanceId)
+                if (tx.importId != null) obj.put("importId", tx.importId)
                 obj.put("createdAt", tx.createdAt)
                 obj.put("updatedAt", tx.updatedAt)
                 txArray.put(obj)
             }
             root.put("transactions", txArray)
+            root.put("transaction_count", txArray.length())
+            root.put("checksum", calculateChecksum(txArray.toString()))
         } catch (e: Exception) {
             android.util.Log.e("BackupService", "Error serializing transactions", e)
+            if (!root.has("transaction_count")) root.put("transaction_count", 0)
+            if (!root.has("checksum")) root.put("checksum", "")
         }
 
         // 6. Loans
@@ -227,6 +253,11 @@ object BackupService {
                 obj.put("category", comp.category)
                 obj.put("paymentMethod", comp.paymentMethod)
                 obj.put("isReimbursed", comp.isReimbursed)
+                obj.put("claimStatus", comp.claimStatus)
+                if (comp.submittedDate != null) obj.put("submittedDate", comp.submittedDate)
+                if (comp.approvedAmount != null) obj.put("approvedAmount", comp.approvedAmount)
+                obj.put("reimbursedAmount", comp.reimbursedAmount)
+                if (comp.advanceId != null) obj.put("advanceId", comp.advanceId)
                 obj.put("notes", comp.notes)
                 obj.put("createdAt", comp.createdAt)
                 obj.put("updatedAt", comp.updatedAt)
@@ -235,6 +266,33 @@ object BackupService {
             root.put("companyExpenses", compArray)
         } catch (e: Exception) {
             android.util.Log.e("BackupService", "Error serializing company expenses", e)
+        }
+
+        // 9. Statement Imports
+        try {
+            val statementImports = database.statementImportDao().getAllImportsList()
+            val stmtArray = JSONArray()
+            statementImports.forEach { stmt ->
+                val obj = JSONObject()
+                obj.put("id", stmt.id)
+                obj.put("fileName", stmt.fileName)
+                obj.put("bankName", stmt.bankName)
+                obj.put("importTimestamp", stmt.importTimestamp)
+                obj.put("totalParsed", stmt.totalParsed)
+                obj.put("importedCount", stmt.importedCount)
+                obj.put("duplicateCount", stmt.duplicateCount)
+                obj.put("auditStatus", stmt.auditStatus)
+                if (stmt.openingBalance != null) obj.put("openingBalance", stmt.openingBalance)
+                if (stmt.closingBalance != null) obj.put("closingBalance", stmt.closingBalance)
+                obj.put("totalDebits", stmt.totalDebits)
+                obj.put("totalCredits", stmt.totalCredits)
+                obj.put("discrepancyCount", stmt.discrepancyCount)
+                obj.put("notes", stmt.notes)
+                stmtArray.put(obj)
+            }
+            root.put("statementImports", stmtArray)
+        } catch (e: Exception) {
+            android.util.Log.e("BackupService", "Error serializing statement imports", e)
         }
 
         return root
@@ -302,7 +360,11 @@ object BackupService {
         }
     }
 
-    suspend fun restoreBackupJson(jsonString: String, database: AppDatabase): RestoreResult {
+    suspend fun restoreBackupJson(
+        jsonString: String,
+        database: AppDatabase,
+        clearExisting: Boolean = true
+    ): RestoreResult {
         return try {
             val cleanJson = jsonString.trim().removePrefix("\uFEFF")
             if (cleanJson.isBlank()) {
@@ -310,6 +372,18 @@ object BackupService {
             }
 
             val root = JSONObject(cleanJson)
+            val appName = root.optString("application", root.optString("appName", ""))
+            if (appName.isBlank() && !root.has("transactions") && !root.has("accounts")) {
+                return RestoreResult(false, "Unrecognized or corrupted backup file format")
+            }
+
+            val expectedChecksum = root.optString("checksum")
+            if (expectedChecksum.isNotBlank() && root.has("transactions")) {
+                val actual = calculateChecksum(root.getJSONArray("transactions").toString())
+                if (actual != expectedChecksum) {
+                    android.util.Log.w("BackupService", "Backup checksum warning: expected $expectedChecksum, computed $actual")
+                }
+            }
 
             var accCount = 0
             var txCount = 0
@@ -317,14 +391,17 @@ object BackupService {
             var compCount = 0
 
             database.withTransaction {
-                // Purge tables that are present in the backup before restoring to prevent duplicates
-                if (root.has("transactions")) database.transactionDao().deleteAllTransactions()
-                if (root.has("loans")) database.loanDao().deleteAllLoans()
-                if (root.has("loanRepayments")) database.loanRepaymentDao().deleteAllRepayments()
-                if (root.has("companyExpenses")) database.companyExpenseDao().deleteAllCompanyExpenses()
-                if (root.has("accounts")) database.accountDao().deleteAllAccounts()
-                if (root.has("categories")) database.categoryDao().deleteAllCategories()
-                if (root.has("rules")) database.categorizationRuleDao().deleteAllRules()
+                // Purge tables only if clearExisting is true
+                if (clearExisting) {
+                    if (root.has("transactions")) database.transactionDao().deleteAllTransactions()
+                    if (root.has("loans")) database.loanDao().deleteAllLoans()
+                    if (root.has("loanRepayments")) database.loanRepaymentDao().deleteAllRepayments()
+                    if (root.has("companyExpenses")) database.companyExpenseDao().deleteAllCompanyExpenses()
+                    if (root.has("accounts")) database.accountDao().deleteAllAccounts()
+                    if (root.has("categories")) database.categoryDao().deleteAllCategories()
+                    if (root.has("rules")) database.categorizationRuleDao().deleteAllRules()
+                    if (root.has("statementImports")) database.statementImportDao().deleteAllImports()
+                }
 
                 // 1. User Profile
             if (root.has("userProfile")) {
@@ -486,6 +563,7 @@ object BackupService {
                                 transferId = if (obj.has("transferId") && !obj.isNull("transferId")) obj.optString("transferId") else null,
                                 linkedLoanId = if (obj.has("linkedLoanId") && !obj.isNull("linkedLoanId")) obj.optLong("linkedLoanId") else null,
                                 advanceId = if (obj.has("advanceId") && !obj.isNull("advanceId")) obj.optString("advanceId") else null,
+                                importId = if (obj.has("importId") && !obj.isNull("importId")) obj.optLong("importId") else null,
                                 createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                             )
@@ -569,6 +647,12 @@ object BackupService {
                     val compList = mutableListOf<CompanyExpenseEntity>()
                     for (i in 0 until compArray.length()) {
                         val obj = compArray.getJSONObject(i)
+                        val isReimbursed = obj.optBoolean("isReimbursed", false)
+                        val claimStatus = obj.optString("claimStatus", if (isReimbursed) ClaimStatus.APPROVED else ClaimStatus.PENDING)
+                        val submittedDate = if (obj.has("submittedDate") && !obj.isNull("submittedDate")) obj.optString("submittedDate") else null
+                        val approvedAmount = if (obj.has("approvedAmount") && !obj.isNull("approvedAmount")) obj.optDouble("approvedAmount") else (if (isReimbursed) obj.optDouble("amount", 0.0) else null)
+                        val reimbursedAmount = obj.optDouble("reimbursedAmount", if (isReimbursed) obj.optDouble("amount", 0.0) else 0.0)
+                        val advanceId = if (obj.has("advanceId") && !obj.isNull("advanceId")) obj.optString("advanceId") else null
                         compList.add(
                             CompanyExpenseEntity(
                                 id = obj.optLong("id", 0L),
@@ -578,7 +662,12 @@ object BackupService {
                                 companyName = obj.optString("companyName", "Corporate"),
                                 category = obj.optString("category", "Official Expense"),
                                 paymentMethod = obj.optString("paymentMethod", "UPI"),
-                                isReimbursed = obj.optBoolean("isReimbursed", false),
+                                isReimbursed = isReimbursed,
+                                claimStatus = claimStatus,
+                                submittedDate = submittedDate,
+                                approvedAmount = approvedAmount,
+                                reimbursedAmount = reimbursedAmount,
+                                advanceId = advanceId,
                                 notes = obj.optString("notes", ""),
                                 createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
                                 updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
@@ -591,6 +680,42 @@ object BackupService {
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("BackupService", "Error restoring company expenses", e)
+                }
+            }
+
+            // 9. Statement Imports
+            if (root.has("statementImports")) {
+                try {
+                    val stmtArray = root.getJSONArray("statementImports")
+                    val stmtList = mutableListOf<StatementImportEntity>()
+                    for (i in 0 until stmtArray.length()) {
+                        val obj = stmtArray.getJSONObject(i)
+                        stmtList.add(
+                            StatementImportEntity(
+                                id = obj.optLong("id", 0L),
+                                fileName = obj.optString("fileName", ""),
+                                bankName = obj.optString("bankName", ""),
+                                importTimestamp = obj.optLong("importTimestamp", System.currentTimeMillis()),
+                                totalParsed = obj.optInt("totalParsed", 0),
+                                importedCount = obj.optInt("importedCount", 0),
+                                duplicateCount = obj.optInt("duplicateCount", 0),
+                                auditStatus = obj.optString("auditStatus", StatementAuditStatus.PASS),
+                                openingBalance = if (obj.has("openingBalance") && !obj.isNull("openingBalance")) obj.optDouble("openingBalance") else null,
+                                closingBalance = if (obj.has("closingBalance") && !obj.isNull("closingBalance")) obj.optDouble("closingBalance") else null,
+                                totalDebits = obj.optDouble("totalDebits", 0.0),
+                                totalCredits = obj.optDouble("totalCredits", 0.0),
+                                discrepancyCount = obj.optInt("discrepancyCount", 0),
+                                notes = obj.optString("notes", "")
+                            )
+                        )
+                    }
+                    if (stmtList.isNotEmpty()) {
+                        for (stmt in stmtList) {
+                            database.statementImportDao().insertImport(stmt)
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("BackupService", "Error restoring statement imports", e)
                 }
             }
             }

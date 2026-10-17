@@ -1,0 +1,267 @@
+package com.example.features.drive
+
+import android.content.Context
+import android.util.Log
+import com.example.data.local.AppDatabase
+import com.example.data.remote.*
+import com.example.utils.BackupService
+import com.example.utils.RestoreResult
+import com.example.utils.SecureTokenManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+
+sealed class DriveOperationResult<out T> {
+    data class Success<out T>(val data: T, val message: String = "") : DriveOperationResult<T>()
+    data class Error(val message: String, val code: String = "DRIVE_ERROR") : DriveOperationResult<Nothing>()
+}
+
+class GoogleDriveService(
+    private val context: Context,
+    private val tokenManager: SecureTokenManager
+) {
+    private val TAG = "GoogleDriveService"
+    private val driveApi: GoogleDriveApi = ApiClient.getGoogleDriveApi()
+
+    fun isConnected(): Boolean {
+        return tokenManager.isDriveConnected()
+    }
+
+    fun getConnectedDriveEmail(): String? {
+        return tokenManager.getDriveEmail()
+    }
+
+    fun disconnectDrive() {
+        tokenManager.clearDriveTokens()
+        Log.i(TAG, "Google Drive disconnected locally")
+    }
+
+    /**
+     * Resolves the root "Yosan-Backup" folder ID, creating it if it does not yet exist.
+     * Prevents duplicate folder creation by querying first.
+     */
+    suspend fun getOrCreateRootFolder(bearerToken: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val query = "mimeType = 'application/vnd.google-apps.folder' and name = 'Yosan-Backup' and trashed = false"
+            val response = driveApi.listFiles(bearerToken = "Bearer $bearerToken", query = query)
+            if (response.isSuccessful && response.body() != null) {
+                val existing = response.body()!!.files.firstOrNull()
+                if (existing != null) {
+                    return@withContext existing.id
+                }
+            }
+
+            // Create Yosan-Backup folder
+            val folderMetadata = GoogleDriveFileDto(
+                name = "Yosan-Backup",
+                mimeType = "application/vnd.google-apps.folder"
+            )
+            val createRes = driveApi.createMetadata(bearerToken = "Bearer $bearerToken", metadata = folderMetadata)
+            if (createRes.isSuccessful && createRes.body() != null) {
+                return@withContext createRes.body()!!.id
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resolving root Drive folder: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Resolves the "versions" subfolder inside "Yosan-Backup", creating it if missing.
+     */
+    suspend fun getOrCreateVersionsFolder(bearerToken: String, rootFolderId: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val query = "mimeType = 'application/vnd.google-apps.folder' and name = 'versions' and '${rootFolderId}' in parents and trashed = false"
+            val response = driveApi.listFiles(bearerToken = "Bearer $bearerToken", query = query)
+            if (response.isSuccessful && response.body() != null) {
+                val existing = response.body()!!.files.firstOrNull()
+                if (existing != null) {
+                    return@withContext existing.id
+                }
+            }
+
+            // Create versions subfolder
+            val folderMetadata = GoogleDriveFileDto(
+                name = "versions",
+                mimeType = "application/vnd.google-apps.folder",
+                parents = listOf(rootFolderId)
+            )
+            val createRes = driveApi.createMetadata(bearerToken = "Bearer $bearerToken", metadata = folderMetadata)
+            if (createRes.isSuccessful && createRes.body() != null) {
+                return@withContext createRes.body()!!.id
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resolving versions subfolder: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Uploads or updates a JSON backup file in the specified Google Drive folder.
+     */
+    suspend fun uploadJsonFile(
+        bearerToken: String,
+        folderId: String,
+        fileName: String,
+        jsonString: String
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            // Check if file already exists in folder
+            val query = "name = '$fileName' and '$folderId' in parents and trashed = false"
+            val listRes = driveApi.listFiles(bearerToken = "Bearer $bearerToken", query = query)
+            val existingFile = listRes.body()?.files?.firstOrNull()
+
+            val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+            val requestBody = jsonString.toRequestBody(mediaType)
+
+            if (existingFile != null) {
+                // Update media content of existing file
+                val updateRes = driveApi.updateMedia(
+                    bearerToken = "Bearer $bearerToken",
+                    fileId = existingFile.id,
+                    body = requestBody
+                )
+                if (updateRes.isSuccessful && updateRes.body() != null) {
+                    return@withContext updateRes.body()!!.id
+                }
+            } else {
+                // Construct multipart creation
+                val boundary = "YosanDriveBoundary_" + System.currentTimeMillis()
+                val metadataJson = """{"name":"$fileName","parents":["$folderId"],"mimeType":"application/json"}"""
+
+                val multipartContent = buildString {
+                    append("--$boundary\r\n")
+                    append("Content-Type: application/json; charset=UTF-8\r\n\r\n")
+                    append(metadataJson)
+                    append("\r\n--$boundary\r\n")
+                    append("Content-Type: application/json\r\n\r\n")
+                    append(jsonString)
+                    append("\r\n--$boundary--\r\n")
+                }
+
+                val multipartBody = multipartContent.toRequestBody("multipart/related; boundary=$boundary".toMediaTypeOrNull())
+                val uploadRes = driveApi.uploadMultipart(
+                    bearerToken = "Bearer $bearerToken",
+                    multipartBody = multipartBody
+                )
+                if (uploadRes.isSuccessful && uploadRes.body() != null) {
+                    return@withContext uploadRes.body()!!.id
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error uploading JSON to Drive: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Downloads file contents by file ID.
+     */
+    suspend fun downloadJsonFile(bearerToken: String, fileId: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val response = driveApi.downloadMedia(bearerToken = "Bearer $bearerToken", fileId = fileId)
+            if (response.isSuccessful && response.body() != null) {
+                return@withContext response.body()!!.string()
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error downloading Drive file: ${e.message}", e)
+            null
+        }
+    }
+
+    /**
+     * Performs a complete backup cycle directly to user's Google Drive:
+     * 1. Generates JSON backup payload with SHA-256 checksum.
+     * 2. Finds/creates "Yosan-Backup" root and "versions" subfolder.
+     * 3. Writes historical snapshot `versions/backup-v%04d.json`.
+     * 4. Updates root `detailsaboutbackup.json`.
+     */
+    suspend fun performDirectDriveBackup(
+        database: AppDatabase,
+        nextVersion: Int
+    ): DriveOperationResult<DriveBackupVersionDto> = withContext(Dispatchers.IO) {
+        val driveToken = tokenManager.getDriveAccessToken()
+        if (driveToken.isNullOrBlank()) {
+            return@withContext DriveOperationResult.Error(
+                "Google Drive access token missing. Please connect Google Drive in Settings.",
+                "DRIVE_NOT_CONNECTED"
+            )
+        }
+
+        try {
+            val rootFolderId = getOrCreateRootFolder(driveToken)
+                ?: return@withContext DriveOperationResult.Error("Could not access 'Yosan-Backup' folder on Google Drive.")
+
+            val versionsFolderId = getOrCreateVersionsFolder(driveToken, rootFolderId)
+                ?: return@withContext DriveOperationResult.Error("Could not access 'versions' directory on Google Drive.")
+
+            val backupJson = BackupService.generateBackupJsonObject(database, nextVersion)
+            val jsonStr = backupJson.toString(2)
+
+            // 1. Save versioned snapshot: versions/backup-v%04d.json
+            val snapshotName = "backup-v%04d.json".format(nextVersion)
+            uploadJsonFile(driveToken, versionsFolderId, snapshotName, jsonStr)
+
+            // 2. Update current backup file: detailsaboutbackup.json
+            val currentFileId = uploadJsonFile(driveToken, rootFolderId, "detailsaboutbackup.json", jsonStr)
+                ?: return@withContext DriveOperationResult.Error("Failed to update 'detailsaboutbackup.json' on Google Drive.")
+
+            val dto = DriveBackupVersionDto(
+                version = nextVersion,
+                fileName = "detailsaboutbackup.json",
+                fileId = currentFileId,
+                isCurrent = true,
+                createdTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).format(java.util.Date())
+            )
+
+            DriveOperationResult.Success(dto, "Successfully backed up to Google Drive (v$nextVersion)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Direct Drive backup failed: ${e.message}", e)
+            DriveOperationResult.Error(e.localizedMessage ?: "Google Drive backup failed")
+        }
+    }
+
+    /**
+     * Downloads and restores the latest backup from Google Drive.
+     */
+    suspend fun restoreLatestFromDrive(
+        database: AppDatabase
+    ): DriveOperationResult<RestoreResult> = withContext(Dispatchers.IO) {
+        val driveToken = tokenManager.getDriveAccessToken()
+        if (driveToken.isNullOrBlank()) {
+            return@withContext DriveOperationResult.Error(
+                "Google Drive not connected. Please connect Google Drive first.",
+                "DRIVE_NOT_CONNECTED"
+            )
+        }
+
+        try {
+            val rootFolderId = getOrCreateRootFolder(driveToken)
+                ?: return@withContext DriveOperationResult.Error("Google Drive folder 'Yosan-Backup' not found.")
+
+            val query = "name = 'detailsaboutbackup.json' and '$rootFolderId' in parents and trashed = false"
+            val listRes = driveApi.listFiles(bearerToken = "Bearer $driveToken", query = query)
+            val currentFile = listRes.body()?.files?.firstOrNull()
+                ?: return@withContext DriveOperationResult.Error("No backup found in your Google Drive 'Yosan-Backup' folder.")
+
+            val jsonContent = downloadJsonFile(driveToken, currentFile.id)
+                ?: return@withContext DriveOperationResult.Error("Failed to download backup content from Google Drive.")
+
+            val restoreResult = BackupService.restoreBackupJson(jsonContent, database, clearExisting = true)
+            if (restoreResult.success) {
+                DriveOperationResult.Success(restoreResult, "Google Drive backup restored successfully!")
+            } else {
+                DriveOperationResult.Error(restoreResult.message)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Direct Drive restore failed: ${e.message}", e)
+            DriveOperationResult.Error(e.localizedMessage ?: "Failed to restore backup from Google Drive")
+        }
+    }
+}

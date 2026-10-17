@@ -666,6 +666,7 @@ class TransactionCoordinator(
     fun clearAllUserData(onComplete: (() -> Unit)? = null) {
         scope.launch(Dispatchers.IO) {
             try {
+                database.statementImportDao().deleteAllImports()
                 database.transactionDao().deleteAllTransactions()
                 database.loanDao().deleteAllLoans()
                 database.loanRepaymentDao().deleteAllRepayments()
@@ -674,6 +675,7 @@ class TransactionCoordinator(
                 database.categorizationRuleDao().deleteAllRules()
                 database.undoDao().clearUndoHistory()
                 database.syncDao().clearAllDeletedTransactions()
+                database.syncDao().deleteAllMetadata()
 
                 database.categoryDao().deleteAllCategories()
                 database.categoryDao().insertCategories(CategoryEntity.DEFAULT_CATEGORIES)
@@ -741,9 +743,33 @@ class TransactionCoordinator(
 
     fun deleteAccount(id: Long) {
         scope.launch {
+            try {
+                val acc = repository.getAccountById(id)
+                if (acc != null) {
+                    database.statementImportDao().deleteImportsByBankName(acc.accountName)
+                }
+            } catch (_: Exception) {}
             repository.deleteAccount(id)
             recalculateAllAccountBalances()
             showMessage("Account deleted")
+        }
+    }
+
+    fun deleteAccountWithReassignment(id: Long, fallbackAccountId: Long) {
+        scope.launch {
+            try {
+                val list = database.transactionDao().getAllTransactionsList()
+                var count = 0
+                list.filter { it.accountId == id }.forEach { tx ->
+                    database.transactionDao().updateTransaction(tx.copy(accountId = fallbackAccountId, updatedAt = System.currentTimeMillis()))
+                    count++
+                }
+                repository.deleteAccount(id)
+                recalculateAllAccountBalances()
+                showMessage("Account deleted ($count transactions reassigned)")
+            } catch (e: Exception) {
+                showMessage("Failed to delete account: ${e.message}")
+            }
         }
     }
 

@@ -27,8 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.CompanyExpenseEntity
 import com.example.features.transactions.FinanceViewModel
-import com.example.ui.components.EmptyState
-import com.example.ui.components.MetricCard
+import com.example.ui.components.*
 import com.example.ui.theme.*
 import com.example.utils.CurrencyFormatter
 import com.example.utils.DateUtils
@@ -52,6 +51,7 @@ fun OfficialExpensesScreen(
 ) {
     val companyExpenses by viewModel.companyExpenses.collectAsState()
     val allTransactions by viewModel.allTransactions.collectAsState()
+    val isDataLoaded by viewModel.isDataLoaded.collectAsState()
     val selectedExpenseIds = remember { mutableStateListOf<Long>() }
     var editingExpense by remember { mutableStateOf<CompanyExpenseEntity?>(null) }
     var showEditDialog by remember { mutableStateOf(false) }
@@ -583,6 +583,10 @@ fun OfficialExpensesScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
                 }
+            }
+        } else if (!isDataLoaded) {
+            item {
+                SkeletonOfficialExpensesLoading()
             }
         } else if (filteredExpenses.isEmpty()) {
             item {

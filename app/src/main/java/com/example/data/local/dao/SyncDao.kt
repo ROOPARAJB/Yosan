@@ -40,4 +40,7 @@ interface SyncDao {
 
     @Query("DELETE FROM sync_metadata WHERE `key` = :key")
     suspend fun deleteMetadata(key: String)
+
+    @Query("DELETE FROM sync_metadata")
+    suspend fun deleteAllMetadata()
 }

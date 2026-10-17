@@ -1,0 +1,183 @@
+# YOSAN FINANCE — BANK STATEMENT IMPORT, AUDIT, AND ENTRY MANAGEMENT PROMPT
+
+## Objective
+
+Enhance and maintain the Statement import, audit, review, and entry management section of the Yosan Finance Android application. Bank statement import is a primary automated data ingestion pipeline for financial records.
+
+Users can import supported bank statements in PDF and Excel (XLSX/CSV/TSV) formats, parse required transaction fields with high fidelity, review extracted records, execute a deterministic multi-point audit against source statement figures, and safely commit or manage records in the local database.
+
+**Supported Banks & Verified Statement Formats:**
+1. **Indian Bank:**
+   - Supported Formats: Excel (`.xlsx`), CSV, and TSV statements.
+   - Verified Reference: "Indian Bank august.xlsx" (151 transactions, Total Debits: ₹47,469.30, Total Credits: ₹47,472.07).
+   - Layout Recognition: Recognizes headers containing "INDIAN BANK", "Avvai Shanmugam Salai", "Txn Date", "Description", "Cheque No", "Debit Amount", "Credit Amount", "Balance".
+2. **YES BANK:**
+   - Supported Formats: Text-based PDF statements (`.pdf`), CSV, and TSV statements.
+   - Verified Reference: "Yesbank August.pdf" (43 transactions, Total Debits: ₹17,341.29, Total Credits: ₹20,195.00).
+   - Layout Recognition: Recognizes "YES BANK LIMITED", "CIN - L65190MH2003PLC143249", extracting multiline transaction descriptions and NEFT/UPI reference numbers.
+
+## 1. Implementation Architecture and Components
+
+The Statement section is implemented with modular, testable components:
+- UI & Review: `app/src/main/java/com/example/features/import/ImportStatementScreen.kt`
+- Parsing & Reconciliation Engine: `app/src/main/java/com/example/features/import/StatementImportService.kt`
+- Transaction Coordinator: `app/src/main/java/com/example/features/transactions/coordinator/StatementImportCoordinator.kt`
+- Database Entities: `StatementImportEntity.kt` (history), `TransactionEntity.kt` (financial records), `CategorizationRuleEntity.kt` (smart matching).
+- DAOs: `StatementImportDao.kt`, `TransactionDao.kt`, `CategorizationRuleDao.kt`.
+- Comprehensive Unit Tests: `app/src/test/java/com/example/StatementImportServiceTest.kt`.
+
+## 2. Import a Statement
+
+Access and Workflow:
+1. Entry Point: "Import a Statement" button on Dashboard and Navigation bar.
+2. System File Picker: Uses Android Storage Access Framework (`ActivityResultContracts.OpenDocument`) supporting MIME types:
+   - `application/pdf`
+   - `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (.xlsx)
+   - `text/csv`, `text/tab-separated-values`, `text/plain`
+3. Bank Auto-Detection: `StatementImportService.detectBank()` evaluates content headers and file naming heuristics to select `SupportedBank.INDIAN_BANK`, `SupportedBank.YES_BANK`, or `SupportedBank.UNKNOWN`.
+4. Password Protection: Prompts for statement password if a PDF is encrypted.
+5. Ingestion Pipeline:
+   - Validates file structure and decodes rows/lines.
+   - Normalizes dates, descriptions, amounts, and running balances.
+   - Runs user categorization rules to suggest category and transaction type.
+   - Performs deterministic mathematical audit.
+   - Displays parsed rows in the Review Screen before database persistence.
+
+## 3. Parsed Fields & Bank-Specific Parsing
+
+Fields Extracted per Transaction:
+- Transaction Date: Normalized to `yyyy-MM-dd`.
+- Description / Narration: Cleaned multiline narration preserving merchant, recipient, and UPI handles.
+- Reference / Cheque Number: Extracted UTR, UPI reference, or cheque ID.
+- Debit Amount: Money debited (positive float/double).
+- Credit Amount: Money credited (positive float/double).
+- Running Balance: Account balance immediately following transaction execution.
+- Suggested Transaction Type: `TransactionType.EXPENSE`, `TransactionType.INCOME`, or `TransactionType.TRANSFER`.
+- Suggested Category: Auto-categorized via keyword matching rules (`CategorizationRuleEntity`).
+
+Parsing Rules:
+- Multi-line description wrapping: Joins continuation lines to previous transaction description without creating orphaned rows.
+- Summary Line Exclusion: Ignores opening balance rows, total debits/credits summary rows, page headers, column headers, and footers.
+- Decimal-Safe Amount Parsing: Removes comma separators, whitespace, and currency symbols (`₹`, `INR`, `Rs.`), parsing cleanly to exact Double precision.
+- Running Balance Tracking: Captures Dr/Cr indicators and converts to signed balance values.
+
+Smart Categorization Rules:
+- Automatically matches descriptions against stored `CategorizationRuleEntity` patterns.
+- Supports `MatchType.CONTAINS`, `EXACT`, `STARTS_WITH`, and `REGEX` with rule priorities.
+- Pre-fills suggested category and type in the review table.
+
+## 4. Statement Review Screen
+
+The review screen (`ImportStatementScreen.kt`) provides complete visibility before committing records:
+- Summary Header Card:
+  * Detected Bank badge (`Indian Bank`, `YES BANK`, or `Unknown Bank`)
+  * Source File Name and File Size
+  * Total Rows Detected vs Valid Parsed Rows
+  * Transactions Requiring Review count
+  * Potential Duplicates count
+  * Audit Result Banner (`PASS`, `REVIEW REQUIRED`, or `INCOMPLETE`)
+- Interactive Data Table:
+  * Columns: Date, Description, Type, Category (dropdown selector), Debit, Credit, Balance, Reference.
+  * Inline Editing: User can adjust category, transaction type, or amount prior to commit.
+  * Visual Indicators: Highlights possible duplicate rows in amber and parsing warnings in red.
+  * Search and filter within parsed statement rows.
+
+## 5. Audit — Compare Imported and Parsed Statements
+
+`StatementImportService.auditStatement()` executes an automated deterministic audit comparing extracted records against source statement parameters:
+
+Audit Checks Performed:
+1. Row Count Validation: Validates that parsed transaction row count equals expected source transaction rows.
+2. Sequential Balance Reconciliation:
+   - For consecutive transactions `i-1` and `i`:
+     `Expected Balance = Balance[i-1] + Credit[i] - Debit[i]`
+   - Validates `abs(Expected Balance - Balance[i]) < 0.05`.
+3. Statement Net Reconciliation:
+   - `Opening Balance + Total Credits - Total Debits == Closing Balance`.
+4. Debit and Credit Total Matching: Validates that sum of parsed debits/credits matches statement summary figures when summary rows are detected.
+5. Duplicate Row Detection: Identifies repeated rows within the parsed statement itself.
+6. Negative or Invalid Amount Checks: Flags rows with both debit and credit or negative values.
+
+Audit Outcomes:
+- **PASS**: All sequential balance checks, row count checks, and summary totals match within 0.05 tolerance. Green badge displayed.
+- **REVIEW REQUIRED**: Discrepancies found (e.g. balance step mismatch, unparsed rows, suspected duplicates). Amber warning with breakdown dialog.
+- **INCOMPLETE**: Source statement lacks running balances or summary figures for a complete reconciliation. Explains which checks could not be computed.
+
+Discrepancy Popup:
+Displays source row count, parsed count, debit/credit totals, and the specific row numbers where balance continuity broke, allowing immediate correction.
+
+## 6. Import Confirmation and Duplicate Prevention
+
+Duplicate Detection Strategy:
+- Checks each incoming row against stored `TransactionEntity` records using composite matching:
+  `Composite Key = (Date + Normalized Amount + Transaction Type + Reference Number / Normalized Narration)`
+- Existing records are marked `isDuplicate = true`.
+- User can toggle "Skip duplicate transactions" (default) or "Import anyway".
+
+Transactional Commit:
+- Execution via `StatementImportCoordinator.commitImport()`:
+  * Creates `StatementImportEntity` entry in `statement_imports` table.
+  * Inserts valid transactions with `statementImportId` foreign key.
+  * Updates `AccountEntity` current balance using latest running balance snapshot.
+  * Operation runs inside Room database transaction (`@Transaction`), guaranteeing all-or-nothing atomicity.
+  * Refreshes Dashboard and Reports reactively.
+
+## 7. Statement History
+
+Maintains a permanent audit log in `statement_imports` table:
+- Fields: `id`, `fileName`, `bankName`, `importDate`, `totalParsed`, `importedCount`, `auditStatus`, `accountNumber`.
+- Accessible from Statement History UI in the app.
+- Clear separation between the statement import log entry and the underlying financial transactions created.
+
+## 8. Delete Records
+
+Safe Record Management:
+1. Delete Single Transaction: Deletes individual transaction and recalculates affected account balance.
+2. Delete Statement Import:
+   - Prompts with confirmation dialog showing the filename, import date, and exact number of transactions that will be deleted.
+   - Deletes all `TransactionEntity` records associated with `statementImportId`.
+   - Deletes the `StatementImportEntity` history record.
+   - Recalculates account balance and updates dashboard summaries.
+   - Safely prevents orphaned claims or corrupting linked borrowing/lending records.
+
+## 9. Manual Addition to Entry
+
+Seamless Integration:
+- Integrated with manual entry via `AddTransactionBottomSheet`.
+- When a transaction from a statement requires manual entry or splitting, users can add it directly to the designated bank account with identical classification options.
+- Manually entered transactions are distinguished by `statementImportId = null`.
+
+## 10. AI Assistance
+
+Local On-Device Intelligence:
+- `LocalFinancialAiAnalyzer` analyzes statement descriptions to suggest smart categorization rules.
+- Explains audit balance discrepancies in plain English without transmitting bank statements to any third-party AI or external cloud service.
+- Deterministic math remains the sole authority for statement audit.
+
+## 11. Error Handling and Security
+
+- Encrypted & Scanned PDFs: Detects password-protected PDFs and requests password; detects image-only/scanned PDFs and provides a clear notice.
+- Corrupted Files: Catches malformed XLSX/PDF files and displays actionable user alerts without app crashes.
+- Local Processing: All PDF parsing (PDFBox / native), Excel extraction, and regex classification execute entirely on the Android device. Statement contents never leave the user's phone.
+- No Sensitive Logging: Masked account numbers and descriptions in log outputs.
+
+## 12. Testing
+
+Verified by automated unit tests in `StatementImportServiceTest.kt`:
+- `testIndianBankXlsxStatementImport`: 151 rows extracted from Indian Bank Excel statement. Debits (₹47,469.30) and Credits (₹47,472.07) verified.
+- `testYesBankPdfStatementImport`: 43 rows extracted from YES BANK PDF statement. Debits (₹17,341.29) and Credits (₹20,195.00) verified.
+- `testCategorizationRulesAppliedDuringImport`: Keyword matching verified.
+- `testDetectBankHeuristics`: Bank identification verified.
+- `testAuditSequentialBalanceReconciliationPass`: Balance continuity checks verified.
+
+## 13. Final Implementation Deliverables
+
+- Parsing Engine: `StatementImportService.kt`
+- UI & Review: `ImportStatementScreen.kt`
+- Persistence: `StatementImportEntity.kt` & `StatementImportDao.kt`
+- Coordinator: `StatementImportCoordinator.kt`
+- Verification Suite: `StatementImportServiceTest.kt`
+
+## Definition of Done
+
+Statement import processes real Indian Bank XLSX and YES BANK PDF statements, extracts all required transaction fields, performs deterministic multi-point balance reconciliation audits, flags duplicates, displays an interactive review screen, persists records transactionally, supports import deletion with clean rollback, and keeps all financial processing strictly local and private.

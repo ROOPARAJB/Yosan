@@ -84,7 +84,7 @@ test('Comprehensive Backend API Endpoints Test Suite', async (t) => {
       method: 'POST',
       body: JSON.stringify({
         accountName: 'Primary Checking',
-        bankName: 'HDFC Bank',
+        bankName: 'Indian Bank',
         accountNumberMasked: '1234',
         accountType: 'BANK',
         openingBalance: 5000.0,

@@ -74,7 +74,8 @@ class DriveController {
       if (!userId) {
         return res.status(400).json({ error: 'USER_REQUIRED', message: 'User account could not be identified' });
       }
-      const result = await driveBackupService.uploadBackup(userId);
+      const clientPayload = req.body && (req.body.payload || (req.body.accounts || req.body.transactions ? req.body : null));
+      const result = await driveBackupService.uploadBackup(userId, clientPayload);
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: 'BACKUP_FAILED', message: err.message });
@@ -89,6 +90,45 @@ class DriveController {
       res.json({ backups });
     } catch (err) {
       res.status(500).json({ error: 'LIST_BACKUPS_FAILED', message: err.message });
+    }
+  }
+
+  async getBackupVersion(req, res) {
+    try {
+      const userId = resolveUserId(req);
+      if (!userId) return res.status(400).json({ error: 'USER_REQUIRED' });
+      const version = req.params.version || req.query.version;
+      const data = await driveBackupService.getBackupVersionPayload(userId, version);
+      res.json({
+        success: true,
+        version: data.backup_version || parseInt(version, 10) || 1,
+        backupJson: JSON.stringify(data),
+        backupData: data
+      });
+    } catch (err) {
+      res.status(404).json({ error: 'VERSION_NOT_FOUND', message: err.message });
+    }
+  }
+
+  async restoreBackupVersion(req, res) {
+    const { version, confirm } = req.body;
+    if (!confirm) {
+      return res.status(400).json({ error: 'CONFIRMATION_REQUIRED', message: 'Explicit confirmation required before restoring backup' });
+    }
+
+    try {
+      const userId = resolveUserId(req);
+      if (!userId) return res.status(400).json({ error: 'USER_REQUIRED' });
+      const versionData = await driveBackupService.getBackupVersionPayload(userId, version);
+      const result = driveBackupService.restoreBackupData(userId, versionData);
+      res.json({
+        success: true,
+        version: versionData.backup_version || version,
+        message: `Version ${version} restored successfully`,
+        details: result
+      });
+    } catch (err) {
+      res.status(400).json({ error: 'RESTORE_VERSION_FAILED', message: err.message });
     }
   }
 

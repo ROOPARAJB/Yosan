@@ -89,6 +89,15 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE advanceId = :advanceId ORDER BY transactionDate DESC, id DESC")
     suspend fun getTransactionsByAdvanceId(advanceId: String): List<TransactionEntity>
 
+    @Query("SELECT * FROM transactions WHERE importId = :importId ORDER BY transactionDate DESC, id DESC")
+    fun getTransactionsByImportId(importId: Long): Flow<List<TransactionEntity>>
+
+    @Query("SELECT * FROM transactions WHERE importId = :importId ORDER BY transactionDate DESC, id DESC")
+    suspend fun getTransactionsByImportIdList(importId: Long): List<TransactionEntity>
+
+    @Query("DELETE FROM transactions WHERE importId = :importId")
+    suspend fun deleteTransactionsByImportId(importId: Long)
+
     @Query("SELECT * FROM transactions")
     suspend fun getAllTransactionsList(): List<TransactionEntity>
 }

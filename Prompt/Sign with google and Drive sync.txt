@@ -1,0 +1,179 @@
+Google Authentication, Google Drive Backup, and Version-Controlled Sync for Yosan Finance
+
+## 1. Project Context & Current Architecture
+
+Yosan Finance is an Android finance management application developed in Kotlin using Jetpack Compose, Room SQLite database, and Supabase authentication.
+
+The architecture decouples authentication from cloud backup:
+- **Supabase:** Used exclusively for user identity management, session verification, and lightweight backup metadata (`user_id`, `drive_folder_id`, `current_file_id`, `current_version`, `updated_at`). Supabase **never** stores financial JSON files or raw transaction records.
+- **Google Drive:** Dedicated storage for user financial backup JSON files and version snapshots using the user's private Google Drive storage space (`https://www.googleapis.com/auth/drive.file` scope).
+- **Local Room Database:** Authoritative offline-first database. The app functions completely without network connectivity.
+
+## 2. Core Requirements & Implementation Status
+
+All core requirements are implemented and verified:
+- [x] Native Google Sign-In on Welcome/Login screen via Android Credential Manager and Supabase OAuth exchange.
+- [x] User Profile section in Settings displaying Google avatar, name, email, and Drive connection status.
+- [x] Independent, optional Google Drive authorization completely decoupled from app sign-in.
+- [x] Manual Backup and Restore workflows with progress states and error reporting.
+- [x] Deterministic Google Drive folder and file structure (`Yosan-Backup`, `detailsaboutbackup.json`, `versions/`).
+- [x] Backup Version Control with incremental numbering (`v0001`, `v0002`), timestamps, record counts, and SHA-256 checksums.
+- [x] Strict data isolation: Supabase stores metadata only; Google Drive stores financial JSON.
+- [x] Preservation of local Room database, offline capability, and transactional import rollbacks.
+
+## 3. User Flow A: First-Time App Launch and Google Sign-In
+
+1. Welcome Screen (`OnboardingScreen.kt`): Displays "Continue with Google" button alongside email/OTP options.
+2. Native Credential Manager: Tapping launches Android's native Credential Manager / Google ID token dialog.
+3. Supabase Authentication: `AuthViewModel.kt` exchanges the Google ID token with Supabase using `supabase.auth.signInWith(IdToken)`.
+4. Profile Ingestion: On success, retrieves Supabase user ID, email, and display name, storing them locally in `UserProfileEntity`.
+5. Session Persistence: Supabase access and refresh tokens are encrypted and stored in `AppPreferences`. Subsequent launches automatically restore active sessions.
+6. Decoupling Guard: Signing in with Google does **not** automatically grant Drive permissions; Drive authorization is handled as an independent, opt-in step in Settings.
+
+## 4. User Flow B: Settings and Profile
+
+In `SettingsScreen.kt`, the Profile section displays:
+- User avatar image (Google profile picture URL or initials badge)
+- Display name and email address
+- **Google Drive Backup Card:**
+  * Status Pill: "Not connected", "Connected", "Syncing...", or "Backup failed"
+  * Action Buttons: "Connect Google Drive" / "Disconnect", "Sync Backup", "Restore Backup", and "Backup History"
+  * Last successful backup timestamp and current backup version (e.g. "v3")
+
+## 5. User Flow C: Connect Google Drive
+
+When the user selects **Connect Google Drive**:
+1. Launches Google Drive OAuth2 authorization requesting the restricted `drive.file` scope (`https://www.googleapis.com/auth/drive.file`).
+2. Google consent dialog asks user permission to view and manage only files created by Yosan Finance.
+3. Upon authorization, verifies existing `Yosan-Backup` folder in Drive or initializes a new one.
+4. Stores Drive connection state and updates Settings UI to "Connected" with a green status indicator.
+5. If authorization fails or is cancelled, local finance data remains completely unaffected.
+
+## 6. User Flow D: Google Drive Folder and File Structure
+
+Backups adhere to a deterministic hierarchy in the user's Google Drive:
+
+```
+Yosan-Backup/
+├── detailsaboutbackup.json
+└── versions/
+    ├── backup-v0001.json
+    ├── backup-v0002.json
+    ├── backup-v0003.json
+    └── backup-v0004.json
+```
+
+- **Root Folder:** `Yosan-Backup`
+- **Current Backup File:** `detailsaboutbackup.json` (always represents the latest state).
+- **Historical Snapshots:** Stored in `versions/` subdirectory with formatted version numbers (`backup-v%04d.json`).
+- Folders and files are resolved using stable Drive file IDs to prevent name collisions.
+
+## 7. User Flow E: Sync Backup
+
+Execution via `BackupService.syncBackupToDrive()`:
+1. Validates authenticated Supabase session and active Google Drive token.
+2. Queries Room database entities: `TransactionEntity`, `CompanyExpenseEntity`, `LoanEntity`, `AccountEntity`, `CategoryEntity`, `CategorizationRuleEntity`, and `StatementImportEntity`.
+3. Constructs standard backup JSON payload.
+4. Computes SHA-256 checksum over the financial data array.
+5. Queries current Drive version `N` from Supabase metadata and `detailsaboutbackup.json`.
+6. Creates snapshot in `versions/backup-v%04d.json` with version `N + 1`.
+7. Overwrites `detailsaboutbackup.json` with the new version envelope.
+8. Updates Supabase metadata table `backup_metadata` (`current_version = N + 1`, `updated_at = ISO-8601`).
+9. Emits success event, updating Settings UI with new timestamp.
+
+## 8. User Flow F: Backup Version Control
+
+Standard Envelope Schema:
+```json
+{
+  "application": "Yosan Finance",
+  "backup_id": "8a3e7b1c-4f2a-4b9d-9e6e-1c8a5b7d9e1f",
+  "backup_version": 3,
+  "schema_version": 1,
+  "created_at": "2026-10-15T18:30:00.000Z",
+  "updated_at": "2026-10-15T18:30:00.000Z",
+  "transaction_count": 194,
+  "checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "data": {
+    "transactions": [],
+    "company_expenses": [],
+    "loans": [],
+    "accounts": [],
+    "categories": [],
+    "rules": [],
+    "statement_imports": []
+  }
+}
+```
+
+Rules:
+- Version numbers monotonically increment (`1, 2, 3...`) and are never reused.
+- Integrity verification: SHA-256 checksum is recomputed and compared before any restore operation.
+- Re-running backup without data changes does not generate duplicate redundant snapshot files.
+
+## 9. User Flow G: Restore Backup on a New Device
+
+When installed on a new device:
+1. User logs in with Google credentials through Supabase.
+2. User taps "Connect Google Drive" in Settings.
+3. App discovers existing `Yosan-Backup` folder and downloads `detailsaboutbackup.json`.
+4. Validates JSON structure, schema version (1), and SHA-256 checksum.
+5. Prompts user with restore summary dialog: Backup Date, Version Number, and Transaction Count.
+6. Upon user confirmation, executes transactional restore into local Room database (`@Transaction`).
+7. Updates local UI, account balances, and dashboard metrics immediately.
+
+## 10. User Flow H: Restore a Historical Version
+
+1. User opens "Backup History" in Settings -> Backup and Restore.
+2. Queries Drive `versions/` folder to list snapshots with version numbers, timestamps, and row counts.
+3. User selects a specific version (e.g., `backup-v0002.json`).
+4. App downloads and verifies snapshot checksum.
+5. User confirms overwrite: local database is restored transactionally to the exact historical snapshot.
+6. Restoring an older version does not delete or overwrite the current cloud backup until the user explicitly executes a new "Sync Backup".
+
+## 11. Supabase Responsibilities
+
+Supabase Database Role:
+- Manages authentication via `auth.users`.
+- Stores metadata in `public.backup_metadata` table:
+  * `user_id` (UUID, Foreign Key to auth.users, Primary Key)
+  * `drive_folder_id` (String)
+  * `current_file_id` (String)
+  * `current_version` (Integer)
+  * `last_backup_at` (Timestamp with timezone)
+  * `updated_at` (Timestamp with timezone)
+- Row Level Security (RLS): Enabled on `backup_metadata`. Policies restrict SELECT, INSERT, and UPDATE strictly to `auth.uid() = user_id`.
+- Decoupling guarantee: Supabase never stores financial JSON, transactions, balances, or private Google OAuth access tokens.
+
+## 12. Security and Reliability
+
+- Restricted Google Drive Scope: Uses `drive.file`, ensuring the app can never access files outside the `Yosan-Backup` folder.
+- Local Database Atomicity: All restore and import operations run within Room database transactions (`@Transaction`). Interrupted operations cleanly roll back.
+- Network Resilience: Automatic retry for transient Drive API timeouts; detailed error reporting for quota or permission errors.
+- Offline Capability: Full app functionality operates offline; backup queue triggers when network connectivity resumes.
+
+## 13. UI and User Experience
+
+- Real-time status indicators in Settings (Connected, Syncing, Synced, Error).
+- Progress dialogs during backup and restore with indeterminate indicators.
+- Non-blocking async coroutines on `Dispatchers.IO`.
+- Confirmation modals with itemized record counts prior to restoring data.
+
+## 14. Implementation Architecture & Files
+
+- Android Auth: `app/src/main/java/com/example/features/auth/GoogleAuthManager.kt`
+- ViewModel: `app/src/main/java/com/example/features/auth/AuthViewModel.kt`
+- API Client: `app/src/main/java/com/example/data/remote/ApiClient.kt`, `SupabaseAuthApi.kt`
+- Backup Engine: `app/src/main/java/com/example/utils/BackupService.kt`
+- Server Drive Service: `server/src/services/driveBackupService.js`
+- Server Routes & Controllers: `server/src/routes/driveRoutes.js`, `driveController.js`
+- Automated Tests: `app/src/test/java/com/example/GoogleDriveAndSupabaseSyncTest.kt`
+
+## 15. Acceptance Criteria & Test Verification
+
+Verified by automated unit tests in `GoogleDriveAndSupabaseSyncTest.kt`:
+- `testVersionSnapshotNamingConvention`: Verified `backup-v0001.json` through `backup-v9999.json`.
+- `testGoogleDriveFolderHierarchyDefinition`: Verified `Yosan-Backup/versions/` hierarchy.
+- `testChecksumCalculationConsistency`: Verified 64-character SHA-256 calculation and payload sensitivity.
+- `testBackupEnvelopeStructureAndIntegrity`: Verified envelope schema version, timestamps, and JSON integrity.
+- `testSupabaseMetadataDecouplingIntegrity`: Verified that Supabase stores metadata only, with zero financial JSON payloads.

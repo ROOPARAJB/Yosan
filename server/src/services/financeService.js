@@ -13,13 +13,25 @@ class FinanceService {
 
   async createAccount(userId, data) {
     const { accountName, bankName, accountNumberMasked, accountType, openingBalance, isDefault } = data;
+    const ALLOWED_BANKS = ['Indian Bank', 'Yes Bank'];
+    const resolvedAccountType = accountType || 'BANK';
+    let resolvedBankName = bankName || '';
+    if (resolvedBankName && resolvedAccountType !== 'CASH' && !ALLOWED_BANKS.includes(resolvedBankName)) {
+      // Normalize or restrict to supported banks
+      const matched = ALLOWED_BANKS.find(b => b.toLowerCase() === resolvedBankName.toLowerCase());
+      if (matched) {
+        resolvedBankName = matched;
+      } else {
+        throw Object.assign(new Error(`Bank '${resolvedBankName}' is not supported. Only Indian Bank and Yes Bank are supported.`), { status: 400 });
+      }
+    }
     const now = Date.now();
     const result = financeRepository.insertAccount(
       userId,
       accountName || 'New Account',
-      bankName || '',
+      resolvedBankName,
       accountNumberMasked || '',
-      accountType || 'BANK',
+      resolvedAccountType,
       openingBalance || 0.0,
       isDefault,
       now

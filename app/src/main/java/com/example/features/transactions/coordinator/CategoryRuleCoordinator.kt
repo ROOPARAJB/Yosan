@@ -157,9 +157,37 @@ class CategoryRuleCoordinator(
                 val rule = database.categorizationRuleDao().getRuleById(id)
                 if (rule != null) {
                     repository.deleteRule(id)
+                    val remainingRules = database.categorizationRuleDao().getActiveRulesList()
+                    val list = database.transactionDao().getAllTransactionsList()
+                    val affectedAccountIds = mutableSetOf<Long>()
+                    val normalizedKeyword = CategorizationEngine.normalize(rule.keyword)
+                    val prevList = mutableListOf<TransactionEntity>()
+                    val newList = mutableListOf<TransactionEntity>()
+
+                    list.forEach { tx ->
+                        val normalizedDesc = CategorizationEngine.normalize(tx.description)
+                        val wasMatchedByThisRule = (normalizedKeyword.isNotBlank() && (normalizedDesc.contains(normalizedKeyword) || tx.description.contains(rule.keyword.trim(), ignoreCase = true))) &&
+                                (tx.categoryId == rule.categoryId || tx.categoryName.equals(rule.categoryName, ignoreCase = true))
+
+                        if (wasMatchedByThisRule) {
+                            val isTxCredit = tx.creditAmount > 0.0 || (tx.debitAmount == 0.0 && tx.transactionType in listOf(TransactionType.INCOME, TransactionType.REFUND, TransactionType.BORROWING))
+                            val reCat = CategorizationEngine.categorize(tx.description, remainingRules, isCredit = isTxCredit)
+                            prevList.add(tx)
+                            database.transactionDao().updateTransactionCategory(tx.id, reCat.categoryId, reCat.categoryName, reCat.transactionType)
+                            newList.add(tx.copy(categoryId = reCat.categoryId, categoryName = reCat.categoryName, transactionType = reCat.transactionType, updatedAt = System.currentTimeMillis()))
+                            affectedAccountIds.add(tx.accountId)
+                        }
+                    }
+
+                    affectedAccountIds.forEach { accId ->
+                        repository.recalculateAccountBalance(accId)
+                    }
+
                     undoCoordinator.recordUndoAction(
                         actionType = "DELETE_RULE",
-                        description = "Deleted rule '${rule.keyword}'",
+                        description = "Deleted rule '${rule.keyword}' (reverted ${prevList.size} txs)",
+                        previousTxs = prevList,
+                        newTxs = newList,
                         relatedRuleId = id,
                         ruleSnapshot = rule
                     )
@@ -205,22 +233,69 @@ class CategoryRuleCoordinator(
             try {
                 val cat = database.categoryDao().getCategoryById(id)
                 if (cat != null) {
-                    repository.deleteCategory(id)
-                    val list = database.transactionDao().getAllTransactionsList()
-                    list.forEach { tx ->
-                        if (tx.categoryId == id || tx.categoryName.equals(cat.name, ignoreCase = true)) {
-                            database.transactionDao().updateTransactionCategory(tx.id, null, "Uncategorized", tx.transactionType)
-                        }
+                    if (cat.isSystem) {
+                        showMessage("System categories cannot be deleted as they are required for financial calculations.")
+                        return@launch
                     }
+                    repository.deleteCategory(id)
                     val rulesList = database.categorizationRuleDao().getActiveRulesList()
                     rulesList.forEach { rule ->
                         if (rule.categoryId == id || rule.categoryName.equals(cat.name, ignoreCase = true)) {
                             repository.deleteRule(rule.id)
                         }
                     }
+                    val remainingRules = database.categorizationRuleDao().getActiveRulesList()
+                    val list = database.transactionDao().getAllTransactionsList()
+                    val affectedAccountIds = mutableSetOf<Long>()
+                    list.forEach { tx ->
+                        if (tx.categoryId == id || tx.categoryName.equals(cat.name, ignoreCase = true)) {
+                            val isTxCredit = tx.creditAmount > 0.0 || (tx.debitAmount == 0.0 && tx.transactionType in listOf(TransactionType.INCOME, TransactionType.REFUND, TransactionType.BORROWING))
+                            val reCat = CategorizationEngine.categorize(tx.description, remainingRules, isCredit = isTxCredit)
+                            database.transactionDao().updateTransactionCategory(tx.id, reCat.categoryId, reCat.categoryName, reCat.transactionType)
+                            affectedAccountIds.add(tx.accountId)
+                        }
+                    }
+                    affectedAccountIds.forEach { accId ->
+                        repository.recalculateAccountBalance(accId)
+                    }
+                    showMessage("Category deleted")
                 }
             } catch (_: Exception) {}
-            showMessage("Category deleted")
+        }
+    }
+
+    fun reassignAndDeleteCategory(id: Long, fallbackCategoryId: Long, fallbackCategoryName: String) {
+        scope.launch {
+            try {
+                val cat = database.categoryDao().getCategoryById(id)
+                if (cat != null) {
+                    if (cat.isSystem) {
+                        showMessage("System categories cannot be deleted as they are required for financial calculations.")
+                        return@launch
+                    }
+                    val list = database.transactionDao().getAllTransactionsList()
+                    val affectedAccountIds = mutableSetOf<Long>()
+                    var reassignedCount = 0
+                    list.forEach { tx ->
+                        if (tx.categoryId == id || tx.categoryName.equals(cat.name, ignoreCase = true)) {
+                            database.transactionDao().updateTransactionCategory(tx.id, fallbackCategoryId, fallbackCategoryName, tx.transactionType)
+                            affectedAccountIds.add(tx.accountId)
+                            reassignedCount++
+                        }
+                    }
+                    repository.deleteCategory(id)
+                    val rulesList = database.categorizationRuleDao().getActiveRulesList()
+                    rulesList.forEach { rule ->
+                        if (rule.categoryId == id || rule.categoryName.equals(cat.name, ignoreCase = true)) {
+                            repository.updateRule(rule.copy(categoryId = fallbackCategoryId, categoryName = fallbackCategoryName))
+                        }
+                    }
+                    affectedAccountIds.forEach { accId ->
+                        repository.recalculateAccountBalance(accId)
+                    }
+                    showMessage("Category deleted ($reassignedCount transactions moved to $fallbackCategoryName)")
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -229,6 +304,7 @@ class CategoryRuleCoordinator(
             try {
                 repository.updateCategory(category)
                 val list = database.transactionDao().getAllTransactionsList()
+                val affectedAccountIds = mutableSetOf<Long>()
                 list.forEach { tx ->
                     if (tx.categoryId == category.id) {
                         val resolvedType = when (category.type) {
@@ -240,7 +316,11 @@ class CategoryRuleCoordinator(
                             else -> TransactionType.EXPENSE
                         }
                         database.transactionDao().updateTransactionCategory(tx.id, category.id, category.name, resolvedType)
+                        affectedAccountIds.add(tx.accountId)
                     }
+                }
+                affectedAccountIds.forEach { accId ->
+                    repository.recalculateAccountBalance(accId)
                 }
                 val rulesList = database.categorizationRuleDao().getActiveRulesList()
                 rulesList.forEach { rule ->

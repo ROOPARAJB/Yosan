@@ -111,17 +111,46 @@ async function disconnectDrive(userId) {
   return { success: true, message: 'Google Drive disconnected' };
 }
 
+function calculateChecksum(obj) {
+  const str = typeof obj === 'string' ? obj : JSON.stringify(obj);
+  return crypto.createHash('sha256').update(str).digest('hex');
+}
+
+function formatVersionFilename(version) {
+  const vNum = parseInt(version, 10) || 1;
+  return `backup-v${String(vNum).padStart(4, '0')}.json`;
+}
+
+function getLocalBackupDir(userId) {
+  const localDir = path.join(__dirname, '..', '..', 'drive_storage', String(userId), 'Yosan-Backup');
+  const versionsDir = path.join(localDir, 'versions');
+  fs.mkdirSync(versionsDir, { recursive: true });
+  return { localDir, versionsDir };
+}
+
 function getDriveStatus(userId) {
   const conn = driveRepository.getDriveConnection(userId);
   if (!conn) {
-    return { isConnected: false, driveEmail: null };
+    return { isConnected: false, driveEmail: null, lastBackupAt: null, currentBackupVersion: null };
   }
+
+  let currentVersion = 1;
+  try {
+    const { localDir } = getLocalBackupDir(userId);
+    const detailsPath = path.join(localDir, 'detailsaboutbackup.json');
+    if (fs.existsSync(detailsPath)) {
+      const parsed = JSON.parse(fs.readFileSync(detailsPath, 'utf8'));
+      if (parsed.backup_version) currentVersion = parsed.backup_version;
+    }
+  } catch (_) {}
+
   return {
     isConnected: true,
     googleAccountSub: conn.google_account_sub,
     driveEmail: conn.drive_email || null,
-    driveFolderId: conn.drive_folder_id,
-    lastBackupAt: conn.last_backup_at
+    driveFolderId: conn.drive_folder_id || 'Yosan-Backup',
+    lastBackupAt: conn.last_backup_at,
+    currentBackupVersion: currentVersion
   };
 }
 
@@ -134,10 +163,15 @@ function generateBackupPayload(userId) {
   const loanRepayments = db.prepare('SELECT * FROM loan_repayments WHERE user_id = ?').all(userId);
   const companyExpenses = db.prepare('SELECT * FROM company_expenses WHERE user_id = ?').all(userId);
 
-  return {
-    version: 1,
-    createdAt: new Date().toISOString(),
-    userId,
+  const payload = {
+    application: 'Yosan Finance',
+    backup_id: crypto.randomUUID(),
+    backup_version: 1,
+    schema_version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    transaction_count: transactions.length,
+    checksum: '',
     accounts,
     categories,
     rules,
@@ -146,87 +180,374 @@ function generateBackupPayload(userId) {
     loanRepayments,
     companyExpenses
   };
+  payload.checksum = calculateChecksum(transactions);
+  return payload;
 }
 
-async function uploadBackup(userId) {
-  const payload = generateBackupPayload(userId);
+async function findOrCreateFolder(drive, folderName, parentId = null) {
+  let q = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  if (parentId) {
+    q += ` and '${parentId}' in parents`;
+  }
+  const res = await drive.files.list({ q, fields: 'files(id, name)' });
+  if (res.data.files && res.data.files.length > 0) {
+    return res.data.files[0].id;
+  }
+  const fileMetadata = {
+    name: folderName,
+    mimeType: 'application/vnd.google-apps.folder',
+    parents: parentId ? [parentId] : []
+  };
+  const folder = await drive.files.create({ resource: fileMetadata, fields: 'id' });
+  return folder.data.id;
+}
+
+async function uploadBackup(userId, clientPayload = null) {
   const now = Date.now();
-  const dateStr = new Date().toISOString().split('T')[0];
-  const filename = `finance-backup-${dateStr}.json`;
+  let payload = clientPayload;
+
+  if (!payload || typeof payload !== 'object') {
+    payload = generateBackupPayload(userId);
+  }
+
+  // Ensure standard envelope fields
+  payload.application = payload.application || 'Yosan Finance';
+  payload.backup_id = payload.backup_id || crypto.randomUUID();
+  payload.schema_version = payload.schema_version || 1;
+  payload.updated_at = new Date().toISOString();
+  if (!payload.created_at) payload.created_at = payload.updated_at;
+
+  const txList = Array.isArray(payload.transactions) ? payload.transactions : [];
+  payload.transaction_count = txList.length;
+  payload.checksum = calculateChecksum(txList.length > 0 ? txList : payload);
 
   const { drive, conn } = getDriveClientForUser(userId);
   const refreshToken = decryptToken(conn.encrypted_refresh_token);
 
+  // 1. Mock / Local Dev Mode
   if (refreshToken.startsWith('mock_')) {
-    if (config.NODE_ENV === 'production') {
-      throw new Error('MOCK_TOKENS_DISABLED_IN_PRODUCTION');
+    const { localDir, versionsDir } = getLocalBackupDir(userId);
+    const detailsPath = path.join(localDir, 'detailsaboutbackup.json');
+
+    if (fs.existsSync(detailsPath)) {
+      try {
+        const existingRaw = fs.readFileSync(detailsPath, 'utf8');
+        const existing = JSON.parse(existingRaw);
+
+        if (existing.checksum && existing.checksum === payload.checksum) {
+          // Identical backup data, safe retry without duplicate snapshot
+          driveRepository.updateLastBackup(userId, now);
+          return {
+            success: true,
+            fileId: 'mock_detailsaboutbackup',
+            fileName: 'detailsaboutbackup.json',
+            version: existing.backup_version || 1,
+            backupDate: existing.updated_at || payload.updated_at,
+            transactionCount: payload.transaction_count,
+            message: 'Backup verified (no changes detected since last backup)'
+          };
+        }
+
+        // Previous version snapshot
+        const prevVersion = existing.backup_version || 1;
+        const snapshotName = formatVersionFilename(prevVersion);
+        fs.writeFileSync(path.join(versionsDir, snapshotName), JSON.stringify(existing, null, 2), 'utf8');
+
+        // Increment version
+        payload.backup_version = prevVersion + 1;
+        fs.writeFileSync(detailsPath, JSON.stringify(payload, null, 2), 'utf8');
+        driveRepository.updateLastBackup(userId, now);
+
+        return {
+          success: true,
+          fileId: 'mock_detailsaboutbackup',
+          fileName: 'detailsaboutbackup.json',
+          version: payload.backup_version,
+          backupDate: payload.updated_at,
+          transactionCount: payload.transaction_count,
+          message: `Backup version ${payload.backup_version} created successfully`
+        };
+      } catch (err) {
+        console.error('Error handling mock previous backup, replacing:', err);
+      }
     }
+
+    // First backup
+    payload.backup_version = 1;
+    fs.writeFileSync(detailsPath, JSON.stringify(payload, null, 2), 'utf8');
     driveRepository.updateLastBackup(userId, now);
+
     return {
       success: true,
-      fileId: `backup_${now}`,
-      fileName: filename,
-      backupDate: payload.createdAt
+      fileId: 'mock_detailsaboutbackup',
+      fileName: 'detailsaboutbackup.json',
+      version: 1,
+      backupDate: payload.updated_at,
+      transactionCount: payload.transaction_count,
+      message: 'First backup created successfully (version 1)'
     };
   }
 
+  // 2. Real Google Drive API Mode
   try {
-    // Create or find FinanceApp folder
-    let folderId = conn.drive_folder_id;
-    if (!folderId) {
-      const q = "name = 'FinanceApp' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
-      const res = await drive.files.list({ q, fields: 'files(id, name)' });
-      if (res.data.files && res.data.files.length > 0) {
-        folderId = res.data.files[0].id;
-      } else {
-        const fileMetadata = { name: 'FinanceApp', mimeType: 'application/vnd.google-apps.folder' };
-        const folder = await drive.files.create({ resource: fileMetadata, fields: 'id' });
-        folderId = folder.data.id;
-      }
-      driveRepository.updateFolderId(userId, folderId, now);
+    // 2a. Find or create root folder 'Yosan-Backup'
+    let rootFolderId = conn.drive_folder_id;
+    if (!rootFolderId) {
+      rootFolderId = await findOrCreateFolder(drive, 'Yosan-Backup');
+      driveRepository.updateFolderId(userId, rootFolderId, now);
     }
 
-    // Upload backup file
-    const fileMetadata = { name: filename, parents: [folderId] };
+    // 2b. Find or create 'versions' folder inside 'Yosan-Backup'
+    const versionsFolderId = await findOrCreateFolder(drive, 'versions', rootFolderId);
+
+    // 2c. Check for existing 'detailsaboutbackup.json' in 'Yosan-Backup'
+    const detailsQ = `'${rootFolderId}' in parents and name = 'detailsaboutbackup.json' and trashed = false`;
+    const detailsRes = await drive.files.list({ q: detailsQ, fields: 'files(id, name, createdTime)' });
+    const existingFile = detailsRes.data.files && detailsRes.data.files[0];
+
+    if (existingFile) {
+      try {
+        const fileContentRes = await drive.files.get({ fileId: existingFile.id, alt: 'media' });
+        const existingData = typeof fileContentRes.data === 'string' ? JSON.parse(fileContentRes.data) : fileContentRes.data;
+
+        if (existingData && existingData.checksum && existingData.checksum === payload.checksum) {
+          // Identical checksum: avoid duplicate snapshot
+          driveRepository.updateLastBackup(userId, now);
+          return {
+            success: true,
+            fileId: existingFile.id,
+            fileName: 'detailsaboutbackup.json',
+            version: existingData.backup_version || 1,
+            backupDate: existingData.updated_at || payload.updated_at,
+            transactionCount: payload.transaction_count,
+            message: 'Backup verified (no changes detected since last backup)'
+          };
+        }
+
+        // Snapshot existing data into versions/
+        const prevVersion = (existingData && existingData.backup_version) || 1;
+        const snapshotName = formatVersionFilename(prevVersion);
+        const snapshotMeta = { name: snapshotName, parents: [versionsFolderId] };
+        const snapshotMedia = { mimeType: 'application/json', body: JSON.stringify(existingData, null, 2) };
+        await drive.files.create({ resource: snapshotMeta, media: snapshotMedia, fields: 'id' });
+
+        // Update detailsaboutbackup.json with incremented version
+        payload.backup_version = prevVersion + 1;
+        const updateMedia = { mimeType: 'application/json', body: JSON.stringify(payload, null, 2) };
+        await drive.files.update({ fileId: existingFile.id, media: updateMedia, fields: 'id, name, modifiedTime' });
+
+        driveRepository.updateLastBackup(userId, now);
+        return {
+          success: true,
+          fileId: existingFile.id,
+          fileName: 'detailsaboutbackup.json',
+          version: payload.backup_version,
+          backupDate: payload.updated_at,
+          transactionCount: payload.transaction_count,
+          message: `Backup version ${payload.backup_version} created successfully`
+        };
+      } catch (readErr) {
+        console.warn('Could not read existing detailsaboutbackup.json, will overwrite as version 1:', readErr.message);
+      }
+    }
+
+    // First backup in Drive
+    payload.backup_version = 1;
+    const fileMetadata = { name: 'detailsaboutbackup.json', parents: [rootFolderId] };
     const media = { mimeType: 'application/json', body: JSON.stringify(payload, null, 2) };
-    const file = await drive.files.create({ resource: fileMetadata, media, fields: 'id, name, createdTime' });
+    const created = await drive.files.create({ resource: fileMetadata, media, fields: 'id, name, createdTime' });
 
     driveRepository.updateLastBackup(userId, now);
 
     return {
       success: true,
-      fileId: file.data.id,
-      fileName: filename,
-      backupDate: payload.createdAt
+      fileId: created.data.id,
+      fileName: 'detailsaboutbackup.json',
+      version: 1,
+      backupDate: payload.updated_at,
+      transactionCount: payload.transaction_count,
+      message: 'First backup created successfully (version 1)'
     };
   } catch (err) {
-    // Re-throw real Drive API errors so they are not masked
     throw err;
   }
 }
 
 async function listBackups(userId) {
-  try {
-    const { drive, conn } = getDriveClientForUser(userId);
-    if (!conn.drive_folder_id) return [];
-    const q = `'${conn.drive_folder_id}' in parents and name contains 'finance-backup-' and trashed = false`;
-    const res = await drive.files.list({ q, fields: 'files(id, name, createdTime, size)', orderBy: 'createdTime desc' });
-    return res.data.files || [];
-  } catch (err) {
-    const conn = driveRepository.getDriveConnection(userId);
-    if (!conn || !conn.last_backup_at) return [];
-    return [
-      {
-        id: `backup_${conn.last_backup_at}`,
-        name: `finance-backup-${new Date(conn.last_backup_at).toISOString().split('T')[0]}.json`,
-        createdTime: new Date(conn.last_backup_at).toISOString()
+  const result = [];
+  const conn = driveRepository.getDriveConnection(userId);
+  if (!conn) return result;
+
+  const refreshToken = decryptToken(conn.encrypted_refresh_token);
+
+  // 1. Mock / Local Dev Mode
+  if (refreshToken.startsWith('mock_')) {
+    const { localDir, versionsDir } = getLocalBackupDir(userId);
+    const detailsPath = path.join(localDir, 'detailsaboutbackup.json');
+
+    if (fs.existsSync(detailsPath)) {
+      try {
+        const details = JSON.parse(fs.readFileSync(detailsPath, 'utf8'));
+        result.push({
+          version: details.backup_version || 1,
+          fileName: 'detailsaboutbackup.json',
+          fileId: 'mock_detailsaboutbackup',
+          createdTime: details.updated_at || details.created_at || new Date().toISOString(),
+          transactionCount: details.transaction_count || (details.transactions ? details.transactions.length : 0),
+          isCurrent: true,
+          checksum: details.checksum || ''
+        });
+      } catch (_) {}
+    }
+
+    if (fs.existsSync(versionsDir)) {
+      const files = fs.readdirSync(versionsDir).filter(f => f.startsWith('backup-v') && f.endsWith('.json'));
+      for (const f of files) {
+        try {
+          const content = JSON.parse(fs.readFileSync(path.join(versionsDir, f), 'utf8'));
+          result.push({
+            version: content.backup_version || parseInt(f.replace('backup-v', '').replace('.json', ''), 10) || 1,
+            fileName: f,
+            fileId: `mock_${f}`,
+            createdTime: content.updated_at || content.created_at || new Date().toISOString(),
+            transactionCount: content.transaction_count || (content.transactions ? content.transactions.length : 0),
+            isCurrent: false,
+            checksum: content.checksum || ''
+          });
+        } catch (_) {}
       }
-    ];
+    }
+
+    result.sort((a, b) => (b.version || 0) - (a.version || 0));
+    return result;
+  }
+
+  // 2. Real Drive API Mode
+  try {
+    const { drive } = getDriveClientForUser(userId);
+    const rootFolderId = conn.drive_folder_id;
+    if (!rootFolderId) return result;
+
+    // Get current detailsaboutbackup.json
+    const detailsQ = `'${rootFolderId}' in parents and name = 'detailsaboutbackup.json' and trashed = false`;
+    const detailsRes = await drive.files.list({ q: detailsQ, fields: 'files(id, name, createdTime, modifiedTime)' });
+    if (detailsRes.data.files && detailsRes.data.files.length > 0) {
+      const f = detailsRes.data.files[0];
+      try {
+        const mediaRes = await drive.files.get({ fileId: f.id, alt: 'media' });
+        const parsed = typeof mediaRes.data === 'string' ? JSON.parse(mediaRes.data) : mediaRes.data;
+        result.push({
+          version: parsed.backup_version || 1,
+          fileName: 'detailsaboutbackup.json',
+          fileId: f.id,
+          createdTime: f.modifiedTime || f.createdTime,
+          transactionCount: parsed.transaction_count || (parsed.transactions ? parsed.transactions.length : 0),
+          isCurrent: true,
+          checksum: parsed.checksum || ''
+        });
+      } catch (_) {}
+    }
+
+    // Get versions
+    const versionsFolderId = await findOrCreateFolder(drive, 'versions', rootFolderId);
+    const versionsQ = `'${versionsFolderId}' in parents and name contains 'backup-v' and trashed = false`;
+    const versionsRes = await drive.files.list({
+      q: versionsQ,
+      fields: 'files(id, name, createdTime, modifiedTime)',
+      orderBy: 'createdTime desc'
+    });
+
+    if (versionsRes.data.files) {
+      for (const vf of versionsRes.data.files) {
+        const vNum = parseInt(vf.name.replace('backup-v', '').replace('.json', ''), 10) || 1;
+        result.push({
+          version: vNum,
+          fileName: vf.name,
+          fileId: vf.id,
+          createdTime: vf.createdTime || vf.modifiedTime,
+          transactionCount: 0,
+          isCurrent: false,
+          checksum: ''
+        });
+      }
+    }
+
+    result.sort((a, b) => (b.version || 0) - (a.version || 0));
+    return result;
+  } catch (err) {
+    console.error('Error listing Drive backups:', err);
+    return result;
   }
 }
 
+async function getBackupVersionPayload(userId, version) {
+  const conn = driveRepository.getDriveConnection(userId);
+  if (!conn) throw new Error('DRIVE_NOT_CONNECTED');
+
+  const refreshToken = decryptToken(conn.encrypted_refresh_token);
+  const targetVersion = parseInt(version, 10);
+
+  // 1. Mock / Local Dev Mode
+  if (refreshToken.startsWith('mock_')) {
+    const { localDir, versionsDir } = getLocalBackupDir(userId);
+    const detailsPath = path.join(localDir, 'detailsaboutbackup.json');
+
+    if (fs.existsSync(detailsPath)) {
+      const details = JSON.parse(fs.readFileSync(detailsPath, 'utf8'));
+      if (details.backup_version === targetVersion || !targetVersion) {
+        return details;
+      }
+    }
+
+    if (targetVersion) {
+      const snapshotFile = path.join(versionsDir, formatVersionFilename(targetVersion));
+      if (fs.existsSync(snapshotFile)) {
+        return JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
+      }
+    }
+
+    throw new Error(`BACKUP_VERSION_NOT_FOUND: Version ${version} not found`);
+  }
+
+  // 2. Real Google Drive
+  const { drive } = getDriveClientForUser(userId);
+  const rootFolderId = conn.drive_folder_id;
+  if (!rootFolderId) throw new Error('DRIVE_FOLDER_NOT_FOUND');
+
+  if (!targetVersion) {
+    const detailsQ = `'${rootFolderId}' in parents and name = 'detailsaboutbackup.json' and trashed = false`;
+    const res = await drive.files.list({ q: detailsQ, fields: 'files(id, name)' });
+    if (res.data.files && res.data.files.length > 0) {
+      const fileId = res.data.files[0].id;
+      const media = await drive.files.get({ fileId, alt: 'media' });
+      return typeof media.data === 'string' ? JSON.parse(media.data) : media.data;
+    }
+  } else {
+    // Check if current version matches target
+    const detailsQ = `'${rootFolderId}' in parents and name = 'detailsaboutbackup.json' and trashed = false`;
+    const res = await drive.files.list({ q: detailsQ, fields: 'files(id, name)' });
+    if (res.data.files && res.data.files.length > 0) {
+      const media = await drive.files.get({ fileId: res.data.files[0].id, alt: 'media' });
+      const current = typeof media.data === 'string' ? JSON.parse(media.data) : media.data;
+      if (current.backup_version === targetVersion) return current;
+    }
+
+    // Look in versions folder
+    const versionsFolderId = await findOrCreateFolder(drive, 'versions', rootFolderId);
+    const targetName = formatVersionFilename(targetVersion);
+    const vQ = `'${versionsFolderId}' in parents and name = '${targetName}' and trashed = false`;
+    const vRes = await drive.files.list({ q: vQ, fields: 'files(id, name)' });
+    if (vRes.data.files && vRes.data.files.length > 0) {
+      const vMedia = await drive.files.get({ fileId: vRes.data.files[0].id, alt: 'media' });
+      return typeof vMedia.data === 'string' ? JSON.parse(vMedia.data) : vMedia.data;
+    }
+  }
+
+  throw new Error(`BACKUP_VERSION_NOT_FOUND: Version ${version} not found in Google Drive`);
+}
+
 function restoreBackupData(userId, data) {
-  if (!data || !data.version) {
+  if (!data || (!data.version && !data.backup_version && !data.schema_version && !data.application)) {
     throw new Error('INVALID_BACKUP_FORMAT');
   }
 
@@ -427,5 +748,6 @@ module.exports = {
   uploadBackup,
   listBackups,
   restoreBackupData,
-  getLatestBackup
+  getLatestBackup,
+  getBackupVersionPayload
 };

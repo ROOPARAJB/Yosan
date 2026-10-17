@@ -101,35 +101,7 @@ class EmailService {
       </html>
     `;
 
-    // 1. Resend HTTP API (Recommended for Render Free Tier - Uses Port 443 HTTPS)
-    const resendApiKey = process.env.RESEND_API_KEY;
-    if (resendApiKey) {
-      try {
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${resendApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            from: process.env.RESEND_FROM || 'Yosan Finance <onboarding@resend.dev>',
-            to: [toEmail],
-            subject: `${otp} is your ${title} verification code`,
-            html: htmlContent
-          })
-        });
-
-        if (res.ok) {
-          console.log(`[EMAIL_SERVICE] Delivered OTP email to ${toEmail} via Resend HTTP API`);
-          return { success: true, delivered: true, provider: 'resend' };
-        } else {
-          const errData = await res.text();
-          console.error('[EMAIL_SERVICE] Resend API error response:', errData);
-        }
-      } catch (err) {
-        console.error('[EMAIL_SERVICE] Failed to send email via Resend HTTP API:', err.message);
-      }
-    }
+    // 1. Direct SMTP or Brevo HTTP API (Uses Port 443 HTTPS)
 
     // 2. Brevo HTTP API (Uses Port 443 HTTPS)
     const brevoApiKey = process.env.BREVO_API_KEY;

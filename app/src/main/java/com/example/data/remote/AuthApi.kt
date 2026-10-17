@@ -95,7 +95,54 @@ data class DriveStatusResponse(
     @field:Json(name = "isConnected") val isConnected: Boolean,
     @field:Json(name = "googleAccountSub") val googleAccountSub: String? = null,
     @field:Json(name = "driveEmail") val driveEmail: String? = null,
-    @field:Json(name = "lastBackupAt") val lastBackupAt: Long? = null
+    @field:Json(name = "lastBackupAt") val lastBackupAt: Long? = null,
+    @field:Json(name = "currentBackupVersion") val currentBackupVersion: Int? = null,
+    @field:Json(name = "driveFolderId") val driveFolderId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class BackupNowRequest(
+    @field:Json(name = "payload") val payload: Map<String, Any?>? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class BackupNowResponse(
+    @field:Json(name = "success") val success: Boolean = true,
+    @field:Json(name = "fileId") val fileId: String? = null,
+    @field:Json(name = "fileName") val fileName: String? = null,
+    @field:Json(name = "version") val version: Int = 1,
+    @field:Json(name = "backupDate") val backupDate: String? = null,
+    @field:Json(name = "transactionCount") val transactionCount: Int = 0,
+    @field:Json(name = "message") val message: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class DriveBackupVersionDto(
+    @field:Json(name = "version") val version: Int = 1,
+    @field:Json(name = "fileName") val fileName: String = "",
+    @field:Json(name = "fileId") val fileId: String = "",
+    @field:Json(name = "createdTime") val createdTime: String? = null,
+    @field:Json(name = "transactionCount") val transactionCount: Int = 0,
+    @field:Json(name = "isCurrent") val isCurrent: Boolean = false,
+    @field:Json(name = "checksum") val checksum: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class DriveBackupHistoryResponse(
+    @field:Json(name = "backups") val backups: List<DriveBackupVersionDto> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class BackupVersionResponse(
+    @field:Json(name = "success") val success: Boolean = true,
+    @field:Json(name = "version") val version: Int = 1,
+    @field:Json(name = "backupJson") val backupJson: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class RestoreVersionRequest(
+    @field:Json(name = "version") val version: Int,
+    @field:Json(name = "confirm") val confirm: Boolean = true
 )
 
 @JsonClass(generateAdapter = true)
@@ -279,7 +326,16 @@ interface AuthApi {
     suspend fun disconnectDrive(): Response<ApiResponse>
 
     @POST("api/drive/backup/now")
-    suspend fun backupNow(): Response<ApiResponse>
+    suspend fun backupNow(@Body req: BackupNowRequest = BackupNowRequest()): Response<BackupNowResponse>
+
+    @GET("api/drive/backups")
+    suspend fun getBackupHistory(): Response<DriveBackupHistoryResponse>
+
+    @GET("api/drive/backup/version/{version}")
+    suspend fun getBackupVersion(@retrofit2.http.Path("version") version: Int): Response<BackupVersionResponse>
+
+    @POST("api/drive/backup/restore-version")
+    suspend fun restoreBackupVersion(@Body req: RestoreVersionRequest): Response<ApiResponse>
 
     @GET("api/drive/backup/latest")
     suspend fun getLatestBackup(): Response<LatestBackupResponse>

@@ -6,6 +6,36 @@ import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
 
+data class OfficialExpenseMetrics(
+    val pendingClaimsTotal: Double = 0.0,
+    val pendingClaimsCount: Int = 0,
+    val appliedClaimsTotal: Double = 0.0,
+    val appliedClaimsCount: Int = 0,
+    val approvedClaimsTotal: Double = 0.0,
+    val approvedClaimsCount: Int = 0,
+    val totalReimbursed: Double = 0.0,
+    val outstandingReimbursement: Double = 0.0,
+    val advancesReceived: Double = 0.0,
+    val advancesUtilized: Double = 0.0,
+    val remainingAdvance: Double = 0.0
+)
+
+data class BorrowingMetrics(
+    val totalBorrowed: Double = 0.0,
+    val totalRepaid: Double = 0.0,
+    val outstandingBorrowing: Double = 0.0,
+    val activeBorrowCount: Int = 0,
+    val settledBorrowCount: Int = 0
+)
+
+data class LendingMetrics(
+    val totalLent: Double = 0.0,
+    val totalRepaid: Double = 0.0,
+    val outstandingLending: Double = 0.0,
+    val activeLoansCount: Int = 0,
+    val settledLoansCount: Int = 0
+)
+
 data class DashboardSummary(
     val currentBalance: Double = 0.0,
     val totalIncome: Double = 0.0,
@@ -15,7 +45,10 @@ data class DashboardSummary(
     val totalRepaid: Double = 0.0,
     val totalOutstanding: Double = 0.0,
     val companyExpense: Double = 0.0,
-    val transactionCount: Int = 0
+    val transactionCount: Int = 0,
+    val officialExpenseMetrics: OfficialExpenseMetrics = OfficialExpenseMetrics(),
+    val borrowingMetrics: BorrowingMetrics = BorrowingMetrics(),
+    val lendingMetrics: LendingMetrics = LendingMetrics()
 )
 
 data class CategoryExpenseItem(
@@ -163,6 +196,10 @@ object FinancialCalculationService {
             }
         )
 
+        val officialMetrics = calculateOfficialExpenseMetrics(companyExpenses, transactions)
+        val borrowMetrics = calculateBorrowingMetrics(transactions)
+        val lendMetrics = calculateLendingMetrics(loans)
+
         return DashboardSummary(
             currentBalance = totalAccountBalance,
             totalIncome = totalIncome,
@@ -172,7 +209,184 @@ object FinancialCalculationService {
             totalRepaid = totalRepaid,
             totalOutstanding = totalOutstanding,
             companyExpense = totalCompanyExpense,
-            transactionCount = transactions.size
+            transactionCount = transactions.size,
+            officialExpenseMetrics = officialMetrics,
+            borrowingMetrics = borrowMetrics,
+            lendingMetrics = lendMetrics
+        )
+    }
+
+    fun calculateOfficialExpenseMetrics(
+        companyExpenses: List<CompanyExpenseEntity>,
+        transactions: List<TransactionEntity> = emptyList()
+    ): OfficialExpenseMetrics {
+        val approvedClaims = companyExpenses.filter { it.isReimbursed || it.claimStatus == ClaimStatus.APPROVED }
+        val appliedClaims = companyExpenses.filter {
+            !it.isReimbursed && it.claimStatus != ClaimStatus.APPROVED &&
+            (it.claimStatus == ClaimStatus.SUBMITTED || it.notes.contains("#APPLIED", ignoreCase = true))
+        }
+        val pendingClaims = companyExpenses.filter {
+            !it.isReimbursed &&
+            it.claimStatus != ClaimStatus.APPROVED &&
+            it.claimStatus != ClaimStatus.SUBMITTED &&
+            it.claimStatus != ClaimStatus.REJECTED &&
+            it.claimStatus != ClaimStatus.CANCELLED &&
+            !it.notes.contains("#APPLIED", ignoreCase = true)
+        }
+
+        val pendingClaimsTotal = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            pendingClaims.sumOf { it.amount }
+        )
+        val appliedClaimsTotal = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            appliedClaims.sumOf { it.amount }
+        )
+        val approvedClaimsTotal = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            approvedClaims.sumOf { it.approvedAmount ?: it.amount }
+        )
+        val totalReimbursed = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            companyExpenses.sumOf {
+                if (it.reimbursedAmount > 0) it.reimbursedAmount else if (it.isReimbursed) it.amount else 0.0
+            }
+        )
+
+        // Outstanding reimbursement is strictly for approved claims:
+        // approvedAmount (or amount if approvedAmount is null) minus confirmed reimbursed payments.
+        // Rejected and cancelled claims are excluded from eligible outstanding reimbursement.
+        val outstandingReimbursement = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            approvedClaims.sumOf {
+                val eligible = it.approvedAmount ?: it.amount
+                val reimbursedPaid = if (it.reimbursedAmount > 0) it.reimbursedAmount else if (it.isReimbursed) it.amount else 0.0
+                (eligible - reimbursedPaid).coerceAtLeast(0.0)
+            }
+        )
+
+        // Advances tracking
+        // Inflows tagged as advance (ADV-...) or category containing Advance
+        val advanceInflows = transactions.filter {
+            (it.advanceId?.trim()?.startsWith("ADV", ignoreCase = true) == true && (it.creditAmount > 0 || it.transactionType == TransactionType.INCOME)) ||
+            (it.transactionType == TransactionType.INCOME && it.categoryName.contains("Advance", ignoreCase = true))
+        }
+        val advancesReceived = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            advanceInflows.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+        )
+
+        // Expenses settled against an advance
+        val advanceExpenses = transactions.filter {
+            it.advanceId?.trim()?.startsWith("ADV", ignoreCase = true) == true &&
+            it.transactionType != TransactionType.INCOME &&
+            it.creditAmount <= 0
+        }
+        val linkedCompExpenses = companyExpenses.filter {
+            it.advanceId?.trim()?.startsWith("ADV", ignoreCase = true) == true ||
+            it.notes.contains("ADV", ignoreCase = true)
+        }
+        val advancesUtilized = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            advanceExpenses.sumOf { if (it.debitAmount > 0) it.debitAmount else it.amount } +
+            linkedCompExpenses.sumOf { it.amount }
+        )
+        val remainingAdvance = com.example.utils.CurrencyFormatter.roundFinancialAmount(
+            (advancesReceived - advancesUtilized).coerceAtLeast(0.0)
+        )
+
+        return OfficialExpenseMetrics(
+            pendingClaimsTotal = pendingClaimsTotal,
+            pendingClaimsCount = pendingClaims.size,
+            appliedClaimsTotal = appliedClaimsTotal,
+            appliedClaimsCount = appliedClaims.size,
+            approvedClaimsTotal = approvedClaimsTotal,
+            approvedClaimsCount = approvedClaims.size,
+            totalReimbursed = totalReimbursed,
+            outstandingReimbursement = outstandingReimbursement,
+            advancesReceived = advancesReceived,
+            advancesUtilized = advancesUtilized,
+            remainingAdvance = remainingAdvance
+        )
+    }
+
+    fun calculateBorrowingMetrics(transactions: List<TransactionEntity>): BorrowingMetrics {
+        val borrowInflows = transactions.filter {
+            it.transactionType == TransactionType.BORROWING ||
+            (it.creditAmount > 0 && (it.categoryName.contains("Borrow", ignoreCase = true) || it.notes.contains("BORROW", ignoreCase = true)))
+        }
+
+        val idPattern = Regex("""#?(BORROW[-_ ]*\d+)""", RegexOption.IGNORE_CASE)
+        val groups = mutableMapOf<String, MutableList<TransactionEntity>>()
+        val standalone = mutableListOf<TransactionEntity>()
+
+        borrowInflows.forEach { tx ->
+            val explicitId = tx.advanceId?.takeIf { it.startsWith("BORROW", ignoreCase = true) }
+                ?: idPattern.find(tx.notes)?.groupValues?.get(1)
+                ?: idPattern.find(tx.description)?.groupValues?.get(1)
+
+            if (!explicitId.isNullOrBlank()) {
+                val clean = explicitId.uppercase().replace(Regex("[_ ]"), "-")
+                groups.getOrPut(clean) { mutableListOf() }.add(tx)
+            } else {
+                standalone.add(tx)
+            }
+        }
+
+        var totalBorrowed = 0.0
+        var totalRepaid = 0.0
+        var activeCount = 0
+        var settledCount = 0
+
+        groups.forEach { (borrowId, inflows) ->
+            val borrowed = inflows.sumOf { if (it.creditAmount > 0) it.creditAmount else it.amount }
+            val repayments = transactions.filter { tx ->
+                tx.debitAmount > 0 && (
+                    tx.notes.contains(borrowId, ignoreCase = true) ||
+                    tx.description.contains(borrowId, ignoreCase = true) ||
+                    tx.advanceId.equals(borrowId, ignoreCase = true)
+                )
+            }
+            val repaid = repayments.sumOf { if (it.debitAmount > 0) it.debitAmount else it.amount }
+            val remaining = (borrowed - repaid).coerceAtLeast(0.0)
+            val isSettled = remaining <= 0.0 || inflows.any { it.notes.contains("#SETTLED", ignoreCase = true) }
+
+            totalBorrowed += borrowed
+            totalRepaid += repaid
+            if (isSettled) settledCount++ else activeCount++
+        }
+
+        standalone.forEach { tx ->
+            val amt = if (tx.creditAmount > 0) tx.creditAmount else tx.amount
+            val isSettled = tx.notes.contains("#SETTLED", ignoreCase = true)
+            totalBorrowed += amt
+            if (isSettled) {
+                totalRepaid += amt
+                settledCount++
+            } else {
+                activeCount++
+            }
+        }
+
+        val roundedBorrowed = com.example.utils.CurrencyFormatter.roundFinancialAmount(totalBorrowed)
+        val roundedRepaid = com.example.utils.CurrencyFormatter.roundFinancialAmount(totalRepaid)
+        val outstanding = com.example.utils.CurrencyFormatter.roundFinancialAmount((roundedBorrowed - roundedRepaid).coerceAtLeast(0.0))
+
+        return BorrowingMetrics(
+            totalBorrowed = roundedBorrowed,
+            totalRepaid = roundedRepaid,
+            outstandingBorrowing = outstanding,
+            activeBorrowCount = activeCount,
+            settledBorrowCount = settledCount
+        )
+    }
+
+    fun calculateLendingMetrics(loans: List<LoanEntity>): LendingMetrics {
+        val totalLent = com.example.utils.CurrencyFormatter.roundFinancialAmount(loans.sumOf { it.amount })
+        val totalRepaid = com.example.utils.CurrencyFormatter.roundFinancialAmount(loans.sumOf { it.amountRepaid })
+        val outstanding = com.example.utils.CurrencyFormatter.roundFinancialAmount(loans.sumOf { it.remainingAmount.coerceAtLeast(0.0) })
+        val active = loans.count { it.status != LoanStatus.PAID && it.status != LoanStatus.CANCELLED }
+        val settled = loans.count { it.status == LoanStatus.PAID }
+
+        return LendingMetrics(
+            totalLent = totalLent,
+            totalRepaid = totalRepaid,
+            outstandingLending = outstanding,
+            activeLoansCount = active,
+            settledLoansCount = settled
         )
     }
 
@@ -382,6 +596,15 @@ object FinancialCalculationService {
             } else monthKey
         } catch (e: Exception) {
             monthKey
+        }
+    }
+
+    fun getGreeting(calendar: java.util.Calendar = java.util.Calendar.getInstance()): String {
+        return when (calendar.get(java.util.Calendar.HOUR_OF_DAY)) {
+            in 5..11 -> "Good morning"
+            in 12..16 -> "Good afternoon"
+            in 17..20 -> "Good evening"
+            else -> "Good night"
         }
     }
 

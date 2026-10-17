@@ -34,24 +34,12 @@ import com.example.features.auth.AuthViewModel
 import com.example.features.transactions.FinanceViewModel
 import com.example.data.remote.LatestBackupResponse
 import com.example.data.remote.ApiClient
+import com.example.features.walkthrough.UserWalkthroughDialog
 import kotlinx.coroutines.launch
 
 val POPULAR_INDIAN_BANKS = listOf(
-    "State Bank of India (SBI)",
-    "HDFC Bank",
-    "ICICI Bank",
-    "Axis Bank",
-    "Kotak Mahindra Bank",
-    "Punjab National Bank (PNB)",
-    "Bank of Baroda",
-    "Canara Bank",
-    "Union Bank of India",
-    "IndusInd Bank",
-    "IDFC FIRST Bank",
-    "Federal Bank",
-    "Yes Bank",
-    "Paytm Payments Bank",
-    "Cash / UPI Wallet"
+    "Indian Bank",
+    "Yes Bank"
 )
 
 @Composable
@@ -59,24 +47,22 @@ fun OnboardingScreen(
     authViewModel: AuthViewModel,
     financeViewModel: FinanceViewModel,
     onComplete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialStep: Int = 0
 ) {
-    var step by remember { mutableStateOf(0) }
+    var step by remember { mutableStateOf(initialStep) }
+    var isOfflineModeSelected by remember { mutableStateOf(false) }
     var userName by remember { mutableStateOf("") }
     var currencySymbol by remember { mutableStateOf("₹") }
-    var isDarkMode by remember { mutableStateOf(false) }
+    var selectedThemeMode by remember { mutableStateOf("SYSTEM") }
     var isPrivacyBlurEnabled by remember { mutableStateOf(true) }
     var blurTimeoutSeconds by remember { mutableStateOf(5) }
-    var selectedBankName by remember { mutableStateOf("HDFC Bank") }
-    var customBankName by remember { mutableStateOf("") }
-    var isCustomBank by remember { mutableStateOf(false) }
+    var selectedStorageMode by remember { mutableStateOf(com.example.features.sync.StorageMode.LOCAL_ONLY) }
+    var selectedBankName by remember { mutableStateOf("Indian Bank") }
     var accountTypeSelected by remember { mutableStateOf("Savings") }
 
     var emailInput by remember { mutableStateOf("") }
-    var otpInput by remember { mutableStateOf("") }
-    var isOtpSent by remember { mutableStateOf(false) }
-    var otpStatusMessage by remember { mutableStateOf<String?>(null) }
-    var otpErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showWalkthroughDialog by remember { mutableStateOf(false) }
 
     var showBackupFoundDialog by remember { mutableStateOf(false) }
     var foundBackupInfo by remember { mutableStateOf<LatestBackupResponse?>(null) }
@@ -84,9 +70,7 @@ fun OnboardingScreen(
     var isRestoringFromBackup by remember { mutableStateOf(false) }
     var restoreStatusMessage by remember { mutableStateOf<String?>(null) }
 
-    val otpCooldown by authViewModel.otpCooldown.collectAsState()
-    val isOtpSending by authViewModel.isOtpSending.collectAsState()
-    val isOtpVerifying by authViewModel.isOtpVerifying.collectAsState()
+    val authLoading by authViewModel.isLoading.collectAsState()
     val authError by authViewModel.errorMessage.collectAsState()
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -95,6 +79,8 @@ fun OnboardingScreen(
     var showServerConfigDialog by remember { mutableStateOf(false) }
     var currentServerUrl by remember { mutableStateOf(ApiClient.getBaseUrl(context)) }
     var editedServerUrl by remember(showServerConfigDialog) { mutableStateOf(currentServerUrl) }
+    var editedSupabaseUrl by remember(showServerConfigDialog) { mutableStateOf(ApiClient.getSupabaseUrl(context)) }
+    var editedSupabaseAnonKey by remember(showServerConfigDialog) { mutableStateOf(ApiClient.getSupabaseAnonKey(context)) }
 
     val restoreLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
@@ -136,21 +122,22 @@ fun OnboardingScreen(
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = if (step == 0) "Meet Yosan Finance" else "Welcome to Yosan",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.primary,
-                    letterSpacing = (-0.5).sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (step == 0) "Your Private, AI-Powered Financial Companion" else "Offline-first Indian personal finance manager",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
+                if (step > 0) {
+                    Text(
+                        text = "Welcome to Yosan",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = (-0.5).sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Offline-first Indian personal finance manager",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
 
                 AnimatedContent(
                     targetState = step,
@@ -175,417 +162,464 @@ fun OnboardingScreen(
                     ) {
                         when (currentStep) {
                             0 -> {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.size(64.dp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(36.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.AccountBalanceWallet,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(30.dp)
+                                    )
                                 }
 
-                                Spacer(modifier = Modifier.height(14.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
 
                                 Text(
-                                    text = "Welcome to Yosan",
-                                    style = MaterialTheme.typography.titleLarge,
+                                    text = "Welcome to Yosan Finance",
+                                    style = MaterialTheme.typography.headlineSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
 
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Introduction & Overview",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Spacer(modifier = Modifier.height(14.dp))
 
                                 Text(
-                                    text = "Smart, Private, Table-Formatted Financial Tracker",
+                                    text = "Yosan Finance helps you keep your financial records organized in one place. Record and review personal expenses, official/company expenses, income, money borrowed, money lent, investments, and transfers using the features available in the app.",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.SemiBold
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    lineHeight = 20.sp
                                 )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "Use the Dashboard to review your recorded activity and spending categories. Use Settings to manage supported categories, appearance and privacy options, accounts, backup and restore, and other app preferences.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 18.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                // Why use Yosan Finance Card
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        Text(
+                                            text = "Why use Yosan Finance?",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        val reasons = listOf(
+                                            "Keep financial records organized.",
+                                            "Separate personal and official expenses.",
+                                            "Review spending and income by category.",
+                                            "Track money borrowed and lent where supported.",
+                                            "Organize investment entries and transfers.",
+                                            "Back up or move supported records using the available backup and import/export features."
+                                        )
+                                        reasons.forEach { reason ->
+                                            Row(
+                                                modifier = Modifier.padding(vertical = 3.dp),
+                                                verticalAlignment = Alignment.Top
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CheckCircle,
+                                                    contentDescription = null,
+                                                    tint = IncomeGreen,
+                                                    modifier = Modifier.size(16.dp).padding(top = 2.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = reason,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
 
                                 Spacer(modifier = Modifier.height(12.dp))
 
+                                // Getting started Card
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp)) {
+                                        Text(
+                                            text = "Getting started:",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        val steps = listOf(
+                                            "1. Review your profile and available Settings.",
+                                            "2. Set up the categories and accounts you need.",
+                                            "3. Add or import a small set of records, using supported features.",
+                                            "4. Review the Dashboard and verify that the displayed totals match your records.",
+                                            "5. Set up backup or connected services only if you want to use them and the feature is available."
+                                        )
+                                        steps.forEach { stepText ->
+                                            Text(
+                                                text = stepText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.padding(vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // Privacy Note Surface
                                 Surface(
-                                    shape = RoundedCornerShape(20.dp),
-                                    color = IncomeGreen.copy(alpha = 0.12f),
-                                    border = BorderStroke(1.dp, IncomeGreen.copy(alpha = 0.35f))
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = LendingIndigo.copy(alpha = 0.08f),
+                                    border = BorderStroke(1.dp, LendingIndigo.copy(alpha = 0.25f))
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.Top
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Security,
                                             contentDescription = null,
-                                            tint = IncomeGreen,
-                                            modifier = Modifier.size(16.dp)
+                                            tint = LendingIndigo,
+                                            modifier = Modifier.size(18.dp).padding(top = 2.dp)
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "100% Offline-First • Zero Cloud Tracking",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = IncomeGreen,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text(
+                                                text = "Privacy note:",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = LendingIndigo
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = "Yosan Finance may use device features or connected services for functions such as screen lock, sign-in, or file import/export. The app explains each permission when it becomes relevant. Review the permission request and the app's privacy policy before granting access.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                lineHeight = 16.sp
+                                            )
+                                        }
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Disclaimer Footer
+                                Text(
+                                    text = "Your summaries depend on the accuracy of the records entered or imported. Unless explicitly supported by the installed version, do not assume that the app automatically connects to banks, verifies transactions, provides live investment values, or offers financial advice.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                    lineHeight = 14.sp,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
 
                                 Spacer(modifier = Modifier.height(18.dp))
 
-                                // Feature 1: Privacy
-                                IntroFeatureCard(
-                                    icon = Icons.Default.Shield,
-                                    iconTint = IncomeGreen,
-                                    containerColor = IncomeGreen.copy(alpha = 0.08f),
-                                    title = "100% Device-Only Privacy",
-                                    description = "All your transactions, accounts, and financial records stay on your device. We never sell, harvest, or transmit your private records."
-                                )
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Feature 2: AI Advisor
-                                IntroFeatureCard(
-                                    icon = Icons.Default.AutoAwesome,
-                                    iconTint = MaterialTheme.colorScheme.primary,
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                                    title = "Smart AI Advisor (Gemini)",
-                                    description = "Direct answers to questions like 'What is my highest expense?' or 'How much did I spend on food?' formatted in clean Material 3 tables."
-                                )
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Feature 3: Statement Parsing
-                                IntroFeatureCard(
-                                    icon = Icons.Default.ReceiptLong,
-                                    iconTint = LendingIndigo,
-                                    containerColor = LendingIndigo.copy(alpha = 0.08f),
-                                    title = "AI Bank Statement Parser",
-                                    description = "Import PDF, Excel, and CSV statements with intelligent noise reduction, disclaimer stripping, and automatic category mapping."
-                                )
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Feature 4: Lending & Debts
-                                IntroFeatureCard(
-                                    icon = Icons.Default.People,
-                                    iconTint = MaterialTheme.colorScheme.tertiary,
-                                    containerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.08f),
-                                    title = "Lending & Debt Manager",
-                                    description = "Keep a crystal-clear log of who owes you money and loans you manage, with due date reminders and repayment history."
-                                )
-
-                                Spacer(modifier = Modifier.height(16.dp))
-                            }
-                            1 -> {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
                                 Text(
-                                    text = "Welcome to Yosan",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
+                                    text = "Choose your operating mode to get started:",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Sign in with Email OTP, Google, or start offline",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
 
-                                // Option 1: Email OTP Authentication Card
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                                    shape = RoundedCornerShape(16.dp)
+                                // Mode Choice 1: Online Mode
+                                Button(
+                                    onClick = {
+                                        isOfflineModeSelected = false
+                                        step = 1
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                 ) {
-                                    Column(modifier = Modifier.padding(14.dp)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text("Email Verification (OTP)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                                            }
-                                            IconButton(
-                                                onClick = { showServerConfigDialog = true },
-                                                modifier = Modifier.size(28.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Settings,
-                                                    contentDescription = "Server Settings",
-                                                    modifier = Modifier.size(16.dp),
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            text = "Server: $currentServerUrl",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                            fontSize = 10.sp
-                                        )
-                                        Spacer(modifier = Modifier.height(10.dp))
-
-                                        OutlinedTextField(
-                                            value = emailInput,
-                                            onValueChange = {
-                                                emailInput = it
-                                                otpErrorMessage = null
-                                            },
-                                            label = { Text("Email Address") },
-                                            placeholder = { Text("name@example.com") },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            singleLine = true,
-                                            shape = RoundedCornerShape(12.dp)
-                                        )
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            if (!isOtpSent && emailInput.isNotBlank()) {
-                                                TextButton(
-                                                    onClick = {
-                                                        isOtpSent = true
-                                                        otpErrorMessage = null
-                                                    },
-                                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                                                ) {
-                                                    Text("I have a code", style = MaterialTheme.typography.labelSmall)
-                                                }
-                                            } else {
-                                                Spacer(modifier = Modifier.weight(1f))
-                                            }
-
-                                            Button(
-                                                onClick = {
-                                                    otpErrorMessage = null
-                                                    otpStatusMessage = null
-                                                    authViewModel.sendOtp(emailInput, "LOGIN") { success, msg ->
-                                                        if (success) {
-                                                            isOtpSent = true
-                                                            otpStatusMessage = msg ?: "Code sent! Check your inbox."
-                                                        } else {
-                                                            otpErrorMessage = msg ?: "Failed to send code"
-                                                        }
-                                                    }
-                                                },
-                                                enabled = emailInput.isNotBlank() && otpCooldown == 0 && !isOtpSending,
-                                                shape = RoundedCornerShape(10.dp),
-                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                                            ) {
-                                                if (isOtpSending) {
-                                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                }
-                                                Text(
-                                                    text = if (otpCooldown > 0) "Resend in ${otpCooldown}s" else if (isOtpSent) "Resend Code" else "Send Code",
-                                                    style = MaterialTheme.typography.labelMedium
-                                                )
-                                            }
-                                        }
-
-                                        if (isOtpSent) {
-                                            Spacer(modifier = Modifier.height(10.dp))
-                                            OutlinedTextField(
-                                                value = otpInput,
-                                                onValueChange = {
-                                                    if (it.length <= 6) {
-                                                        otpInput = it
-                                                        otpErrorMessage = null
-                                                    }
-                                                },
-                                                label = { Text("6-Digit Code") },
-                                                placeholder = { Text("Enter 6-digit code") },
-                                                modifier = Modifier.fillMaxWidth(),
-                                                singleLine = true,
-                                                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                                                shape = RoundedCornerShape(12.dp)
-                                            )
-
-                                            Spacer(modifier = Modifier.height(8.dp))
-
-                                            Button(
-                                                onClick = {
-                                                    otpErrorMessage = null
-                                                    authViewModel.verifyOtp(emailInput, otpInput, userName) { success, err ->
-                                                        if (success) {
-                                                            userName = authViewModel.user.value?.name ?: emailInput.substringBefore("@")
-                                                            isCheckingBackup = true
-                                                            authViewModel.checkForExistingBackup { hasBackup, backupInfo ->
-                                                                isCheckingBackup = false
-                                                                if (hasBackup && backupInfo != null && !backupInfo.backupJson.isNullOrBlank()) {
-                                                                    foundBackupInfo = backupInfo
-                                                                    showBackupFoundDialog = true
-                                                                } else {
-                                                                    step = 2
-                                                                }
-                                                            }
-                                                        } else {
-                                                            otpErrorMessage = err ?: "Verification failed"
-                                                        }
-                                                    }
-                                                },
-                                                enabled = otpInput.length == 6 && !isOtpVerifying && !isCheckingBackup,
-                                                modifier = Modifier.fillMaxWidth(),
-                                                shape = RoundedCornerShape(10.dp),
-                                                colors = ButtonDefaults.buttonColors(containerColor = IncomeGreen)
-                                            ) {
-                                                if (isOtpVerifying || isCheckingBackup) {
-                                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                }
-                                                Text(
-                                                    text = if (isCheckingBackup) "Checking for backups..." else "Verify & Continue",
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-
-                                        otpStatusMessage?.let {
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(it, style = MaterialTheme.typography.bodySmall, color = IncomeGreen)
-                                        }
-                                        otpErrorMessage?.let {
-                                            Spacer(modifier = Modifier.height(6.dp))
-                                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                                            if (it.contains("Unable to reach", ignoreCase = true)) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                TextButton(
-                                                    onClick = { showServerConfigDialog = true },
-                                                    contentPadding = PaddingValues(0.dp)
-                                                ) {
-                                                    Text("Tap here to check / edit Server URL", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                                }
-                                            }
-                                            if (!isOtpSent && emailInput.isNotBlank()) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                TextButton(
-                                                    onClick = {
-                                                        isOtpSent = true
-                                                        otpErrorMessage = null
-                                                    },
-                                                    contentPadding = PaddingValues(0.dp)
-                                                ) {
-                                                    Text("Already received code in email? Tap here to enter", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                                }
-                                            }
-                                        }
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.Cloud,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "Continue with Online Mode",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
 
-                                Spacer(modifier = Modifier.height(14.dp))
+                                Spacer(modifier = Modifier.height(10.dp))
 
-                                // Option 2: Google Sign In
+                                // Mode Choice 2: Offline Mode
                                 OutlinedButton(
                                     onClick = {
-                                        authViewModel.signInWithGoogle(context) { claims ->
-                                            userName = claims.name.ifBlank { claims.email.substringBefore("@") }
-                                            emailInput = claims.email
-                                            isCheckingBackup = true
-                                            authViewModel.checkForExistingBackup { hasBackup, backupInfo ->
-                                                isCheckingBackup = false
-                                                if (hasBackup && backupInfo != null && !backupInfo.backupJson.isNullOrBlank()) {
-                                                    foundBackupInfo = backupInfo
-                                                    showBackupFoundDialog = true
-                                                } else {
-                                                    step = 2
-                                                }
-                                            }
-                                        }
+                                        isOfflineModeSelected = true
+                                        step = 1
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(14.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
                                 ) {
-                                    Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Sign In with Google", fontWeight = FontWeight.SemiBold)
-                                }
-
-                                authError?.let { err ->
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Card(
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(10.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = err,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onErrorContainer
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(14.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.weight(1f),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    Icon(
+                                        imageVector = Icons.Default.PhoneAndroid,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(22.dp),
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
+                                    Spacer(modifier = Modifier.width(10.dp))
                                     Text(
-                                        text = "  OR OFFLINE / RESTORE  ",
-                                        style = MaterialTheme.typography.labelSmall,
+                                        text = "Continue with Offline Mode",
+                                        style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    HorizontalDivider(
-                                        modifier = Modifier.weight(1f),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 }
-
-                                Spacer(modifier = Modifier.height(14.dp))
-
-                                OutlinedTextField(
-                                    value = userName,
-                                    onValueChange = { userName = it },
-                                    label = { Text("Display Name (Offline Profile)") },
-                                    placeholder = { Text("e.g. Elliot") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-                                    shape = RoundedCornerShape(14.dp)
-                                )
 
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 OutlinedButton(
-                                    onClick = { restoreLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
-                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = { showWalkthroughDialog = true },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
                                     shape = RoundedCornerShape(14.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = LendingIndigo)
                                 ) {
-                                    Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Restore from Backup", fontWeight = FontWeight.Bold)
+                                    Text("Explore Walkthrough Guide", fontWeight = FontWeight.SemiBold)
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
+                            1 -> {
+                                if (!isOfflineModeSelected) {
+                                    // ONLINE MODE / LOGIN SECTION
+                                    Icon(
+                                        imageVector = Icons.Default.Cloud,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(56.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Sign In to Yosan",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Sign in with your Google account to enable online sync",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(20.dp))
+
+                                    // Primary Action: Sign In with Google
+                                    Button(
+                                        onClick = {
+                                            authViewModel.signInWithGoogle(context) { claims ->
+                                                userName = claims.name.ifBlank { claims.email.substringBefore("@") }
+                                                emailInput = claims.email
+                                                financeViewModel.updateUserProfile(userName, currencySymbol)
+                                                step = 2
+                                            }
+                                        },
+                                        enabled = !authLoading,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(52.dp),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                    ) {
+                                        if (authLoading) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(22.dp),
+                                                color = MaterialTheme.colorScheme.onPrimary,
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text(
+                                                text = "Signing In...",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.AccountCircle,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text(
+                                                text = "Sign In with Google",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    authError?.let { err ->
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(12.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                Text(
+                                                    text = err,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    OutlinedButton(
+                                        onClick = { isOfflineModeSelected = true },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Icon(Icons.Default.PhoneAndroid, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Switch to Offline Mode", fontWeight = FontWeight.SemiBold)
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    OutlinedButton(
+                                        onClick = { restoreLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LendingIndigo)
+                                    ) {
+                                        Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Restore from Backup", fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    // OFFLINE MODE SECTION
+                                    Icon(
+                                        imageVector = Icons.Default.PhoneAndroid,
+                                        contentDescription = null,
+                                        tint = LendingIndigo,
+                                        modifier = Modifier.size(56.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Offline Profile Setup",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Your financial data stays 100% on this device",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(20.dp))
+
+                                    OutlinedTextField(
+                                        value = userName,
+                                        onValueChange = { userName = it },
+                                        label = { Text("Display Name *") },
+                                        placeholder = { Text("Enter your name (Required)") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                                        shape = RoundedCornerShape(14.dp),
+                                        isError = userName.isNotBlank() && userName.trim().isEmpty(),
+                                        supportingText = {
+                                            if (userName.trim().isEmpty()) {
+                                                Text("Display name is required to continue", color = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
+                                    )
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    Button(
+                                        onClick = {
+                                            val finalName = userName.trim()
+                                            financeViewModel.updateUserProfile(finalName, currencySymbol)
+                                            step = 2
+                                        },
+                                        enabled = userName.trim().isNotEmpty(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(52.dp),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = LendingIndigo)
+                                    ) {
+                                        Icon(Icons.Default.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Continue with Offline Profile", fontWeight = FontWeight.Bold)
+                                    }
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    OutlinedButton(
+                                        onClick = { isOfflineModeSelected = false },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp),
+                                        shape = RoundedCornerShape(14.dp)
+                                    ) {
+                                        Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Switch to Online Mode", fontWeight = FontWeight.SemiBold)
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    OutlinedButton(
+                                        onClick = { restoreLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LendingIndigo)
+                                    ) {
+                                        Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Restore from Backup", fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
 
@@ -604,49 +638,32 @@ fun OnboardingScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Select your Indian bank or wallet account",
+                                    text = "Select your Indian bank account",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.height(14.dp))
 
                                 Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 180.dp)
-                                        .verticalScroll(rememberScrollState()),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     POPULAR_INDIAN_BANKS.forEach { bank ->
-                                        val isSelected = !isCustomBank && selectedBankName == bank
+                                        val isSelected = selectedBankName == bank
                                         FilterChip(
                                             selected = isSelected,
                                             onClick = {
                                                 selectedBankName = bank
-                                                isCustomBank = false
                                             },
-                                            label = { Text(bank, maxLines = 1) },
-                                            modifier = Modifier.fillMaxWidth()
+                                            label = { Text(bank, maxLines = 1, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            leadingIcon = {
+                                                if (isSelected) {
+                                                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                }
+                                            }
                                         )
                                     }
-                                    FilterChip(
-                                        selected = isCustomBank,
-                                        onClick = { isCustomBank = true },
-                                        label = { Text("Other Bank / Wallet", maxLines = 1) },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                if (isCustomBank) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    OutlinedTextField(
-                                        value = customBankName,
-                                        onValueChange = { customBankName = it },
-                                        label = { Text("Enter Bank / Wallet Name") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(12.dp)
-                                    )
                                 }
 
                                 Spacer(modifier = Modifier.height(14.dp))
@@ -702,13 +719,29 @@ fun OnboardingScreen(
                                 // Theme Preference
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     FilterChip(
-                                        selected = !isDarkMode,
+                                        selected = selectedThemeMode == "SYSTEM",
                                         onClick = {
-                                            isDarkMode = false
-                                            financeViewModel.toggleDarkMode(false)
+                                            selectedThemeMode = "SYSTEM"
+                                            financeViewModel.setThemeMode("SYSTEM")
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.SettingsBrightness,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        label = { Text("System", style = MaterialTheme.typography.labelSmall) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    FilterChip(
+                                        selected = selectedThemeMode == "LIGHT",
+                                        onClick = {
+                                            selectedThemeMode = "LIGHT"
+                                            financeViewModel.setThemeMode("LIGHT")
                                         },
                                         leadingIcon = {
                                             Icon(
@@ -717,14 +750,14 @@ fun OnboardingScreen(
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         },
-                                        label = { Text("Light Theme") },
+                                        label = { Text("Light", style = MaterialTheme.typography.labelSmall) },
                                         modifier = Modifier.weight(1f)
                                     )
                                     FilterChip(
-                                        selected = isDarkMode,
+                                        selected = selectedThemeMode == "DARK",
                                         onClick = {
-                                            isDarkMode = true
-                                            financeViewModel.toggleDarkMode(true)
+                                            selectedThemeMode = "DARK"
+                                            financeViewModel.setThemeMode("DARK")
                                         },
                                         leadingIcon = {
                                             Icon(
@@ -733,7 +766,7 @@ fun OnboardingScreen(
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         },
-                                        label = { Text("Dark Theme") },
+                                        label = { Text("Dark", style = MaterialTheme.typography.labelSmall) },
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -779,6 +812,77 @@ fun OnboardingScreen(
                                         }
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Data Storage Preference",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                if (isOfflineModeSelected) {
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Storage,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = "Local Device Storage",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = "Your financial data is encrypted and kept exclusively on this device.",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Text(
+                                        text = "Choose where your financial records are saved",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        FilterChip(
+                                            selected = selectedStorageMode == com.example.features.sync.StorageMode.LOCAL_ONLY,
+                                            onClick = { selectedStorageMode = com.example.features.sync.StorageMode.LOCAL_ONLY },
+                                            label = { Text("Local Only", style = MaterialTheme.typography.labelSmall) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = selectedStorageMode == com.example.features.sync.StorageMode.GOOGLE_DRIVE,
+                                            onClick = { selectedStorageMode = com.example.features.sync.StorageMode.GOOGLE_DRIVE },
+                                            label = { Text("Google Drive", style = MaterialTheme.typography.labelSmall) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        FilterChip(
+                                            selected = selectedStorageMode == com.example.features.sync.StorageMode.LOCAL_PLUS_DRIVE,
+                                            onClick = { selectedStorageMode = com.example.features.sync.StorageMode.LOCAL_PLUS_DRIVE },
+                                            label = { Text("Local + Drive", style = MaterialTheme.typography.labelSmall) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
                             }
 
                             4 -> {
@@ -796,7 +900,11 @@ fun OnboardingScreen(
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Your account is initialized. You can now import bank statements directly into Yosan.",
+                                    text = if (isOfflineModeSelected) {
+                                        "Your offline profile is ready. Your data stays 100% private on this device. You can now start managing accounts and importing bank statements."
+                                    } else {
+                                        "Your account is initialized. You can now import bank statements directly into Yosan."
+                                    },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -831,72 +939,78 @@ fun OnboardingScreen(
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    val finalBank = if (isCustomBank) customBankName.trim() else selectedBankName.trim()
+                    val finalBank = selectedBankName.trim()
                     val isNextEnabled = when (step) {
-                        0 -> true
-                        1 -> userName.isNotBlank()
+                        0 -> false
+                        1 -> if (isOfflineModeSelected) userName.trim().isNotEmpty() else (emailInput.isNotBlank() || authViewModel.user.value != null)
                         2 -> finalBank.isNotBlank()
                         3 -> true
                         else -> true
                     }
 
-                    Button(
-                        onClick = {
-                            when (step) {
-                                0 -> step = 1
-                                1 -> {
-                                    if (userName.isNotBlank()) {
-                                        financeViewModel.updateUserProfile(userName.trim(), currencySymbol)
+                    if (step > 0) {
+                        Button(
+                            onClick = {
+                                when (step) {
+                                    1 -> {
+                                        val finalName = userName.trim()
+                                        financeViewModel.updateUserProfile(finalName, currencySymbol)
                                         step = 2
                                     }
-                                }
-                                2 -> {
-                                    if (finalBank.isNotBlank()) {
-                                        coroutineScope.launch {
-                                            financeViewModel.addAccount(
-                                                AccountEntity(
-                                                    accountName = accountTypeSelected,
-                                                    bankName = finalBank,
-                                                    accountNumberMasked = "",
-                                                    accountType = when (accountTypeSelected) {
-                                                        "Wallet" -> AccountType.WALLET
-                                                        "Credit Card" -> AccountType.CREDIT_CARD
-                                                        else -> AccountType.BANK
-                                                    },
-                                                    openingBalance = 0.0,
-                                                    currentBalance = 0.0,
-                                                    isDefault = true
+                                    2 -> {
+                                        if (finalBank.isNotBlank()) {
+                                            coroutineScope.launch {
+                                                financeViewModel.addAccount(
+                                                    AccountEntity(
+                                                        accountName = accountTypeSelected,
+                                                        bankName = finalBank,
+                                                        accountNumberMasked = "",
+                                                        accountType = when (accountTypeSelected) {
+                                                            "Wallet" -> AccountType.WALLET
+                                                            "Credit Card" -> AccountType.CREDIT_CARD
+                                                            else -> AccountType.BANK
+                                                        },
+                                                        openingBalance = 0.0,
+                                                        currentBalance = 0.0,
+                                                        isDefault = true
+                                                    )
                                                 )
-                                            )
-                                            step = 3
+                                                step = 3
+                                            }
                                         }
                                     }
+                                    3 -> {
+                                        financeViewModel.completeOnboarding(themeMode = selectedThemeMode, privacyBlurEnabled = isPrivacyBlurEnabled, timeoutSeconds = blurTimeoutSeconds)
+                                        authViewModel.setStoragePreference(if (isOfflineModeSelected) com.example.features.sync.StorageMode.LOCAL_ONLY else selectedStorageMode)
+                                        step = 4
+                                    }
+                                    else -> {
+                                        val finalName = userName.trim().ifBlank { "User" }
+                                        financeViewModel.completeOnboarding(themeMode = selectedThemeMode, privacyBlurEnabled = isPrivacyBlurEnabled, timeoutSeconds = blurTimeoutSeconds)
+                                        financeViewModel.updateUserProfile(finalName, currencySymbol)
+                                        authViewModel.setStoragePreference(if (isOfflineModeSelected) com.example.features.sync.StorageMode.LOCAL_ONLY else selectedStorageMode)
+                                        val prefs = com.example.utils.AppPreferences(context)
+                                        prefs.isOfflineMode = isOfflineModeSelected
+                                        prefs.isLoggedOut = false
+                                        prefs.isOnboardingCompleted = true
+                                        authViewModel.completeOnboarding()
+                                        onComplete()
+                                    }
                                 }
-                                3 -> {
-                                    financeViewModel.completeOnboarding(isDarkMode, isPrivacyBlurEnabled, blurTimeoutSeconds)
-                                    step = 4
-                                }
-                                else -> {
-                                    financeViewModel.completeOnboarding(isDarkMode, isPrivacyBlurEnabled, blurTimeoutSeconds)
-                                    financeViewModel.updateUserProfile(userName.trim(), currencySymbol)
-                                    authViewModel.completeOnboarding()
-                                    onComplete()
-                                }
-                            }
-                        },
-                        enabled = isNextEnabled,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.height(48.dp)
-                    ) {
-                        Text(
-                            text = when (step) {
-                                0 -> "Get Started →"
-                                4 -> "Go to Dashboard"
-                                else -> "Next"
                             },
-                            fontWeight = FontWeight.Bold
-                        )
+                            enabled = isNextEnabled,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.height(48.dp)
+                        ) {
+                            Text(
+                                text = when (step) {
+                                    4 -> "Go to Dashboard"
+                                    else -> "Next"
+                                },
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
@@ -1031,18 +1145,49 @@ fun OnboardingScreen(
     if (showServerConfigDialog) {
         AlertDialog(
             onDismissRequest = { showServerConfigDialog = false },
-            title = { Text("Backend Server Settings") },
+            title = { Text("Cloud & Auth Backend", fontWeight = FontWeight.Bold) },
             text = {
-                Column {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Text(
-                        "Set the IP and port where your Yosan backend is running. For Android Emulator use http://10.0.2.2:3000/, for a physical device on Wi-Fi use your PC's IP address (e.g. http://192.168.1.10:3000/).",
+                        "Configure Supabase for zero-knowledge privacy-first auth and backup storage, or configure a fallback backend server.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "Supabase Project Settings:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = editedSupabaseUrl,
+                        onValueChange = { editedSupabaseUrl = it },
+                        label = { Text("Supabase URL") },
+                        placeholder = { Text("https://your-ref.supabase.co") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = editedSupabaseAnonKey,
+                        onValueChange = { editedSupabaseAnonKey = it },
+                        label = { Text("Supabase Anon Public Key") },
+                        placeholder = { Text("eyJhbGciOi...") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        "Fallback / Local Server URL:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
                     OutlinedTextField(
                         value = editedServerUrl,
                         onValueChange = { editedServerUrl = it },
-                        label = { Text("Server URL") },
+                        label = { Text("Backend Server URL") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1051,6 +1196,7 @@ fun OnboardingScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        ApiClient.setCustomSupabase(context, editedSupabaseUrl.ifBlank { null }, editedSupabaseAnonKey.ifBlank { null })
                         ApiClient.setCustomBaseUrl(context, editedServerUrl.ifBlank { null })
                         currentServerUrl = ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -1062,6 +1208,7 @@ fun OnboardingScreen(
             dismissButton = {
                 TextButton(
                     onClick = {
+                        ApiClient.setCustomSupabase(context, null, null)
                         ApiClient.setCustomBaseUrl(context, null)
                         currentServerUrl = ApiClient.getBaseUrl(context)
                         showServerConfigDialog = false
@@ -1071,6 +1218,10 @@ fun OnboardingScreen(
                 }
             }
         )
+    }
+
+    if (showWalkthroughDialog) {
+        UserWalkthroughDialog(onDismissRequest = { showWalkthroughDialog = false })
     }
 }
 

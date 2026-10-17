@@ -1,0 +1,69 @@
+YOSAN FINANCE — INTRODUCTION NOTE IMPLEMENTATION PROMPT
+
+Objective
+Add, maintain, and specify the introductory guidance note implemented in the Yosan Finance Android application. The note introduces new users to the core value propositions of the app, explains the separation between personal and official expenses, guides initial setup, clarifies permission usage, and provides immediate navigation to either start using the app or launch the comprehensive in-app walkthrough.
+
+ARCHITECTURE & COMPONENT MAPPING
+- Dialog Component: `app/src/main/java/com/example/features/walkthrough/IntroductionNoteDialog.kt`
+- Launch Coordinator: `app/src/main/java/com/example/ui/screens/MainContainerScreen.kt`
+- Settings Reopen Action: `app/src/main/java/com/example/features/settings/SettingsScreen.kt`
+- Persistence Key: `AppPreferences.hasSeenIntroductionNote` (Boolean flag in SharedPreferences)
+- Automated Unit Tests: `app/src/test/java/com/example/IntroductionAndWalkthroughTest.kt`
+
+INTRODUCTION NOTE — USER-FACING CONTENT
+
+Title:
+Welcome to Yosan Finance
+
+Body:
+Yosan Finance helps you keep your financial records organized in one place. Record and review personal expenses, official/company expenses, income, money borrowed, money lent, investments, and transfers using the features available in the app.
+
+Use the Dashboard to review your recorded activity and spending categories. Use Settings to manage supported categories, appearance and privacy options, accounts, backup and restore, and other app preferences.
+
+Why use Yosan Finance?
+- Keep financial records organized.
+- Separate personal and official expenses.
+- Review spending and income by category.
+- Track money borrowed and lent where supported.
+- Organize investment entries and transfers.
+- Back up or move supported records using the available backup and import/export features.
+
+Getting started:
+1. Review your profile and available Settings.
+2. Set up the categories and accounts you need.
+3. Add or import a small set of records, using supported features.
+4. Review the Dashboard and verify that the displayed totals match your records.
+5. Set up backup or connected services only if you want to use them and the feature is available.
+
+Privacy note:
+Yosan Finance may use device features or connected services for functions such as screen lock, sign-in, file import/export, or cloud backup. The app should explain each permission when it becomes relevant. Review the permission request and the app's actual privacy policy before granting access. Google Drive connection is separate from app sign-in where applicable.
+
+Footer:
+Your summaries depend on the accuracy of the records entered or imported. Unless explicitly supported by the installed version, do not assume that the app automatically connects to banks, verifies transactions, provides live investment values, or offers financial advice.
+
+Buttons:
+- "Get started": Dismisses the note, marks `hasSeenIntroductionNote = true`, and navigates directly into the Dashboard.
+- "How to use the app": Dismisses the note, marks `hasSeenIntroductionNote = true`, and immediately launches the full 13-module `UserWalkthroughDialog`.
+- "Skip": Dismisses the note without showing further introductory dialogs, allowing direct access to the app.
+
+IMPLEMENTATION RULES & LIFECYCLE
+1. Responsive Mobile Layout: Built with Material 3 `AlertDialog` and scrollable `Column` (`verticalScroll(rememberScrollState())`) to guarantee optimal readability across small screens and landscape orientation.
+2. First-Launch Integration: Displayed immediately upon successful login or session restoration on the main container screen, if `hasSeenIntroductionNote == false`.
+3. Non-Intrusive Persistence: Once dismissed or completed, the state is persisted in `AppPreferences`. Returning users are never interrupted upon subsequent app launches.
+4. Settings Access: Users can reopen the Introduction Note at any time by selecting "Introduction Note / Welcome Guide" in the Help / Developer section of Settings.
+5. Non-Blocking Design: Users can skip or dismiss the note at any time; skipping does not lock or restrict any financial features.
+6. Contextual Permissions: The Introduction Note does not request any Android runtime permissions. Permissions (Storage, Biometrics, Notification) are requested only when the corresponding feature is opened.
+7. Theme Support: Fully conforms to dynamic Material 3 theme attributes (`MaterialTheme.colorScheme`), supporting Light and Dark modes seamlessly.
+
+TESTING
+Verified by automated unit tests in `IntroductionAndWalkthroughTest.kt`:
+- Dialog content completeness and button action callbacks.
+- State persistence in `AppPreferences`.
+- Seamless transition from Introduction Note to `UserWalkthroughDialog`.
+- Verification that financial calculations, database records, and authentication remain untouched.
+
+DELIVERABLES
+- Implementation file: `IntroductionNoteDialog.kt`
+- Navigation integration: `MainContainerScreen.kt`
+- Preferences storage: `AppPreferences.kt`
+- Test suite: `IntroductionAndWalkthroughTest.kt`

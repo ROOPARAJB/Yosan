@@ -25,9 +25,10 @@ import kotlinx.coroutines.launch
         DeletedTransactionEntity::class,
         SyncMetadataEntity::class,
         UndoHistoryEntity::class,
-        PendingFeedbackEntity::class
+        PendingFeedbackEntity::class,
+        StatementImportEntity::class
     ],
-    version = 9,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -42,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun syncDao(): SyncDao
     abstract fun undoDao(): UndoDao
     abstract fun pendingFeedbackDao(): PendingFeedbackDao
+    abstract fun statementImportDao(): StatementImportDao
 
     companion object {
         @Volatile
@@ -104,6 +106,48 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Add claim and advance tracking columns to company_expenses
+                db.execSQL("ALTER TABLE `company_expenses` ADD COLUMN `claimStatus` TEXT NOT NULL DEFAULT 'PENDING'")
+                db.execSQL("ALTER TABLE `company_expenses` ADD COLUMN `submittedDate` TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE `company_expenses` ADD COLUMN `approvedAmount` REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE `company_expenses` ADD COLUMN `reimbursedAmount` REAL NOT NULL DEFAULT 0.0")
+                db.execSQL("ALTER TABLE `company_expenses` ADD COLUMN `advanceId` TEXT DEFAULT NULL")
+                db.execSQL("UPDATE `company_expenses` SET `claimStatus` = 'APPROVED', `approvedAmount` = `amount`, `reimbursedAmount` = `amount` WHERE `isReimbursed` = 1")
+
+                // Add importId to transactions
+                db.execSQL("ALTER TABLE `transactions` ADD COLUMN `importId` INTEGER DEFAULT NULL")
+
+                // Create statement_imports table
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `statement_imports` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `fileName` TEXT NOT NULL,
+                        `bankName` TEXT NOT NULL,
+                        `importTimestamp` INTEGER NOT NULL,
+                        `totalParsed` INTEGER NOT NULL,
+                        `importedCount` INTEGER NOT NULL,
+                        `duplicateCount` INTEGER NOT NULL,
+                        `auditStatus` TEXT NOT NULL,
+                        `openingBalance` REAL,
+                        `closingBalance` REAL,
+                        `totalDebits` REAL NOT NULL,
+                        `totalCredits` REAL NOT NULL,
+                        `discrepancyCount` INTEGER NOT NULL,
+                        `notes` TEXT NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `user_profile` ADD COLUMN `storagePreference` TEXT NOT NULL DEFAULT 'LOCAL'")
+                db.execSQL("ALTER TABLE `user_profile` ADD COLUMN `supabaseUid` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -111,7 +155,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "finance_manager_db"
                 )
-                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                     .fallbackToDestructiveMigration(true)
                     .addCallback(AppDatabaseCallback(context.applicationContext, scope))
                     .build()

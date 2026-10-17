@@ -1,0 +1,194 @@
+DASHBOARD IMPLEMENTATION PROMPT
+
+PROJECT CONTEXT
+Yosan Finance is a Kotlin-based Android personal and official finance management application built with Jetpack Compose, Material 3, and Room SQLite database. This document specifies the exact implementation, architecture, business rules, calculation engines, and verified status of the Dashboard section currently in the codebase.
+
+The dashboard integrates directly with the authoritative Room local database (AppDatabase), shared calculation services (FinancialCalculationService), transaction coordinators, and local AI analyzer, preserving existing records, schema integrity, and Google Drive / Supabase integrations.
+
+GENERAL REQUIREMENTS
+- Authoritative Data: Computes all totals, category distributions, and financial metrics dynamically from Room database entities (TransactionEntity, CompanyExpenseEntity, LoanEntity, AccountEntity, CategoryEntity). No hardcoded metrics or mock amounts exist in production flows.
+- Data Preservation: Preserves all transaction records, IDs, running balances, Supabase session metadata, and Google Drive backup structures.
+- Shared Calculation Engine: All calculations across Dashboard cards, Reports, and detailed dialogs are unified under FinancialCalculationService and CurrencyFormatter.
+- Strict Classification Integrity:
+  * Debit/Credit amounts are strictly mapped without conflating transaction types.
+  * Unclassified transactions (type UNCLASSIFIED or unmapped category) are kept in a separate prominent review banner and are excluded from personal spending and income totals until explicitly classified by the user.
+- Safe Schema & Migrations: Multi-table Room database with foreign keys, indexes, and automated pre-populating migrations.
+- Verification: Fully verified with comprehensive automated unit tests covering all edge cases, reimbursement workflows, and time-based greetings.
+
+1. GREETING
+Header greeting is computed dynamically by FinancialCalculationService.getGreeting() based on the device's local system time:
+- 5:00 AM – 11:59 AM: "Good morning"
+- 12:00 PM – 4:59 PM: "Good afternoon"
+- 5:00 PM – 8:59 PM: "Good evening"
+- 9:00 PM – 4:59 AM: "Good night"
+
+Display Name:
+- Reads the authenticated user's name from UserProfileEntity (synced via Google Sign-In / Supabase profile). If null or blank, gracefully displays the greeting alone without fabricating names.
+- Reactive Lifecycle: Monitored via DisposableEffect with LifecycleEventObserver on Lifecycle.Event.ON_RESUME to immediately update the greeting when the app resumes or transitions past hour boundaries.
+
+2. PERSONAL EXPENSE
+Purpose: Tracks personal expenditures completely separated from official/company expenses, borrowing, lending, and transfers.
+
+Implementation:
+- Entity & Filter: Filters TransactionEntity where transactionType == TransactionType.EXPENSE.
+- Strict Exclusions: Transactions classified as Company/Official (tracked via CompanyExpenseEntity), INCOME, BORROW, LEND, INVESTMENT, or TRANSFER are strictly excluded.
+- Unclassified Isolation: Transactions with unclassified status are segregated into an unclassified review queue and never added into Personal Expense totals.
+- Date Filtering: Supports filtering across TODAY, THIS_WEEK, THIS_MONTH, THIS_YEAR, ALL_TIME, and CUSTOM date ranges.
+- Interactive Detail Dialog: Tapping the Personal Expense card opens an interactive dialog listing all underlying personal expense transactions with dates, descriptions, categories, and formatted amounts.
+- Refund Handling: Refunds and reversals classified under TransactionType.REFUND credit back to savings and are handled without double-counting.
+
+3. OFFICIAL EXPENSE
+Official expenses are strictly managed via CompanyExpenseEntity and CompanyExpenseCoordinator, separate from personal expenses.
+
+Subsections implemented:
+
+A. PENDING CLAIM
+- Tracks recorded company expenses awaiting submission.
+- Criteria: claimStatus == ClaimStatus.PENDING, isReimbursed == false, and notes do not contain "#APPLIED".
+- Displays: Expense date, merchant/reason, amount, category, and receipt attachment indicators.
+- Accounting: Never counted as reimbursed or as confirmed company liabilities.
+
+B. APPLIED CLAIM
+- Tracks submitted claims awaiting company review and approval.
+- Criteria: claimStatus == ClaimStatus.SUBMITTED or notes contain "#APPLIED", with isReimbursed == false and claimStatus != ClaimStatus.APPROVED.
+- Displays: Claim submission date, original expense amount, claim reference ID, and review status.
+- Rejected & Cancelled Isolation: Claims marked ClaimStatus.REJECTED or ClaimStatus.CANCELLED are excluded from outstanding reimbursement totals.
+
+C. REIMBURSEMENTS
+Metrics displayed separately:
+1. Total Reimbursed: The sum of confirmed reimbursement amounts received:
+   Total Reimbursed = sum of (reimbursedAmount if > 0 else (amount if isReimbursed else 0.0)) for approved company expenses.
+2. Outstanding Reimbursement: Remaining approved payable liability:
+   Outstanding Reimbursement = sum of ((approvedAmount ?: amount) - reimbursedAmount).coerceAtLeast(0.0) for claims where claimStatus == ClaimStatus.APPROVED and isReimbursed == false.
+
+Accounting Rules:
+- Direct Entity Link: Partial reimbursements update reimbursedAmount and link to the original CompanyExpenseEntity.
+- Multi-Payment Support: When reimbursedAmount >= (approvedAmount ?: amount), isReimbursed is automatically set to true.
+- Overpayment & Rejection Safety: Negative balances are clamped via coerceAtLeast(0.0). Rejected and cancelled claims yield 0.0 payable liability.
+- Baseline Reimbursement Verification:
+  * Scenario 1: Approved claim ₹10,000, company paid ₹6,000 -> Total Reimbursed = ₹6,000; Outstanding Reimbursement = ₹4,000.
+  * Scenario 2: Approved claim ₹7,000, company paid ₹5,000 -> Total Reimbursed = ₹5,000; Outstanding Reimbursement = ₹2,000.
+  * Scenario 3: Additional payment of ₹4,000 made on Scenario 1 -> Total Reimbursed = ₹10,000; Outstanding Reimbursement = ₹0.0.
+
+D. ADVANCE
+- Tracks company cash advances received for official spending.
+- Metrics:
+  * Advances Received: Sum of company advance credits recorded.
+  * Advances Utilized: Company expenses settled using advance funds.
+  * Remaining Advance: advancesReceived - advancesUtilized.
+- Advances are kept separate from ordinary income and do not distort personal cash flow or claim reimbursement totals.
+
+4. SPENDING BY CATEGORY
+- Aggregation: Aggregates personal expense transactions grouped by CategoryEntity.
+- Visual Breakdown: Renders proportional horizontal progress bars and percentage share for each category with custom category color badges.
+- Filtering & Interaction: Date filters apply dynamically. Tapping any category row opens an in-depth transactions dialog filtering records for that specific category.
+- Non-Personal Exclusions: Income, borrowing, lending, transfers, investments, and advances are strictly excluded.
+
+5. BORROW
+- Entity & Filter: Transactions classified as TransactionType.BORROW or managed under borrowing records.
+- Metrics:
+  * Total Borrowed: Total principal received.
+  * Repayments Made: Sum of repayment debits linked to borrowing records.
+  * Outstanding Borrowing: Remaining unpaid debt (Total Borrowed - Repayments Made).
+- Principal Exclusion: Borrowed principal is excluded from ordinary income; repayments of principal are excluded from ordinary personal expenses.
+
+6. INCOME BY CATEGORY
+- Aggregation: Transactions classified as TransactionType.INCOME or TransactionType.REFUND grouped by CategoryEntity.
+- Exclusions: Borrowing principal, bank transfers, reimbursements, advances, and returned lending principal are strictly excluded from income.
+- Detail View: Interactive category dialog to inspect individual income items.
+
+7. LEND
+- Entity & Filter: Managed via LoanEntity and TransactionType.LENDING.
+- Metrics:
+  * Total Lent: Sum of loan principal disbursed.
+  * Repayments Received: Sum of amountRepaid recorded against loans.
+  * Outstanding Lending: Sum of remainingAmount (clamped to >= 0.0).
+- Exclusions: Disbursed loan principal is excluded from personal expenses; returned principal is excluded from ordinary income.
+
+8. INVESTMENT
+- Entity & Filter: Transactions classified as TransactionType.INVESTMENT.
+- Metrics: Total capital contributions for the selected period.
+- Isolation: Contributions are tracked as capital asset allocation and excluded from ordinary personal consumption expenses.
+
+9. ROTATIONAL / TRANSFERS
+- Entity & Filter: Transactions classified as TransactionType.TRANSFER.
+- Accounting Rule: Internal account transfers between user-owned accounts (e.g., Bank to Cash or Bank to Bank) have zero net impact on overall savings and net worth. Excluded from income and personal expenses.
+
+10. MANUAL ADDITION TO ENTRY
+- Access: Add Transaction icon (+) in dashboard header and Floating Action Button (FAB).
+- Screen & Modal: AddTransactionBottomSheet / TransactionDetailScreen.
+- Fields Supported:
+  * Date (date picker with ISO format validation)
+  * Amount (decimal validation with CurrencyFormatter)
+  * Transaction Type (Expense, Income, Transfer, Borrow, Lend, Investment, Official)
+  * Category (CategoryEntity picker with search and system/custom categories)
+  * Account (AccountEntity picker)
+  * Description / Narration
+  * Reference / Cheque number
+  * Receipt image attachment URI
+- Validation & Safety: Rejects zero or malformed amounts, prevents double-tap submissions via debounce coroutine state, preserves user input upon validation error.
+
+11. AI FINANCIAL ASSISTANT
+- Access: AutoAwesome icon in the dashboard top header opens the AI Financial Assistant modal.
+- Implementation: LocalFinancialAiAnalyzer.
+- Architecture: 100% on-device local analysis engine. Analyzes the real DashboardSummary, CategoryBreakdown, OfficialExpenseMetrics, and spending velocity.
+- Privacy & Security: Zero external API calls, zero cloud leaks, zero network transmission of personal finances, and no embedded secret API keys.
+- Capabilities:
+  * Summarizes personal and official expenses with accurate figures.
+  * Highlights largest spending categories and trends.
+  * Explains outstanding reimbursements, borrowing, and lending balances.
+  * Evaluates budget adherence and provides objective observations.
+
+12. SHARED CALCULATION AND DATA INTEGRITY
+- Central Engine: FinancialCalculationService.kt provides all authoritative calculations.
+- Decimal Precision: CurrencyFormatter.roundFinancialAmount() utilizes BigDecimal / Double 2-decimal half-up rounding conventions.
+- Account Balance Calculation: Computes account balance starting from account openingBalance or latest verified balance snapshot plus subsequent credits minus subsequent debits.
+- Consistency: The exact same formulas power Dashboard cards, Reports, and PDF generation.
+
+13. DASHBOARD STATES AND PERFORMANCE
+- Loading & Placeholders: Shimmer loading placeholders prevent layout jumps during Room database queries.
+- Empty States: Clear empty cards with call-to-actions ("No transactions yet. Add your first transaction or import a statement").
+- Reactive Flow: Room queries return Flow<List<T>>, automatically refreshing all affected cards when transactions are added, edited, imported, or deleted.
+- Performance: Async database operations on Dispatchers.IO; UI rendering on main thread without blocking.
+
+14. COMPATIBILITY
+- Room Database: Authoritative local SQLite database with entities, DAOs, and type converters.
+- Google Drive Sync: Backups export full Room database to Google Drive (Yosan-Backup/detailsaboutbackup.json) without disrupting local operations.
+- Supabase Integration: Supabase handles authentication and metadata only; financial records remain strictly local and in user's private Google Drive.
+
+15. TESTING REQUIREMENTS & RESULTS
+Verified with automated unit tests in FinancialCalculationServiceTest.kt:
+- testBaselineReimbursementPromptExample(): Verified (10,000 approved, 6,000 paid -> 4,000 outstanding; 7,000 approved, 5,000 paid -> 2,000 outstanding; full settlement -> 0.0 outstanding).
+- testPendingAndAppliedClaimsDoNotCountAsApprovedPayables(): Verified.
+- testReimbursementPaymentsDoNotCountAsOrdinaryIncome(): Verified.
+- testTransfersDoNotDistortIncomeOrExpense(): Verified.
+- testGreetingTimeRanges(): Verified (Morning, Afternoon, Evening, Night).
+- testBorrowingAndLendingIsolation(): Verified.
+
+16. IMPLEMENTATION WORKFLOW & ARCHITECTURE
+Key Files:
+- UI: app/src/main/java/com/example/features/dashboard/DashboardScreen.kt
+- Engine: app/src/main/java/com/example/features/reports/FinancialCalculationService.kt
+- AI: app/src/main/java/com/example/features/ai/LocalFinancialAiAnalyzer.kt
+- ViewModel: app/src/main/java/com/example/features/transactions/FinanceViewModel.kt
+- Coordinators: CompanyExpenseCoordinator.kt, TransactionCoordinator.kt
+- DAOs: TransactionDao.kt, CompanyExpenseDao.kt, LoanDao.kt, AccountDao.kt
+- Card Config: DashboardCardConfigManager.kt
+
+17. FINAL IMPLEMENTATION REPORT
+- Architecture: MVVM with Jetpack Compose, Room SQLite, StateFlow reactivity.
+- Calculations: Single authoritative calculation engine with decimal precision.
+- Official Claims: Complete lifecycle support (Pending -> Submitted -> Approved -> Reimbursed).
+- Security: Local privacy blur support, on-device AI analysis, secure biometric app lock.
+
+DEFINITION OF DONE
+- All metrics are calculated from real Room database entities.
+- Time-based greetings react to device clock and user profile.
+- Personal and company expenses are strictly separated.
+- Reimbursements support partial allocations and multi-payment reconciliation.
+- Advances, loans, borrowings, and transfers do not distort income or expenses.
+- 100% on-device AI assistant provides private, accurate financial insights.
+- Fully tested and building cleanly.
+
+PRIORITY
+Maintains accounting correctness, transactional integrity, local privacy, and strict separation between personal finances and official company claims.

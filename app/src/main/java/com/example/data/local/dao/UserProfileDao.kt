@@ -29,5 +29,10 @@ interface UserProfileDao {
 
     @Query("UPDATE user_profile SET isBiometricEnabled = :enabled WHERE id = 1")
     suspend fun updateBiometricPreference(enabled: Boolean)
-}
 
+    @Query("UPDATE user_profile SET storagePreference = :preference WHERE id = 1")
+    suspend fun updateStoragePreference(preference: String)
+
+    @Query("UPDATE user_profile SET emailVerified = :verified WHERE id = 1")
+    suspend fun updateEmailVerified(verified: Boolean)
+}
